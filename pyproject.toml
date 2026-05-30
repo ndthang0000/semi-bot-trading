@@ -1,0 +1,20 @@
+[project]
+name = "semi-bot-trading"
+version = "0.1.0"
+description = "Human-in-the-loop semi automated trading system for XAUUSD."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+semi-bot = "semi_bot_trading.cli:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["semi_bot_trading*"]

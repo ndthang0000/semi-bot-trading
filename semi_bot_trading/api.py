@@ -1,0 +1,608 @@
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from .chart import build_chart_payload
+from .config import DEFAULT_CONFIG_PATH, load_config
+from .context import MarketContext, detect_bias_context, detect_regime_context
+from .db import connect, init_db
+from .replay_chart import build_realtime_replay_payload
+
+
+class ZoneOverrideRequest(BaseModel):
+    price_low: float
+    price_high: float
+    visual_start: str | None = None
+    visual_end: str | None = None
+    weight: float = Field(ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: str = "active"
+    no_expiry: bool = False
+    expires_at: str | None = None
+    reason: str | None = None
+
+
+class ContextOverrideRequest(BaseModel):
+    value: str | None = None
+    secondary_value: str | None = None
+    overlays: list[str] | None = None
+    confidence: float | None = Field(default=1.0, ge=0, le=1)
+    no_expiry: bool = False
+    expires_at: str | None = None
+    reason: str | None = None
+    use_bot: bool = False
+
+
+def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
+    from fastapi import Body, FastAPI, HTTPException, Query
+    from fastapi.middleware.cors import CORSMiddleware
+
+    config = load_config(config_path)
+    app = FastAPI(title="Semi Bot Trading API", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://127.0.0.1:8765",
+            "http://localhost:8765",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/api/health")
+    def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "symbol": config.symbol,
+            "database": str(config.database),
+        }
+
+    @app.get("/api/chart")
+    def chart(
+        symbol: str = Query(default=None),
+        timeframe: str = Query(default="M15"),
+        limit: int = Query(default=300, ge=1, le=3000),
+        start: str | None = None,
+        end: str | None = None,
+        replay_at: str | None = None,
+        replay_start: str | None = None,
+        active_zones_only: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            with connect(config.database) as conn:
+                init_db(conn)
+                expire_context_overrides(conn, utc_now_iso())
+                if replay_at:
+                    if replay_start is None:
+                        raise HTTPException(status_code=422, detail="replay_start is required when replay_at is provided")
+                    return build_realtime_replay_payload(
+                        conn,
+                        config,
+                        symbol=symbol or config.symbol,
+                        timeframe=timeframe.upper(),
+                        limit=limit,
+                        replay_start=replay_start,
+                        replay_at=replay_at,
+                        active_zones_only=active_zones_only,
+                    )
+                payload = build_chart_payload(
+                    conn,
+                    symbol=symbol or config.symbol,
+                    timeframe=timeframe.upper(),
+                    limit=limit,
+                    start=start,
+                    end=end,
+                    active_zones_only=active_zones_only,
+                    structure_timeframe=config.bias.timeframe,
+                )
+                return payload
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/replay/timeline")
+    def replay_timeline(
+        symbol: str = Query(default=None),
+        timeframe: str = Query(default="M15"),
+        limit: int = Query(default=300, ge=1, le=3000),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            rows = conn.execute(
+                """
+                SELECT open_time
+                FROM (
+                    SELECT open_time
+                    FROM candles
+                    WHERE symbol = ? AND timeframe = ?
+                    ORDER BY open_time DESC
+                    LIMIT ?
+                )
+                ORDER BY open_time
+                """,
+                (symbol or config.symbol, timeframe.upper(), limit),
+            ).fetchall()
+            times = [row["open_time"] for row in rows]
+            return {
+                "symbol": symbol or config.symbol,
+                "timeframe": timeframe.upper(),
+                "limit": limit,
+                "times": times,
+                "start": times[0] if times else None,
+                "end": times[-1] if times else None,
+                "count": len(times),
+            }
+
+    @app.patch("/api/zones/{zone_id}")
+    def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...)) -> dict[str, Any]:
+        if request.price_low >= request.price_high:
+            raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
+        if request.status not in {"active", "disabled"}:
+            raise HTTPException(status_code=422, detail="status must be active or disabled")
+
+        now = utc_now_iso()
+        expires_at = resolve_override_expiry(now, request.no_expiry, request.expires_at)
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute(
+                """
+                SELECT *
+                FROM price_zones
+                WHERE id = ?
+                """,
+                (zone_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
+
+            before = zone_row_to_chart(row)
+            override_id = str(uuid.uuid4())
+            confidence = request.confidence if request.confidence is not None else float(row["effective_confidence"])
+            fields_set = request.model_fields_set if hasattr(request, "model_fields_set") else request.__fields_set__
+            start_time = request.visual_start if "visual_start" in fields_set and request.visual_start else row["start_time"]
+            requested_end_time = request.visual_end if "visual_end" in fields_set else row["end_time"]
+            end_time = requested_end_time
+            if request.status == "disabled":
+                end_time = requested_end_time or latest_candle_time(conn, row["symbol"], row["timeframe"]) or now
+            try:
+                start_dt = datetime.fromisoformat(start_time)
+                end_dt = datetime.fromisoformat(end_time) if end_time else None
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="visual_start and visual_end must be ISO datetimes") from exc
+            if end_dt is not None and start_dt >= end_dt:
+                raise HTTPException(status_code=422, detail="visual_start must be before visual_end")
+            valid_until = end_time if request.status == "disabled" else expires_at
+            metadata = json_loads(row["metadata_json"], {})
+            metadata.update(
+                {
+                    "human_adjusted": True,
+                    "last_human_override_id": override_id,
+                    "last_human_override_at": now,
+                    "last_human_override_reason": request.reason,
+                }
+            )
+            after_patch = {
+                "price_low": request.price_low,
+                "price_high": request.price_high,
+                "start_time": start_time,
+                "end_time": end_time,
+                "effective_weight": request.weight,
+                "effective_confidence": confidence,
+                "status": request.status,
+                "source": "mixed" if row["source"] == "bot" else "human",
+                "valid_until": valid_until,
+            }
+            conn.execute(
+                """
+                INSERT INTO overrides (
+                    id, target_entity_type, target_entity_id, override_type, patch_json,
+                    reason, created_by, created_at, expires_at, status
+                )
+                VALUES (?, 'price_zone', ?, 'geometry_weight_status', ?, ?, 'human', ?, ?, 'active')
+                """,
+                (
+                    override_id,
+                    zone_id,
+                    json.dumps(
+                        {
+                            "before": before,
+                            "after": after_patch,
+                            "no_expiry": request.no_expiry,
+                        },
+                        sort_keys=True,
+                    ),
+                    request.reason,
+                    now,
+                    expires_at,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE price_zones
+                SET price_low = ?,
+                    price_high = ?,
+                    start_time = ?,
+                    end_time = ?,
+                    effective_weight = ?,
+                    effective_confidence = ?,
+                    status = ?,
+                    source = ?,
+                    valid_until = ?,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    request.price_low,
+                    request.price_high,
+                    start_time,
+                    end_time,
+                    request.weight,
+                    confidence,
+                    request.status,
+                    after_patch["source"],
+                    valid_until,
+                    json.dumps(metadata, sort_keys=True),
+                    zone_id,
+                ),
+            )
+            updated = conn.execute(
+                """
+                SELECT *
+                FROM price_zones
+                WHERE id = ?
+                """,
+                (zone_id,),
+            ).fetchone()
+            conn.commit()
+            return zone_row_to_chart(updated)
+
+    @app.patch("/api/contexts/{timeframe}/{context_type}")
+    def update_context(timeframe: str, context_type: str, request: ContextOverrideRequest = Body(...)) -> dict[str, Any]:
+        timeframe = timeframe.upper()
+        context_type = context_type.lower()
+        if context_type not in {"bias", "regime"}:
+            raise HTTPException(status_code=422, detail="context_type must be bias or regime")
+
+        normalized_value = request.value.lower() if isinstance(request.value, str) else None
+        if not request.use_bot:
+            if normalized_value is None:
+                raise HTTPException(status_code=422, detail="value is required unless use_bot is true")
+            try:
+                validate_context_value(context_type, normalized_value)
+            except ValueErrorForApi as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        now = utc_now_iso()
+        expires_at = None if request.use_bot else resolve_override_expiry(now, request.no_expiry, request.expires_at)
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute(
+                """
+                SELECT *
+                FROM market_contexts
+                WHERE symbol = ? AND timeframe = ? AND context_type = ? AND status = 'active'
+                ORDER BY valid_from DESC, created_at DESC
+                LIMIT 1
+                """,
+                (config.symbol, timeframe, context_type),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Context not found: {timeframe} {context_type}")
+
+            before = context_row_to_chart(row)
+            override_id = str(uuid.uuid4())
+            metadata = json_loads(row["metadata_json"], {})
+            secondary_value = request.secondary_value
+            if context_type == "regime" and request.overlays is not None:
+                overlays = [overlay.lower() for overlay in request.overlays]
+                try:
+                    validate_regime_overlays(overlays)
+                except ValueErrorForApi as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                metadata["overlays"] = overlays
+                secondary_value = ",".join(overlays) if overlays else None
+
+            if request.use_bot:
+                effective_value = row["bot_value"]
+                effective_confidence = float(row["bot_confidence"])
+                source = "bot"
+                valid_until = None
+                secondary_value = row["secondary_value"]
+                metadata.update(
+                    {
+                        "human_adjusted": False,
+                        "last_human_override_id": override_id,
+                        "last_human_override_at": now,
+                        "last_human_override_action": "use_bot",
+                        "last_human_override_reason": request.reason,
+                    }
+                )
+            else:
+                effective_value = normalized_value
+                effective_confidence = request.confidence if request.confidence is not None else 1.0
+                source = "human"
+                valid_until = expires_at
+                metadata.update(
+                    {
+                        "human_adjusted": True,
+                        "last_human_override_id": override_id,
+                        "last_human_override_at": now,
+                        "last_human_override_action": "override",
+                        "last_human_override_reason": request.reason,
+                    }
+                )
+
+            after_patch = {
+                "effective_value": effective_value,
+                "effective_confidence": effective_confidence,
+                "secondary_value": secondary_value,
+                "source": source,
+                "valid_until": valid_until,
+                "metadata": metadata,
+            }
+            conn.execute(
+                """
+                INSERT INTO overrides (
+                    id, target_entity_type, target_entity_id, override_type, patch_json,
+                    reason, created_by, created_at, expires_at, status
+                )
+                VALUES (?, 'market_context', ?, ?, ?, ?, 'human', ?, ?, 'active')
+                """,
+                (
+                    override_id,
+                    row["id"],
+                    "use_bot" if request.use_bot else "context_value",
+                    json.dumps(
+                        {
+                            "before": before,
+                            "after": after_patch,
+                            "no_expiry": request.no_expiry,
+                        },
+                        sort_keys=True,
+                    ),
+                    request.reason,
+                    now,
+                    expires_at,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE market_contexts
+                SET effective_value = ?,
+                    effective_confidence = ?,
+                    secondary_value = ?,
+                    source = ?,
+                    valid_until = ?,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    effective_value,
+                    effective_confidence,
+                    secondary_value,
+                    source,
+                    valid_until,
+                    json.dumps(metadata, sort_keys=True),
+                    row["id"],
+                ),
+            )
+            updated = conn.execute(
+                """
+                SELECT *
+                FROM market_contexts
+                WHERE id = ?
+                """,
+                (row["id"],),
+            ).fetchone()
+            conn.commit()
+            return context_row_to_chart(updated)
+
+    return app
+
+
+def run_api_server(config_path: Path | str, host: str, port: int, reload: bool = False) -> None:
+    import uvicorn
+
+    if reload:
+        uvicorn.run(
+            "semi_bot_trading.api:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+        )
+        return
+
+    uvicorn.run(create_app(config_path), host=host, port=port)
+
+
+def utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def resolve_override_expiry(now_iso: str, no_expiry: bool, expires_at: str | None) -> str | None:
+    if no_expiry:
+        return None
+    if expires_at:
+        return expires_at
+    now = datetime.fromisoformat(now_iso)
+    return (now + timedelta(hours=4)).replace(microsecond=0).isoformat()
+
+
+def json_loads(value: str | None, default: Any) -> Any:
+    if value in (None, ""):
+        return default
+    return json.loads(value)
+
+
+def latest_candle_time(conn: Any, symbol: str, timeframe: str) -> str | None:
+    row = conn.execute(
+        """
+        SELECT open_time
+        FROM candles
+        WHERE symbol = ? AND timeframe = ?
+        ORDER BY open_time DESC
+        LIMIT 1
+        """,
+        (symbol, timeframe),
+    ).fetchone()
+    return None if row is None else row["open_time"]
+
+
+def expire_context_overrides(conn: Any, now_iso: str) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, metadata_json
+        FROM market_contexts
+        WHERE status = 'active'
+          AND source = 'human'
+          AND valid_until IS NOT NULL
+          AND valid_until <= ?
+        """,
+        (now_iso,),
+    ).fetchall()
+    for row in rows:
+        metadata = json_loads(row["metadata_json"], {})
+        metadata.update(
+            {
+                "human_adjusted": False,
+                "human_override_expired_at": now_iso,
+            }
+        )
+        conn.execute(
+            """
+            UPDATE market_contexts
+            SET effective_value = bot_value,
+                effective_confidence = bot_confidence,
+                source = 'bot',
+                valid_until = NULL,
+                metadata_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (json.dumps(metadata, sort_keys=True), row["id"]),
+        )
+    if rows:
+        conn.commit()
+
+
+def validate_context_value(context_type: str, value: str) -> None:
+    allowed = {
+        "bias": {"bullish", "bearish", "neutral"},
+        "regime": {"trending", "ranging", "news", "risk_off"},
+    }[context_type]
+    if value not in allowed:
+        raise ValueErrorForApi(f"{context_type} value must be one of: {', '.join(sorted(allowed))}")
+
+
+def validate_regime_overlays(overlays: list[str]) -> None:
+    allowed = {"expansion", "contraction", "high_volatility", "low_volatility"}
+    invalid = sorted(set(overlays) - allowed)
+    if invalid:
+        raise ValueErrorForApi(f"Invalid regime overlays: {', '.join(invalid)}")
+
+
+class ValueErrorForApi(ValueError):
+    pass
+
+
+def context_row_to_chart(row: Any) -> dict[str, Any]:
+    return {
+        "bot_value": row["bot_value"],
+        "primary_value": row["primary_value"],
+        "secondary_value": row["secondary_value"],
+        "bot_confidence": float(row["bot_confidence"]),
+        "effective_value": row["effective_value"],
+        "effective_confidence": float(row["effective_confidence"]),
+        "source": row["source"],
+        "valid_from": row["valid_from"],
+        "valid_until": row["valid_until"],
+        "status": row["status"],
+        "metadata": json_loads(row["metadata_json"], {}),
+    }
+
+
+def market_context_to_chart(context: MarketContext) -> dict[str, Any]:
+    return {
+        "bot_value": context.bot_value,
+        "primary_value": context.primary_value,
+        "secondary_value": context.secondary_value,
+        "bot_confidence": context.bot_confidence,
+        "effective_value": context.effective_value,
+        "effective_confidence": context.effective_confidence,
+        "source": context.source,
+        "valid_from": context.valid_from,
+        "valid_until": context.valid_until,
+        "status": context.status,
+        "metadata": context.metadata,
+    }
+
+
+def build_replay_contexts(conn: Any, symbol: str, as_of: str, config: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    contexts: dict[str, dict[str, dict[str, Any]]] = {}
+    try:
+        bias = detect_bias_context(
+            conn,
+            symbol,
+            config.bias.timeframe,
+            config.bias.recent_swings,
+            config.bias.recent_breaks,
+            end_time=as_of,
+        )
+        contexts.setdefault(config.bias.timeframe, {})["bias"] = market_context_to_chart(bias)
+    except ValueError:
+        pass
+
+    try:
+        regime = detect_regime_context(
+            conn,
+            symbol,
+            config.regime.timeframe,
+            config.regime.atr_period,
+            config.regime.lookback,
+            config.regime.atr_high_percentile,
+            config.regime.atr_low_percentile,
+            config.regime.expansion_atr_ratio,
+            config.regime.contraction_atr_ratio,
+            config.regime.trend_break_ratio,
+            config.regime.trend_min_bos,
+            config.regime.range_efficiency_max,
+            end_time=as_of,
+        )
+        contexts.setdefault(config.regime.timeframe, {})["regime"] = market_context_to_chart(regime)
+    except ValueError:
+        pass
+    return contexts
+
+
+def zone_row_to_chart(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "type": row["zone_type"],
+        "direction": row["direction"],
+        "detector": row["detector"],
+        "status": row["status"],
+        "source": row["source"],
+        "price_low": float(row["price_low"]),
+        "price_high": float(row["price_high"]),
+        "visual_start": row["start_time"],
+        "visual_end": row["end_time"],
+        "valid_from": row["valid_from"],
+        "valid_until": row["valid_until"],
+        "invalidated_at": row["invalidated_at"],
+        "invalidated_by_structure_point_id": row["invalidated_by_structure_point_id"],
+        "detected_at": row["detected_at"],
+        "weight": float(row["effective_weight"]),
+        "confidence": float(row["effective_confidence"]),
+        "metadata": json_loads(row["metadata_json"], {}),
+    }

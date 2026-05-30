@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Semi Bot Trading</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <span>XAUUSD Control</span>
+        </div>
+        <div class="controls">
+          <select id="timeframe">
+            <option value="M15">M15</option>
+            <option value="H1">H1</option>
+          </select>
+          <input id="limit" type="number" min="50" max="1500" step="50" value="300" />
+          <label class="check">
+            <input id="activeZonesOnly" type="checkbox" />
+            <span>Active zones</span>
+          </label>
+          <button id="reload" type="button">Reload</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="chart-panel">
+          <div class="context-strip">
+            <div class="context-card">
+              <span class="label">H1 Bias</span>
+              <strong id="biasValue">--</strong>
+            </div>
+            <div class="context-card">
+              <span class="label">H1 Regime</span>
+              <strong id="regimeValue">--</strong>
+            </div>
+            <div class="context-card wide">
+              <span class="label">Range</span>
+              <strong id="rangeValue">--</strong>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chart"></canvas>
+            <div id="tooltip" class="tooltip hidden"></div>
+          </div>
+          <div class="replay-bar">
+            <button id="stepBack" type="button" aria-label="Step back">‹</button>
+            <button id="playPause" type="button">Play</button>
+            <button id="stepForward" type="button" aria-label="Step forward">›</button>
+            <input id="replaySlider" type="range" min="1" max="300" value="300" />
+            <span id="replayValue">300 / 300</span>
+          </div>
+        </section>
+
+        <aside class="inspector">
+          <section>
+            <h2>Selected</h2>
+            <div id="selectedDetails" class="empty">Click a zone or marker</div>
+          </section>
+          <section>
+            <h2>Zones</h2>
+            <div id="zoneList" class="entity-list"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

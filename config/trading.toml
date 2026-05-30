@@ -1,0 +1,52 @@
+[app]
+symbol = "XAUUSD"
+
+[data]
+directory = "data"
+database = "var/trading.sqlite3"
+
+[structure.swing]
+detector = "swing_v1"
+tolerance = 0.0
+
+[structure.swing.timeframes]
+H1 = { window = 4 }
+M15 = { window = 4 }
+
+[structure.breaks]
+detector = "break_v1"
+close_break_buffer = 0.0
+
+[context.bias]
+detector = "bias_v1"
+timeframe = "H1"
+recent_swings = 6
+recent_breaks = 3
+
+[context.regime]
+detector = "regime_v1"
+timeframe = "H1"
+atr_period = 14
+lookback = 50
+atr_high_percentile = 0.80
+atr_low_percentile = 0.20
+expansion_atr_ratio = 1.20
+contraction_atr_ratio = 0.80
+trend_break_ratio = 0.60
+trend_min_bos = 2
+range_efficiency_max = 0.25
+
+[zones.support_resistance]
+detector = "sr_v1"
+tolerance_pct = 0.0015
+min_zone_width = 1.0
+min_touches = 2
+lookback_swings = 300
+max_zones = 40
+
+[zones.lifecycle]
+close_break_buffer = 0.0
+recent_touch_lookback_candles = 80
+age_decay_per_100_candles = 0.08
+freshness_bonus = 0.15
+invalidation_weight_multiplier = 0.15
