@@ -175,6 +175,30 @@ CREATE TABLE IF NOT EXISTS trade_fills (
 
 CREATE INDEX IF NOT EXISTS idx_trade_fills_order
 ON trade_fills(trade_order_id, fill_time);
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    strategy_timeframe TEXT NOT NULL,
+    context_timeframe TEXT NOT NULL,
+    candle_limit INTEGER NOT NULL,
+    evaluated_candles INTEGER NOT NULL DEFAULT 0,
+    trade_count INTEGER NOT NULL DEFAULT 0,
+    spread REAL NOT NULL DEFAULT 0,
+    slippage REAL NOT NULL DEFAULT 0,
+    max_hold_candles INTEGER NOT NULL DEFAULT 0,
+    warmup_candles INTEGER NOT NULL DEFAULT 0,
+    auto_accept INTEGER NOT NULL DEFAULT 1,
+    engine TEXT NOT NULL DEFAULT 'incremental',
+    lookahead_guard TEXT NOT NULL,
+    summary_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'completed',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_lookup
+ON backtest_runs(symbol, created_at);
 """
 
 
@@ -192,6 +216,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "structure_points", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "structure_points", "status", "TEXT NOT NULL DEFAULT 'confirmed'")
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
+    ensure_column(conn, "backtest_runs", "engine", "TEXT NOT NULL DEFAULT 'incremental'")
     conn.commit()
 
 

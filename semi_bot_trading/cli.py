@@ -4,13 +4,18 @@ import argparse
 import json
 from pathlib import Path
 
+from .backtest import persist_backtest_result, run_strategy_backtest
+from .backtest_report import render_backtest_html, render_backtest_report
 from .candles import candle_summary, find_gaps
 from .chart import build_chart_payload
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import detect_and_store_bias, detect_and_store_regime, latest_contexts
 from .db import DEFAULT_DB_PATH, connect, init_db
 from .importer import import_data_dir
+from .price_action import detect_and_store_price_action_patterns
 from .replay import replay_candles
+from .smc_zones import detect_and_store_smc_zones
+from .strategy import PLAYBOOK_ZONE_TYPES
 from .server import run_chart_server
 from .structure import (
     detect_and_store_break_structure,
@@ -284,6 +289,8 @@ def cmd_detect_zones(args: argparse.Namespace) -> None:
     timeframe = args.timeframe
     sr_config = config.support_resistance
     lifecycle_config = config.zone_lifecycle
+    reaction_config = config.zone_reaction
+    decay_config = config.zone_decay
     db_path = args.db or config.database
 
     with connect(db_path) as conn:
@@ -297,13 +304,122 @@ def cmd_detect_zones(args: argparse.Namespace) -> None:
             min_touches=args.min_touches if args.min_touches is not None else sr_config.min_touches,
             lookback_swings=args.lookback_swings if args.lookback_swings is not None else sr_config.lookback_swings,
             max_zones=args.max_zones if args.max_zones is not None else sr_config.max_zones,
+            atr_width_multiplier=sr_config.atr_width_multiplier,
             close_break_buffer=lifecycle_config.close_break_buffer,
+            close_break_buffer_atr_multiplier=lifecycle_config.close_break_buffer_atr_multiplier,
             recent_touch_lookback_candles=lifecycle_config.recent_touch_lookback_candles,
             age_decay_per_100_candles=lifecycle_config.age_decay_per_100_candles,
             freshness_bonus=lifecycle_config.freshness_bonus,
             invalidation_weight_multiplier=lifecycle_config.invalidation_weight_multiplier,
+            reaction_window_candles=reaction_config.reaction_window_candles,
+            min_reaction_atr=reaction_config.min_reaction_atr,
+            strong_reaction_atr=reaction_config.strong_reaction_atr,
+            recent_reaction_count=reaction_config.recent_reaction_count,
+            max_healthy_touches=decay_config.max_healthy_touches,
+            weak_touch_penalty=decay_config.weak_touch_penalty,
+            too_many_touches_penalty=decay_config.too_many_touches_penalty,
+            linger_penalty=decay_config.linger_penalty,
         )
     print(f"Stored {count} support/resistance zones for {symbol} {timeframe}")
+
+
+def cmd_detect_smc_zones(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    timeframe = args.timeframe
+    smc_config = config.smc_zones
+    db_path = args.db or config.database
+
+    with connect(db_path) as conn:
+        init_db(conn)
+        counts = detect_and_store_smc_zones(
+            conn,
+            symbol=symbol,
+            timeframe=timeframe,
+            max_candles=args.max_candles if args.max_candles is not None else smc_config.max_candles,
+            lookback_swings=args.lookback_swings if args.lookback_swings is not None else smc_config.lookback_swings,
+            fvg_middle_candle_atr_multiplier=args.fvg_middle_candle_atr_multiplier
+            if args.fvg_middle_candle_atr_multiplier is not None
+            else smc_config.fvg_middle_candle_atr_multiplier,
+            fvg_gap_atr_ratio=args.fvg_gap_atr_ratio if args.fvg_gap_atr_ratio is not None else smc_config.fvg_gap_atr_ratio,
+            fvg_min_width_atr_ratio=args.fvg_min_width_atr_ratio
+            if args.fvg_min_width_atr_ratio is not None
+            else smc_config.fvg_min_width_atr_ratio,
+            fvg_max_active_days=smc_config.fvg_max_active_days_for(timeframe),
+            fvg_decay_start_days=smc_config.fvg_decay_start_days_for(timeframe),
+            ob_displacement_atr_multiplier=args.ob_displacement_atr_multiplier
+            if args.ob_displacement_atr_multiplier is not None
+            else smc_config.ob_displacement_atr_multiplier,
+            ob_min_body_ratio=args.ob_min_body_ratio if args.ob_min_body_ratio is not None else smc_config.ob_min_body_ratio,
+            ob_min_width_atr_ratio=args.ob_min_width_atr_ratio
+            if args.ob_min_width_atr_ratio is not None
+            else smc_config.ob_min_width_atr_ratio,
+            ob_max_width_atr_ratio=args.ob_max_width_atr_ratio
+            if args.ob_max_width_atr_ratio is not None
+            else smc_config.ob_max_width_atr_ratio,
+            ob_require_structure_break=not args.ob_allow_without_structure_break
+            if args.ob_allow_without_structure_break
+            else smc_config.ob_require_structure_break,
+            ob_merge_overlap_ratio=args.ob_merge_overlap_ratio
+            if args.ob_merge_overlap_ratio is not None
+            else smc_config.ob_merge_overlap_ratio,
+            ob_max_active_days=smc_config.ob_max_active_days_for(timeframe),
+            ob_decay_start_days=smc_config.ob_decay_start_days_for(timeframe),
+            max_fvg_zones=args.max_fvg_zones if args.max_fvg_zones is not None else smc_config.max_fvg_zones,
+            max_order_block_zones=args.max_order_block_zones
+            if args.max_order_block_zones is not None
+            else smc_config.max_order_block_zones,
+            max_liquidity_zones=args.max_liquidity_zones
+            if args.max_liquidity_zones is not None
+            else smc_config.max_liquidity_zones,
+            max_consolidation_zones=args.max_consolidation_zones
+            if args.max_consolidation_zones is not None
+            else smc_config.max_consolidation_zones,
+        )
+    summary = ", ".join(f"{detector}={count}" for detector, count in counts.items())
+    print(f"Stored SMC zones for {symbol} {timeframe}: {summary}")
+
+
+def cmd_detect_price_action(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    timeframe = (args.timeframe or config.price_action.timeframe).upper()
+    pa_config = config.price_action
+    db_path = args.db or config.database
+
+    with connect(db_path) as conn:
+        init_db(conn)
+        count = detect_and_store_price_action_patterns(
+            conn,
+            symbol=symbol,
+            timeframe=timeframe,
+            atr_period=args.atr_period if args.atr_period is not None else pa_config.atr_period,
+            displacement_atr_multiplier=args.displacement_atr_multiplier
+            if args.displacement_atr_multiplier is not None
+            else pa_config.displacement_atr_multiplier,
+            displacement_body_ratio=args.displacement_body_ratio
+            if args.displacement_body_ratio is not None
+            else pa_config.displacement_body_ratio,
+            pinbar_wick_body_ratio=args.pinbar_wick_body_ratio
+            if args.pinbar_wick_body_ratio is not None
+            else pa_config.pinbar_wick_body_ratio,
+            pinbar_min_wick_ratio=args.pinbar_min_wick_ratio
+            if args.pinbar_min_wick_ratio is not None
+            else pa_config.pinbar_min_wick_ratio,
+            engulfing_min_body_ratio=args.engulfing_min_body_ratio
+            if args.engulfing_min_body_ratio is not None
+            else pa_config.engulfing_min_body_ratio,
+            marubozu_min_body_ratio=args.marubozu_min_body_ratio
+            if args.marubozu_min_body_ratio is not None
+            else pa_config.marubozu_min_body_ratio,
+            star_large_body_ratio=args.star_large_body_ratio
+            if args.star_large_body_ratio is not None
+            else pa_config.star_large_body_ratio,
+            star_small_body_ratio=args.star_small_body_ratio
+            if args.star_small_body_ratio is not None
+            else pa_config.star_small_body_ratio,
+        )
+    print(f"Stored {count} price action events for {symbol} {timeframe}")
 
 
 def cmd_apply_zone_lifecycle(args: argparse.Namespace) -> None:
@@ -311,6 +427,8 @@ def cmd_apply_zone_lifecycle(args: argparse.Namespace) -> None:
     symbol = args.symbol or config.symbol
     timeframe = args.timeframe
     lifecycle_config = config.zone_lifecycle
+    reaction_config = config.zone_reaction
+    decay_config = config.zone_decay
     db_path = args.db or config.database
 
     with connect(db_path) as conn:
@@ -326,6 +444,15 @@ def cmd_apply_zone_lifecycle(args: argparse.Namespace) -> None:
             age_decay_per_100_candles=lifecycle_config.age_decay_per_100_candles,
             freshness_bonus=lifecycle_config.freshness_bonus,
             invalidation_weight_multiplier=lifecycle_config.invalidation_weight_multiplier,
+            close_break_buffer_atr_multiplier=lifecycle_config.close_break_buffer_atr_multiplier,
+            reaction_window_candles=reaction_config.reaction_window_candles,
+            min_reaction_atr=reaction_config.min_reaction_atr,
+            strong_reaction_atr=reaction_config.strong_reaction_atr,
+            recent_reaction_count=reaction_config.recent_reaction_count,
+            max_healthy_touches=decay_config.max_healthy_touches,
+            weak_touch_penalty=decay_config.weak_touch_penalty,
+            too_many_touches_penalty=decay_config.too_many_touches_penalty,
+            linger_penalty=decay_config.linger_penalty,
         )
     print(f"Applied lifecycle/scoring to {count} zones for {symbol} {timeframe}")
 
@@ -392,6 +519,105 @@ def cmd_serve_api(args: argparse.Namespace) -> None:
     from .api import run_api_server
 
     run_api_server(config_path=args.config, host=args.host, port=args.port, reload=args.reload)
+
+
+def cmd_backtest_strategies(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    db_path = args.db or config.database
+    allowed_playbooks = parse_playbooks_arg(args.playbook)
+    with connect(db_path) as conn:
+        init_db(conn)
+        result = run_strategy_backtest(
+            conn,
+            config,
+            symbol=symbol,
+            limit=args.limit,
+            spread=args.spread,
+            slippage=args.slippage,
+            max_hold_candles=args.max_hold_candles,
+            warmup_candles=args.warmup_candles,
+            auto_accept=False if args.no_auto_accept else None,
+            engine=args.engine,
+            include_human_zones=args.include_human_zones,
+            allowed_playbooks=allowed_playbooks,
+        )
+        run_id = None
+        if args.persist:
+            run_id = persist_backtest_result(
+                conn,
+                result,
+                candle_limit=args.limit,
+                clear_previous=args.clear_backtest_trades,
+            )
+
+    print(
+        f"Backtest {symbol} {config.strategy.timeframe}: "
+        f"{len(result.trades)} trades, {result.evaluated_candles}/{result.timeline_count} candles evaluated"
+    )
+    print(f"Costs: spread={result.spread:.2f}, slippage={result.slippage:.2f}")
+    print(f"Engine: {result.engine}")
+    if allowed_playbooks:
+        print(f"Playbooks: {', '.join(sorted(allowed_playbooks))}")
+    print(f"Auto accept eligible setups: {result.auto_accept}")
+    print(f"Lookahead guard: {result.lookahead_guard}")
+    if run_id:
+        print(f"Persisted backtest run: {run_id}")
+    if args.html_output:
+        args.html_output.parent.mkdir(parents=True, exist_ok=True)
+        args.html_output.write_text(render_backtest_html(result, max_rows=args.max_rows))
+        print(f"HTML report: {args.html_output}")
+    rows = result.summary_by_playbook()
+    if not rows:
+        print("No eligible strategy trades found.")
+        return
+    print("playbook,trades,wins,losses,win_rate,total_r,avg_r")
+    for row in rows:
+        print(
+            f"{row['playbook']},{row['trades']},{row['wins']},{row['losses']},"
+            f"{row['win_rate']:.2%},{row['total_r']:.2f},{row['avg_r']:.2f}"
+        )
+
+
+def cmd_backtest_report(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    db_path = args.db or config.database
+    allowed_playbooks = parse_playbooks_arg(args.playbook)
+    with connect(db_path) as conn:
+        init_db(conn)
+        result = run_strategy_backtest(
+            conn,
+            config,
+            symbol=symbol,
+            limit=args.limit,
+            spread=args.spread,
+            slippage=args.slippage,
+            max_hold_candles=args.max_hold_candles,
+            warmup_candles=args.warmup_candles,
+            auto_accept=False if args.no_auto_accept else None,
+            engine=args.engine,
+            include_human_zones=args.include_human_zones,
+            allowed_playbooks=allowed_playbooks,
+        )
+    print(render_backtest_report(result, max_rows=args.max_rows))
+    if args.html_output:
+        args.html_output.parent.mkdir(parents=True, exist_ok=True)
+        args.html_output.write_text(render_backtest_html(result, max_rows=args.max_rows))
+        print(f"HTML report: {args.html_output}")
+
+
+def parse_playbooks_arg(values: list[str] | None) -> set[str] | None:
+    if not values:
+        return None
+    playbooks: set[str] = set()
+    for value in values:
+        playbooks.update(item.strip() for item in value.split(",") if item.strip())
+    unknown = sorted(playbooks - set(PLAYBOOK_ZONE_TYPES))
+    if unknown:
+        known = ", ".join(sorted(PLAYBOOK_ZONE_TYPES))
+        raise SystemExit(f"Unknown playbook(s): {', '.join(unknown)}. Known playbooks: {known}")
+    return playbooks or None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -515,6 +741,50 @@ def build_parser() -> argparse.ArgumentParser:
     zones_parser.add_argument("--max-zones", type=int)
     zones_parser.set_defaults(func=cmd_detect_zones)
 
+    smc_zones_parser = subparsers.add_parser(
+        "detect-smc-zones",
+        help="Detect FVG, Order Block, Liquidity Sweep, and Consolidation zones.",
+    )
+    add_common_config_arg(smc_zones_parser)
+    add_common_db_arg(smc_zones_parser)
+    smc_zones_parser.add_argument("--symbol")
+    smc_zones_parser.add_argument("--timeframe", default="H1")
+    smc_zones_parser.add_argument("--max-candles", type=int)
+    smc_zones_parser.add_argument("--lookback-swings", type=int)
+    smc_zones_parser.add_argument("--fvg-middle-candle-atr-multiplier", type=float)
+    smc_zones_parser.add_argument("--fvg-gap-atr-ratio", type=float)
+    smc_zones_parser.add_argument("--fvg-min-width-atr-ratio", type=float)
+    smc_zones_parser.add_argument("--ob-displacement-atr-multiplier", type=float)
+    smc_zones_parser.add_argument("--ob-min-body-ratio", type=float)
+    smc_zones_parser.add_argument("--ob-min-width-atr-ratio", type=float)
+    smc_zones_parser.add_argument("--ob-max-width-atr-ratio", type=float)
+    smc_zones_parser.add_argument("--ob-allow-without-structure-break", action="store_true")
+    smc_zones_parser.add_argument("--ob-merge-overlap-ratio", type=float)
+    smc_zones_parser.add_argument("--max-fvg-zones", type=int)
+    smc_zones_parser.add_argument("--max-order-block-zones", type=int)
+    smc_zones_parser.add_argument("--max-liquidity-zones", type=int)
+    smc_zones_parser.add_argument("--max-consolidation-zones", type=int)
+    smc_zones_parser.set_defaults(func=cmd_detect_smc_zones)
+
+    price_action_parser = subparsers.add_parser(
+        "detect-price-action",
+        help="Detect M15 price action confirmations such as pinbar, engulfing, marubozu, stars, and displacement candles.",
+    )
+    add_common_config_arg(price_action_parser)
+    add_common_db_arg(price_action_parser)
+    price_action_parser.add_argument("--symbol")
+    price_action_parser.add_argument("--timeframe")
+    price_action_parser.add_argument("--atr-period", type=int)
+    price_action_parser.add_argument("--displacement-atr-multiplier", type=float)
+    price_action_parser.add_argument("--displacement-body-ratio", type=float)
+    price_action_parser.add_argument("--pinbar-wick-body-ratio", type=float)
+    price_action_parser.add_argument("--pinbar-min-wick-ratio", type=float)
+    price_action_parser.add_argument("--engulfing-min-body-ratio", type=float)
+    price_action_parser.add_argument("--marubozu-min-body-ratio", type=float)
+    price_action_parser.add_argument("--star-large-body-ratio", type=float)
+    price_action_parser.add_argument("--star-small-body-ratio", type=float)
+    price_action_parser.set_defaults(func=cmd_detect_price_action)
+
     lifecycle_parser = subparsers.add_parser(
         "apply-zone-lifecycle",
         help="Apply invalidation and freshness scoring to existing zones.",
@@ -555,6 +825,76 @@ def build_parser() -> argparse.ArgumentParser:
     chart_parser.add_argument("--active-zones-only", action="store_true")
     chart_parser.add_argument("--output", type=Path)
     chart_parser.set_defaults(func=cmd_export_chart_json)
+
+    backtest_parser = subparsers.add_parser(
+        "backtest-strategies",
+        help="Auto-accept eligible setup candidates in replay-safe backtest mode.",
+    )
+    add_common_config_arg(backtest_parser)
+    add_common_db_arg(backtest_parser)
+    backtest_parser.add_argument("--symbol")
+    backtest_parser.add_argument("--limit", type=int, default=500)
+    backtest_parser.add_argument("--spread", type=float)
+    backtest_parser.add_argument("--slippage", type=float)
+    backtest_parser.add_argument("--max-hold-candles", type=int)
+    backtest_parser.add_argument("--warmup-candles", type=int)
+    backtest_parser.add_argument("--no-auto-accept", action="store_true")
+    backtest_parser.add_argument("--engine", choices=["incremental", "replay"], default="incremental")
+    backtest_parser.add_argument(
+        "--playbook",
+        action="append",
+        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook trend_pullback.",
+    )
+    backtest_parser.add_argument(
+        "--include-human-zones",
+        action="store_true",
+        help="Include manually drawn historical zones. Disabled by default to avoid hindsight in bot-only backtests.",
+    )
+    backtest_parser.add_argument("--persist", action="store_true", help="Store run/trades so they appear in chart payload.")
+    backtest_parser.add_argument(
+        "--clear-backtest-trades",
+        action="store_true",
+        help="Delete previous persisted backtest trades for this symbol before storing the new run.",
+    )
+    backtest_parser.add_argument("--max-rows", type=int, default=20)
+    backtest_parser.add_argument(
+        "--html-output",
+        type=Path,
+        help="Write a visual HTML report to this file.",
+    )
+    backtest_parser.set_defaults(func=cmd_backtest_strategies)
+
+    report_parser = subparsers.add_parser(
+        "backtest-report",
+        help="Run strict strategy backtest and print edge breakdown by zone, regime, trigger, and score buckets.",
+    )
+    add_common_config_arg(report_parser)
+    add_common_db_arg(report_parser)
+    report_parser.add_argument("--symbol")
+    report_parser.add_argument("--limit", type=int, default=500)
+    report_parser.add_argument("--spread", type=float)
+    report_parser.add_argument("--slippage", type=float)
+    report_parser.add_argument("--max-hold-candles", type=int)
+    report_parser.add_argument("--warmup-candles", type=int)
+    report_parser.add_argument("--no-auto-accept", action="store_true")
+    report_parser.add_argument("--engine", choices=["incremental", "replay"], default="incremental")
+    report_parser.add_argument(
+        "--playbook",
+        action="append",
+        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook trend_pullback.",
+    )
+    report_parser.add_argument(
+        "--include-human-zones",
+        action="store_true",
+        help="Include manually drawn historical zones. Disabled by default to avoid hindsight in bot-only reports.",
+    )
+    report_parser.add_argument("--max-rows", type=int, default=20)
+    report_parser.add_argument(
+        "--html-output",
+        type=Path,
+        help="Write a visual HTML report to this file.",
+    )
+    report_parser.set_defaults(func=cmd_backtest_report)
 
     serve_parser = subparsers.add_parser(
         "serve-chart",

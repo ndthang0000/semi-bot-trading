@@ -27,6 +27,8 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertIn("zones", payload["layers"])
         self.assertIn("contexts", payload["layers"])
         self.assertIn("trades", payload["layers"])
+        self.assertIn("setup_candidates", payload["layers"])
+        self.assertEqual(payload["layers"]["setup_candidates"], [])
         self.assertEqual(payload["layers"]["contexts"]["H1"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["contexts"]["M15"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["zones"][0]["visual_end"], None)

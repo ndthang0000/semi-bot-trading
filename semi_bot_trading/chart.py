@@ -4,6 +4,8 @@ import json
 from sqlite3 import Connection
 from typing import Any
 
+from .strategy import build_setup_candidates
+
 
 CHART_PAYLOAD_VERSION = 1
 
@@ -21,7 +23,21 @@ def load_chart_candles(
     limit: int,
     start: str | None = None,
     end: str | None = None,
+    start_index: int | None = None,
 ) -> list[dict[str, Any]]:
+    if start_index is not None and start is None and end is None:
+        rows = conn.execute(
+            """
+            SELECT open_time, open, high, low, close, volume
+            FROM candles
+            WHERE symbol = ? AND timeframe = ?
+            ORDER BY open_time
+            LIMIT ? OFFSET ?
+            """,
+            (symbol, timeframe, limit, start_index),
+        ).fetchall()
+        return chart_candle_rows_to_dicts(rows)
+
     clauses = ["symbol = ?", "timeframe = ?"]
     params: list[Any] = [symbol, timeframe]
     if start:
@@ -45,6 +61,10 @@ def load_chart_candles(
         """,
         (*params, limit),
     ).fetchall()
+    return chart_candle_rows_to_dicts(rows)
+
+
+def chart_candle_rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     return [
         {
             "time": row["open_time"],
@@ -106,6 +126,7 @@ def load_chart_zones(
     clauses = [
         "symbol = ?",
         "timeframe = ?",
+        "status != 'deleted'",
         "start_time <= ?",
         "detected_at <= ?",
         "(end_time IS NULL OR end_time >= ?)",
@@ -129,10 +150,14 @@ def load_chart_zones(
     ).fetchall()
     zones: list[dict[str, Any]] = []
     for row in rows:
+        metadata = json_loads(row["metadata_json"], {})
         status = row["status"]
         visual_end = row["end_time"]
         invalidated_at = row["invalidated_at"]
-        if row["end_time"] is not None and row["end_time"] > end:
+        deterministic_expiry = metadata.get("expired_rule") == "smc_zone_max_active_days" or (
+            metadata.get("max_active_days") is not None and row["valid_until"] == row["end_time"]
+        )
+        if row["end_time"] is not None and row["end_time"] > end and not deterministic_expiry:
             status = "active"
             visual_end = None
             invalidated_at = None
@@ -155,7 +180,7 @@ def load_chart_zones(
             "detected_at": row["detected_at"],
             "weight": float(row["effective_weight"]),
             "confidence": float(row["effective_confidence"]),
-            "metadata": json_loads(row["metadata_json"], {}),
+            "metadata": metadata,
             }
         )
     return zones
@@ -192,9 +217,24 @@ def load_chart_contexts(conn: Connection, symbol: str) -> dict[str, dict[str, di
     return contexts
 
 
-def load_chart_trades(conn: Connection, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
+def load_chart_trades(
+    conn: Connection,
+    symbol: str,
+    start: str,
+    end: str,
+    allowed_playbooks: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    playbook_clause = ""
+    params: list[Any] = [symbol, end, start]
+    if allowed_playbooks is not None:
+        if not allowed_playbooks:
+            return []
+        placeholders = ", ".join("?" for _ in allowed_playbooks)
+        playbook_clause = f" AND trade_ideas.playbook IN ({placeholders})"
+        params.extend(sorted(allowed_playbooks))
+
     rows = conn.execute(
-        """
+        f"""
         SELECT trade_orders.id, trade_orders.trade_idea_id, trade_orders.side,
                trade_orders.order_type, trade_orders.status, trade_orders.entry_price,
                trade_orders.stop_loss, trade_orders.take_profit_json,
@@ -205,13 +245,13 @@ def load_chart_trades(conn: Connection, symbol: str, start: str, end: str) -> li
         FROM trade_orders
         JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
         WHERE trade_orders.symbol = ?
-          AND (
-            (trade_orders.opened_at IS NOT NULL AND trade_orders.opened_at <= ?)
-            OR (trade_orders.closed_at IS NOT NULL AND trade_orders.closed_at >= ?)
-          )
+          AND trade_orders.opened_at IS NOT NULL
+          AND trade_orders.opened_at <= ?
+          AND (trade_orders.closed_at IS NULL OR trade_orders.closed_at >= ?)
+          {playbook_clause}
         ORDER BY COALESCE(trade_orders.opened_at, trade_orders.created_at)
         """,
-        (symbol, end, start),
+        params,
     ).fetchall()
     return [
         {
@@ -245,16 +285,41 @@ def build_chart_payload(
     limit: int,
     start: str | None = None,
     end: str | None = None,
+    start_index: int | None = None,
     active_zones_only: bool = False,
     structure_timeframe: str | None = None,
+    strategy_config: Any | None = None,
+    allowed_playbooks: set[str] | None = None,
 ) -> dict[str, Any]:
-    candles = load_chart_candles(conn, symbol, timeframe, limit, start, end)
+    candles = load_chart_candles(conn, symbol, timeframe, limit, start, end, start_index)
     if not candles:
         raise ValueError(f"No candles found for {symbol} {timeframe}")
 
     range_start = candles[0]["time"]
     range_end = candles[-1]["time"]
     effective_structure_timeframe = structure_timeframe or timeframe
+    zones = load_chart_zones(conn, symbol, timeframe, range_start, range_end, active_only=active_zones_only)
+    contexts = load_chart_contexts(conn, symbol)
+    setup_candidates: list[dict[str, Any]] = []
+    if strategy_config is not None:
+        strategy_candles = load_chart_candles(conn, symbol, strategy_config.timeframe, 240, end=range_end)
+        if strategy_candles:
+            setup_candidates = build_setup_candidates(
+                symbol=symbol,
+                zones=zones,
+                contexts=contexts,
+                candles=strategy_candles,
+                structure_points=load_chart_structure(
+                    conn,
+                    symbol,
+                    strategy_config.timeframe,
+                    strategy_candles[0]["time"],
+                    strategy_candles[-1]["time"],
+                ),
+                config=strategy_config,
+                context_timeframe=effective_structure_timeframe,
+                allowed_playbooks=allowed_playbooks,
+            )
     return {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,
@@ -263,6 +328,7 @@ def build_chart_payload(
             "start": range_start,
             "end": range_end,
             "limit": limit,
+            "start_index": start_index,
             "requested_start": start,
             "requested_end": end,
         },
@@ -270,8 +336,9 @@ def build_chart_payload(
             "candles": candles,
             "structure": load_chart_structure(conn, symbol, effective_structure_timeframe, range_start, range_end),
             "structure_timeframe": effective_structure_timeframe,
-            "zones": load_chart_zones(conn, symbol, timeframe, range_start, range_end, active_only=active_zones_only),
-            "contexts": load_chart_contexts(conn, symbol),
-            "trades": load_chart_trades(conn, symbol, range_start, range_end),
+            "zones": zones,
+            "contexts": contexts,
+            "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
+            "setup_candidates": setup_candidates,
         },
     }

@@ -1,4 +1,8 @@
 export type Timeframe = "M15" | "H1";
+export type ZoneVisibilityKey = "support" | "resistance" | "order_block" | "fvg" | "liquidity_pool" | "consolidation";
+export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
+export type PlaybookKey = "trend_pullback" | "ob_mitigation_continuation" | "fvg_fill_go" | "breakout_retest" | "momentum_expansion_continuation" | "range_boundary_reversal" | "liquidity_sweep_reversal" | "failed_breakout_trap";
+export type AddEntityKind = "support" | "resistance" | "demand_order_block" | "supply_order_block" | "bullish_fvg" | "bearish_fvg" | "consolidation" | "buy_side_liquidity" | "sell_side_liquidity";
 export type ChartCandle = {
     time: string;
     open: number;
@@ -74,6 +78,27 @@ export type TradeOrder = {
     source: string;
     metadata: Record<string, unknown>;
 };
+export type SetupCandidate = {
+    id: string;
+    symbol: string;
+    timeframe: "M15";
+    playbook: string;
+    direction: "long" | "short";
+    status: "watching" | "waiting_confirmation" | "eligible" | "blocked" | "expired";
+    zone_reaction_state: string;
+    score: number;
+    entry: number | null;
+    stop_loss: number | null;
+    take_profit: number[];
+    risk_reward: number | null;
+    primary_zone_id: string | null;
+    related_zone_ids: string[];
+    trigger_point_ids: string[];
+    reason: string[];
+    blocked_reason: string[];
+    expires_at: string | null;
+    metadata: Record<string, unknown>;
+};
 export type ChartPayload = {
     version: number;
     symbol: string;
@@ -82,6 +107,7 @@ export type ChartPayload = {
         start: string;
         end: string;
         limit: number;
+        start_index: number | null;
         requested_start: string | null;
         requested_end: string | null;
     };
@@ -92,6 +118,7 @@ export type ChartPayload = {
         zones: PriceZone[];
         contexts: Record<string, Record<string, MarketContext>>;
         trades: TradeOrder[];
+        setup_candidates: SetupCandidate[];
     };
     replay?: {
         enabled: boolean;
@@ -104,6 +131,8 @@ export type ReplayTimeline = {
     symbol: string;
     timeframe: Timeframe;
     limit: number;
+    start_index: number | null;
+    total_count: number;
     times: string[];
     start: string | null;
     end: string | null;
@@ -118,4 +147,8 @@ export type SelectedEntity = {
 } | {
     kind: "trade";
     entity: TradeOrder;
+};
+export type ZoneFocusRequest = {
+    id: number;
+    zone: PriceZone;
 };

@@ -1,10 +1,12 @@
-import type { ChartPayload, MarketContext, PriceZone, ReplayTimeline, Timeframe } from "../types";
+import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe } from "../types";
 
 type ChartQuery = {
   symbol: string;
   timeframe: Timeframe;
   limit: number;
+  startIndex: number | null;
   activeZonesOnly: boolean;
+  selectedPlaybooks: PlaybookKey[];
   replayAt?: string | null;
   replayStart?: string | null;
 };
@@ -15,9 +17,13 @@ export async function fetchChartPayload(query: ChartQuery): Promise<ChartPayload
     timeframe: query.timeframe,
     limit: String(query.limit),
   });
+  if (query.startIndex !== null) {
+    params.set("start_index", String(query.startIndex));
+  }
   if (query.activeZonesOnly) {
     params.set("active_zones_only", "true");
   }
+  params.set("playbooks", query.selectedPlaybooks.length > 0 ? query.selectedPlaybooks.join(",") : "__none__");
   if (query.replayAt) {
     params.set("replay_at", query.replayAt);
   }
@@ -33,12 +39,15 @@ export async function fetchChartPayload(query: ChartQuery): Promise<ChartPayload
   return response.json();
 }
 
-export async function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOnly" | "replayAt" | "replayStart">): Promise<ReplayTimeline> {
+export async function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOnly" | "selectedPlaybooks" | "replayAt" | "replayStart">): Promise<ReplayTimeline> {
   const params = new URLSearchParams({
     symbol: query.symbol,
     timeframe: query.timeframe,
     limit: String(query.limit),
   });
+  if (query.startIndex !== null) {
+    params.set("start_index", String(query.startIndex));
+  }
   const response = await fetch(`/api/replay/timeline?${params.toString()}`);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
@@ -59,6 +68,38 @@ export type ZoneOverrideInput = {
   reason?: string;
 };
 
+export type ZoneCreateInput = {
+  symbol: string;
+  timeframe: Timeframe;
+  zone_type: string;
+  direction: string;
+  price_low: number;
+  price_high: number;
+  visual_start: string;
+  visual_end?: string | null;
+  weight: number;
+  confidence: number;
+  status: "active" | "disabled";
+  client_kind?: string;
+  no_expiry: boolean;
+  reason?: string;
+};
+
+export async function createManualZone(input: ZoneCreateInput): Promise<PriceZone> {
+  const response = await fetch("/api/zones", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Zone create failed with ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function updateZoneOverride(zoneId: string, input: ZoneOverrideInput): Promise<PriceZone> {
   const response = await fetch(`/api/zones/${encodeURIComponent(zoneId)}`, {
     method: "PATCH",
@@ -70,6 +111,22 @@ export async function updateZoneOverride(zoneId: string, input: ZoneOverrideInpu
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Zone update failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deleteManualZone(zoneId: string, reason?: string): Promise<PriceZone> {
+  const params = new URLSearchParams();
+  if (reason) {
+    params.set("reason", reason);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`/api/zones/${encodeURIComponent(zoneId)}${suffix}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Zone delete failed with ${response.status}`);
   }
   return response.json();
 }

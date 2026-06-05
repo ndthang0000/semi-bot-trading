@@ -23,7 +23,11 @@ M15 dùng để xác định:
 - Liquidity sweep nhỏ.
 - Confirmation candle.
 - Price action reversal candle: engulfing, pinbar, morning star, marubozu.
+- Displacement candle.
 - SL/invalid level gần hơn.
+
+Price action confirmation hiện được detect bằng `price_action_v1` trên M15 và lưu trong `structure_points`.
+Chi tiết công thức nằm ở `docs/13-price-action-detectors-formula.md`.
 
 ## Context matrix
 
@@ -37,14 +41,38 @@ M15 dùng để xác định:
 | Any | Low Volatility/Contraction | Compression | Chờ breakout |
 | Human secondary bias | Ranging/Resistance/Support | Sweep/reclaim rõ | Mean reversion hoặc sweep reversal nếu được human cho phép |
 
+## Zone Reaction State On M15
+
+Strategy Engine không vào setup chỉ vì giá chạm zone. Mỗi zone quan trọng được tracking phản ứng trên M15:
+
+- `approaching`: giá cách zone trong khoảng gần theo ATR.
+- `touched`: wick/body đã chạm zone.
+- `inside_wait`: giá chạm/phá zone nhưng close vẫn nằm trong zone, cần chờ tiếp.
+- `rejected`: giá chạm/phá nhẹ rồi close ngược khỏi zone theo hướng kỳ vọng.
+- `breakout_confirmed`: close rõ ngoài zone với buffer ATR.
+- `retest_waiting`: consolidation/range breakout đã xác nhận, chờ retest.
+- `invalid_for_setup`: vùng không còn dùng được cho playbook đang xét.
+
+Dashboard hiển thị setup theo status:
+
+- `watching`: gần đủ điều kiện, đang đợi giá/trigger.
+- `waiting_confirmation`: đã có tương tác với zone nhưng thiếu confirmation.
+- `eligible`: đủ điều kiện để human review.
+- `blocked`: có ý tưởng nhưng bị rule chặn.
+- `expired`: hết hiệu lực.
+
 ## Playbook priority
 
 1. Trend Pullback.
-2. Sweep Reversal.
-3. Breakout Retest.
-4. Range Reversal.
+2. OB Mitigation Continuation.
+3. FVG Fill And Go.
+4. Breakout Retest.
+5. Momentum Expansion Continuation.
+6. Range Boundary Reversal.
+7. Liquidity Sweep Reversal.
+8. Failed Breakout Trap.
 
-Trend Pullback là playbook ưu tiên đầu tiên vì bền vững hơn cho retail trader. Range Reversal để sau vì khó và dễ nhiễu.
+Trend Pullback vẫn là playbook ưu tiên đầu tiên vì bền vững hơn cho retail trader. Các playbook countertrend chỉ được dùng tự động trong neutral/ranging hoặc khi human set secondary bias phù hợp.
 
 ## Playbook 1: Trend Following Pullback
 
@@ -116,6 +144,32 @@ targets:
   - range_mid
   - range_high
 ```
+
+## Additional Playbooks V1
+
+### OB Mitigation Continuation
+
+- Dùng OB cùng hướng H1 bias.
+- Ưu tiên OB chưa mitigated hoặc mitigated nhẹ.
+- M15 phải reject khỏi OB hoặc có displacement cùng hướng.
+
+### FVG Fill And Go
+
+- Dùng FVG cùng hướng H1 bias.
+- Nếu giá close trong FVG thì setup ở `waiting_confirmation`.
+- Eligible khi có M15 rejection/PA cùng hướng sau fill.
+
+### Momentum Expansion Continuation
+
+- Dùng khi H1 có expansion overlay và bias rõ.
+- Chỉ chấp nhận pullback nông vào SR/OB/FVG.
+- Cần M15 displacement cùng hướng.
+
+### Failed Breakout Trap
+
+- Dùng khi breakout khỏi consolidation/range thất bại và close quay lại bên trong.
+- Entry theo hướng ngược breakout sau M15 confirmation.
+- Target range mid hoặc biên còn lại.
 
 ## Playbook 3: Breakout + Retest
 
@@ -189,6 +243,33 @@ trade_idea:
   expires_at: datetime
 ```
 
+## Setup Candidate Object
+
+Chart payload có thêm `layers.setup_candidates` để UI hiển thị các setup đang được Strategy Engine theo dõi:
+
+```yaml
+setup_candidate:
+  id: string
+  symbol: string
+  timeframe: M15
+  playbook: string
+  direction: long | short
+  status: watching | waiting_confirmation | eligible | blocked | expired
+  zone_reaction_state: string
+  score: float
+  entry: decimal | null
+  stop_loss: decimal | null
+  take_profit: decimal[]
+  risk_reward: float | null
+  primary_zone_id: string | null
+  related_zone_ids: string[]
+  trigger_point_ids: string[]
+  reason: string[]
+  blocked_reason: string[]
+  expires_at: datetime | null
+  metadata: json
+```
+
 ## Human confirmation modes
 
 Mode đề xuất:
@@ -200,6 +281,72 @@ Mode đề xuất:
 - `full_auto`: chưa nên triển khai trước khi có đủ log/backtest.
 
 MVP bắt đầu với `observe_only` và `backtest_replay`.
+
+Realtime dashboard không auto accept setup. Human vẫn phải review/approve trước khi có live execution.
+
+Backtest thì auto accept các setup `eligible` theo rule của Strategy Engine để đo kết quả playbook. Engine mặc định là `incremental`.
+
+Backtest guard:
+
+- Signal chỉ được tạo từ dữ liệu có `time <= signal_time`.
+- Swing chỉ được dùng sau `confirmed_at`, không dùng pivot chưa confirm.
+- Incremental engine precompute detector theo chunk lịch sử, nhưng mỗi candle chỉ expose zone/structure/context đã xuất hiện tại thời điểm đó.
+- Entry fill ở nến M15 kế tiếp, không dùng giá của candle signal để vào lệnh.
+- Spread/slippage được cộng vào entry và exit theo hướng bất lợi.
+- Nếu cùng một candle chạm cả SL và TP, simulator giả định SL hit trước để conservative.
+
+Config:
+
+```toml
+[backtest]
+auto_accept = true
+spread = 0.30
+slippage = 0.10
+max_hold_candles = 96
+warmup_candles = 80
+```
+
+CLI:
+
+```bash
+python -m semi_bot_trading.cli backtest-strategies --limit 500
+```
+
+Full local dataset:
+
+```bash
+python -m semi_bot_trading.cli backtest-strategies --limit 60000 --engine incremental --persist --clear-backtest-trades
+```
+
+Persist run/trades so chart payload can draw historical entry/exit:
+
+```bash
+python -m semi_bot_trading.cli backtest-strategies --limit 500 --persist --clear-backtest-trades
+```
+
+Reference replay-safe mode, slower but useful for comparison:
+
+```bash
+python -m semi_bot_trading.cli backtest-strategies --limit 500 --engine replay
+```
+
+Debug observe-only mode:
+
+```bash
+python -m semi_bot_trading.cli backtest-strategies --limit 500 --no-auto-accept
+```
+
+Persistence:
+
+- `backtest_runs`: one row per run with config/costs/lookahead guard/summary.
+- `trade_ideas`: one executed idea per auto-accepted setup.
+- `trade_orders`: filled backtest order with entry, SL, TP, close price, `pnl_r`, source=`backtest`.
+- `trade_fills`: synthetic entry and exit fills for audit.
+
+Current benchmark on local XAUUSD dataset:
+
+- `500` M15 candles: incremental ~0.36s vs replay ~4.97s.
+- `60000` M15 candles: chunked incremental ~52s, 2191 trades persisted.
 
 ## Risk and trade management defaults
 

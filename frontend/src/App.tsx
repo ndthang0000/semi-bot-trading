@@ -15,14 +15,16 @@ export function App() {
   const symbol = useChartStore((state) => state.symbol);
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
+  const startIndex = useChartStore((state) => state.startIndex);
   const activeZonesOnly = useChartStore((state) => state.activeZonesOnly);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [replaySpeedSeconds, setReplaySpeedSeconds] = useState(1);
   const [replayIndex, setReplayIndex] = useState(0);
 
   const timelineQuery = useQuery({
-    queryKey: ["replay-timeline", symbol, timeframe, limit],
-    queryFn: () => fetchReplayTimeline({ symbol, timeframe, limit }),
+    queryKey: ["replay-timeline", symbol, timeframe, limit, startIndex],
+    queryFn: () => fetchReplayTimeline({ symbol, timeframe, limit, startIndex }),
     staleTime: 60_000,
     enabled: isReplayRoute,
   });
@@ -31,8 +33,8 @@ export function App() {
   const replayStart = isReplayRoute ? timelineQuery.data?.start ?? null : null;
 
   const chartQuery = useQuery({
-    queryKey: ["chart", mode, symbol, timeframe, limit, activeZonesOnly, replayStart, replayAt],
-    queryFn: () => fetchChartPayload({ symbol, timeframe, limit, activeZonesOnly, replayStart, replayAt }),
+    queryKey: ["chart", mode, symbol, timeframe, limit, startIndex, activeZonesOnly, selectedPlaybooks, replayStart, replayAt],
+    queryFn: () => fetchChartPayload({ symbol, timeframe, limit, startIndex, activeZonesOnly, selectedPlaybooks, replayStart, replayAt }),
     placeholderData: isReplayRoute ? keepPreviousData : undefined,
     staleTime: 10_000,
     enabled: !isReplayRoute || (replayStart !== null && replayAt !== null),
@@ -41,7 +43,7 @@ export function App() {
   useEffect(() => {
     setReplayIndex(0);
     setReplayPlaying(false);
-  }, [symbol, timeframe, limit]);
+  }, [symbol, timeframe, limit, startIndex]);
 
   useEffect(() => {
     if (!isReplayRoute || !replayPlaying || replayTimes.length === 0) return;
@@ -73,7 +75,7 @@ export function App() {
   );
 
   return (
-    <div className="grid min-h-screen grid-rows-[auto_1fr] bg-ink-950 text-slate-100">
+    <div className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-950 text-slate-100">
       <TopBar mode={mode} isFetching={chartQuery.isFetching || timelineQuery.isFetching} onRefresh={() => chartQuery.refetch()} />
       <main className="grid min-h-0 grid-cols-[minmax(0,1fr)_340px]">
         <section className={`grid min-h-0 ${isReplayRoute ? "grid-rows-[auto_auto_minmax(0,1fr)]" : "grid-rows-[auto_minmax(0,1fr)]"}`}>
@@ -94,7 +96,7 @@ export function App() {
               </div>
             </div>
           ) : chartQuery.data ? (
-            <TradingChart payload={chartQuery.data} />
+            <TradingChart payload={chartQuery.data} onEntityCreated={() => chartQuery.refetch()} />
           ) : (
             <div className="grid place-items-center bg-ink-950 text-sm text-slate-500">Loading chart...</div>
           )}

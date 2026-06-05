@@ -37,16 +37,91 @@ trend_min_bos = 2
 range_efficiency_max = 0.25
 
 [zones.support_resistance]
-detector = "sr_v1"
-tolerance_pct = 0.0015
+detector = "sr_v2"
+tolerance_pct = 0.0005
 min_zone_width = 1.0
+atr_width_multiplier = 0.25
 min_touches = 2
 lookback_swings = 300
 max_zones = 40
 
 [zones.lifecycle]
 close_break_buffer = 0.0
+close_break_buffer_atr_multiplier = 0.15
 recent_touch_lookback_candles = 80
-age_decay_per_100_candles = 0.08
-freshness_bonus = 0.15
+age_decay_per_100_candles = 0.06
+freshness_bonus = 0.12
 invalidation_weight_multiplier = 0.15
+
+[zones.reaction]
+reaction_window_candles = 5
+min_reaction_atr = 0.8
+strong_reaction_atr = 1.5
+recent_reaction_count = 3
+follow_through_close_required = true
+
+[zones.decay]
+max_healthy_touches = 3
+weak_touch_penalty = 0.08
+too_many_touches_penalty = 0.06
+linger_penalty = 0.10
+
+[zones.smc]
+max_candles = 5000
+lookback_swings = 300
+fvg_middle_candle_atr_multiplier = 2.0
+fvg_gap_atr_ratio = 0.25
+fvg_min_width_atr_ratio = 1.0
+fvg_h1_max_active_days = 2.0
+fvg_h1_decay_start_days = 0.75
+fvg_m15_max_active_days = 1.0
+fvg_m15_decay_start_days = 0.5
+ob_displacement_atr_multiplier = 1.5
+ob_min_body_ratio = 0.60
+ob_min_width_atr_ratio = 0.05
+ob_max_width_atr_ratio = 1.0
+ob_require_structure_break = true
+ob_merge_overlap_ratio = 0.60
+ob_h1_max_active_days = 3.0
+ob_h1_decay_start_days = 1.0
+ob_m15_max_active_days = 2.0
+ob_m15_decay_start_days = 1.0
+max_fvg_zones = 80
+max_order_block_zones = 60
+max_liquidity_zones = 80
+max_consolidation_zones = 30
+
+[price_action]
+detector = "price_action_v1"
+timeframe = "M15"
+atr_period = 14
+displacement_atr_multiplier = 1.5
+displacement_body_ratio = 0.60
+pinbar_wick_body_ratio = 2.0
+pinbar_min_wick_ratio = 0.55
+engulfing_min_body_ratio = 0.45
+marubozu_min_body_ratio = 0.75
+star_large_body_ratio = 0.45
+star_small_body_ratio = 0.35
+
+[strategy]
+timeframe = "M15"
+atr_period = 14
+approach_atr_multiplier = 0.5
+breakout_buffer_atr_multiplier = 0.15
+waiting_candles = 4
+min_risk_reward = 2.0
+max_eligible = 3
+max_waiting = 5
+
+[strategy.playbooks.trend_pullback]
+fvg_min_width_atr = 1.5
+fvg_max_width_atr = 4.0
+
+[backtest]
+auto_accept = true
+spread = 0.30
+slippage = 0.10
+max_hold_candles = 96
+warmup_candles = 80
+zone_snapshot_candles = 600

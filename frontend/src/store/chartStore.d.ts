@@ -1,18 +1,71 @@
-import type { SelectedEntity, Timeframe } from "../types";
+import type { AddEntityKind, PlaybookKey, PriceZone, SelectedEntity, Timeframe, ZoneFocusRequest, ZoneTypeVisibility, ZoneVisibilityKey } from "../types";
+export declare const defaultZoneTypeVisibility: ZoneTypeVisibility;
+export declare const defaultSelectedPlaybooks: PlaybookKey[];
+export declare const playbookLayerRequirements: Record<PlaybookKey, {
+    zones: ZoneVisibilityKey[];
+    structure: boolean;
+}>;
 type ChartState = {
     symbol: string;
     timeframe: Timeframe;
     limit: number;
+    startIndex: number | null;
     activeZonesOnly: boolean;
     showZones: boolean;
+    zoneTypeVisibility: ZoneTypeVisibility;
     showStructure: boolean;
+    importantZonesOnly: boolean;
+    maxVisibleZones: number;
+    selectedPlaybooks: PlaybookKey[];
+    addEntityKind: AddEntityKind | null;
     selected: SelectedEntity | null;
+    zoneFocusRequest: ZoneFocusRequest | null;
     setTimeframe: (timeframe: Timeframe) => void;
     setLimit: (limit: number) => void;
+    setStartIndex: (startIndex: number | null) => void;
+    shiftStartIndex: (delta: number) => void;
     setActiveZonesOnly: (activeZonesOnly: boolean) => void;
     setShowZones: (showZones: boolean) => void;
+    setZoneTypeVisible: (zoneType: ZoneVisibilityKey, visible: boolean) => void;
+    setAllZoneTypesVisible: (visible: boolean) => void;
     setShowStructure: (showStructure: boolean) => void;
+    setImportantZonesOnly: (importantZonesOnly: boolean) => void;
+    setMaxVisibleZones: (maxVisibleZones: number) => void;
+    setSelectedPlaybooks: (playbooks: PlaybookKey[]) => void;
+    toggleSelectedPlaybook: (playbook: PlaybookKey, enabled: boolean) => void;
+    setAddEntityKind: (kind: AddEntityKind | null) => void;
     setSelected: (selected: SelectedEntity | null) => void;
+    focusZone: (zone: PriceZone) => void;
 };
-export declare const useChartStore: import("zustand").UseBoundStore<import("zustand").StoreApi<ChartState>>;
+export declare const useChartStore: import("zustand").UseBoundStore<Omit<import("zustand").StoreApi<ChartState>, "setState" | "persist"> & {
+    setState(partial: ChartState | Partial<ChartState> | ((state: ChartState) => ChartState | Partial<ChartState>), replace?: false | undefined): unknown;
+    setState(state: ChartState | ((state: ChartState) => ChartState), replace: true): unknown;
+    persist: {
+        setOptions: (options: Partial<import("zustand/middleware").PersistOptions<ChartState, {
+            activeZonesOnly: boolean;
+            showZones: boolean;
+            zoneTypeVisibility: ZoneTypeVisibility;
+            showStructure: boolean;
+            importantZonesOnly: boolean;
+            maxVisibleZones: number;
+            selectedPlaybooks: PlaybookKey[];
+            startIndex: number | null;
+        }, unknown>>) => void;
+        clearStorage: () => void;
+        rehydrate: () => Promise<void> | void;
+        hasHydrated: () => boolean;
+        onHydrate: (fn: (state: ChartState) => void) => () => void;
+        onFinishHydration: (fn: (state: ChartState) => void) => () => void;
+        getOptions: () => Partial<import("zustand/middleware").PersistOptions<ChartState, {
+            activeZonesOnly: boolean;
+            showZones: boolean;
+            zoneTypeVisibility: ZoneTypeVisibility;
+            showStructure: boolean;
+            importantZonesOnly: boolean;
+            maxVisibleZones: number;
+            selectedPlaybooks: PlaybookKey[];
+            startIndex: number | null;
+        }, unknown>>;
+    };
+}>;
 export {};

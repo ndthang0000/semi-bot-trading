@@ -15,6 +15,9 @@ from .db import connect, init_db
 from .replay_chart import build_realtime_replay_payload
 
 
+MAX_CHART_LIMIT = 15_000
+
+
 class ZoneOverrideRequest(BaseModel):
     price_low: float
     price_high: float
@@ -24,6 +27,24 @@ class ZoneOverrideRequest(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     status: str = "active"
     no_expiry: bool = False
+    expires_at: str | None = None
+    reason: str | None = None
+
+
+class ZoneCreateRequest(BaseModel):
+    symbol: str | None = None
+    timeframe: str = "H1"
+    zone_type: str
+    direction: str
+    price_low: float
+    price_high: float
+    visual_start: str
+    visual_end: str | None = None
+    weight: float = Field(default=0.75, ge=0, le=1)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    status: str = "active"
+    client_kind: str | None = None
+    no_expiry: bool = True
     expires_at: str | None = None
     reason: str | None = None
 
@@ -70,14 +91,17 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     def chart(
         symbol: str = Query(default=None),
         timeframe: str = Query(default="M15"),
-        limit: int = Query(default=300, ge=1, le=3000),
+        limit: int = Query(default=300, ge=1, le=MAX_CHART_LIMIT),
+        start_index: int | None = Query(default=None, ge=0),
         start: str | None = None,
         end: str | None = None,
         replay_at: str | None = None,
         replay_start: str | None = None,
         active_zones_only: bool = False,
+        playbooks: str | None = None,
     ) -> dict[str, Any]:
         try:
+            allowed_playbooks = parse_playbooks(playbooks)
             with connect(config.database) as conn:
                 init_db(conn)
                 expire_context_overrides(conn, utc_now_iso())
@@ -93,16 +117,20 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                         replay_start=replay_start,
                         replay_at=replay_at,
                         active_zones_only=active_zones_only,
+                        allowed_playbooks=allowed_playbooks,
                     )
                 payload = build_chart_payload(
                     conn,
                     symbol=symbol or config.symbol,
                     timeframe=timeframe.upper(),
                     limit=limit,
+                    start_index=start_index,
                     start=start,
                     end=end,
                     active_zones_only=active_zones_only,
                     structure_timeframe=config.bias.timeframe,
+                    strategy_config=config.strategy,
+                    allowed_playbooks=allowed_playbooks,
                 )
                 return payload
         except ValueError as exc:
@@ -112,29 +140,56 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     def replay_timeline(
         symbol: str = Query(default=None),
         timeframe: str = Query(default="M15"),
-        limit: int = Query(default=300, ge=1, le=3000),
+        limit: int = Query(default=300, ge=1, le=MAX_CHART_LIMIT),
+        start_index: int | None = Query(default=None, ge=0),
     ) -> dict[str, Any]:
         with connect(config.database) as conn:
             init_db(conn)
-            rows = conn.execute(
-                """
-                SELECT open_time
-                FROM (
+            resolved_symbol = symbol or config.symbol
+            resolved_timeframe = timeframe.upper()
+            total_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM candles
+                    WHERE symbol = ? AND timeframe = ?
+                    """,
+                    (resolved_symbol, resolved_timeframe),
+                ).fetchone()["count"]
+            )
+            if start_index is None:
+                rows = conn.execute(
+                    """
+                    SELECT open_time
+                    FROM (
+                        SELECT open_time
+                        FROM candles
+                        WHERE symbol = ? AND timeframe = ?
+                        ORDER BY open_time DESC
+                        LIMIT ?
+                    )
+                    ORDER BY open_time
+                    """,
+                    (resolved_symbol, resolved_timeframe, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
                     SELECT open_time
                     FROM candles
                     WHERE symbol = ? AND timeframe = ?
-                    ORDER BY open_time DESC
-                    LIMIT ?
-                )
-                ORDER BY open_time
-                """,
-                (symbol or config.symbol, timeframe.upper(), limit),
-            ).fetchall()
+                    ORDER BY open_time
+                    LIMIT ? OFFSET ?
+                    """,
+                    (resolved_symbol, resolved_timeframe, limit, start_index),
+                ).fetchall()
             times = [row["open_time"] for row in rows]
             return {
-                "symbol": symbol or config.symbol,
-                "timeframe": timeframe.upper(),
+                "symbol": resolved_symbol,
+                "timeframe": resolved_timeframe,
                 "limit": limit,
+                "start_index": start_index,
+                "total_count": total_count,
                 "times": times,
                 "start": times[0] if times else None,
                 "end": times[-1] if times else None,
@@ -262,6 +317,188 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 """,
                 (zone_id,),
             ).fetchone()
+            conn.commit()
+            return zone_row_to_chart(updated)
+
+    @app.post("/api/zones")
+    def create_zone(request: ZoneCreateRequest = Body(...)) -> dict[str, Any]:
+        if request.price_low >= request.price_high:
+            raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
+        if request.status not in {"active", "disabled"}:
+            raise HTTPException(status_code=422, detail="status must be active or disabled")
+        try:
+            validate_zone_type(request.zone_type, request.direction)
+        except ValueErrorForApi as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        symbol = request.symbol or config.symbol
+        timeframe = request.timeframe.upper()
+        now = utc_now_iso()
+        expires_at = resolve_override_expiry(now, request.no_expiry, request.expires_at)
+        start_time = request.visual_start
+        end_time = request.visual_end
+        if request.status == "disabled":
+            end_time = end_time or latest_candle_time_for_create(symbol, timeframe, config.database) or now
+        try:
+            start_dt = datetime.fromisoformat(start_time)
+            end_dt = datetime.fromisoformat(end_time) if end_time else None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="visual_start and visual_end must be ISO datetimes") from exc
+        if end_dt is not None and start_dt >= end_dt:
+            raise HTTPException(status_code=422, detail="visual_start must be before visual_end")
+
+        zone_id = f"human-zone-{uuid.uuid4()}"
+        override_id = str(uuid.uuid4())
+        metadata = {
+            "human_created": True,
+            "human_adjusted": True,
+            "add_entity_kind": request.client_kind,
+            "last_human_override_id": override_id,
+            "last_human_override_at": now,
+            "last_human_override_reason": request.reason,
+        }
+        valid_until = end_time if request.status == "disabled" else expires_at
+        with connect(config.database) as conn:
+            init_db(conn)
+            conn.execute(
+                """
+                INSERT INTO price_zones (
+                    id, symbol, timeframe, detector, zone_type, direction, price_low, price_high,
+                    start_time, end_time, valid_from, valid_until, invalidated_at,
+                    invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
+                    effective_confidence, effective_weight, status, source, metadata_json
+                )
+                VALUES (?, ?, ?, 'human_manual_v1', ?, ?, ?, ?,
+                        ?, ?, ?, ?, NULL,
+                        NULL, ?, ?, ?,
+                        ?, ?, ?, 'human', ?)
+                """,
+                (
+                    zone_id,
+                    symbol,
+                    timeframe,
+                    request.zone_type,
+                    request.direction,
+                    request.price_low,
+                    request.price_high,
+                    start_time,
+                    end_time,
+                    start_time,
+                    valid_until,
+                    start_time,
+                    request.confidence,
+                    request.weight,
+                    request.confidence,
+                    request.weight,
+                    request.status,
+                    json.dumps(metadata, sort_keys=True),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO overrides (
+                    id, target_entity_type, target_entity_id, override_type, patch_json,
+                    reason, created_by, created_at, expires_at, status
+                )
+                VALUES (?, 'price_zone', ?, 'create_manual_zone', ?, ?, 'human', ?, ?, 'active')
+                """,
+                (
+                    override_id,
+                    zone_id,
+                    json.dumps(
+                        {
+                            "after": {
+                                "zone_type": request.zone_type,
+                                "direction": request.direction,
+                                "price_low": request.price_low,
+                                "price_high": request.price_high,
+                                "start_time": start_time,
+                                "end_time": end_time,
+                                "effective_weight": request.weight,
+                                "effective_confidence": request.confidence,
+                                "status": request.status,
+                                "source": "human",
+                                "valid_until": valid_until,
+                            },
+                            "no_expiry": request.no_expiry,
+                        },
+                        sort_keys=True,
+                    ),
+                    request.reason,
+                    now,
+                    expires_at,
+                ),
+            )
+            row = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
+            conn.commit()
+            return zone_row_to_chart(row)
+
+    @app.delete("/api/zones/{zone_id}")
+    def delete_zone(zone_id: str, reason: str | None = None) -> dict[str, Any]:
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
+
+            before = zone_row_to_chart(row)
+            end_time = row["end_time"] or latest_candle_time(conn, row["symbol"], row["timeframe"]) or now
+            override_id = str(uuid.uuid4())
+            metadata = json_loads(row["metadata_json"], {})
+            metadata.update(
+                {
+                    "human_deleted": True,
+                    "human_adjusted": True,
+                    "last_human_override_id": override_id,
+                    "last_human_override_at": now,
+                    "last_human_override_action": "delete_zone",
+                    "last_human_override_reason": reason,
+                }
+            )
+            source = "human" if row["source"] == "human" else "mixed"
+            conn.execute(
+                """
+                INSERT INTO overrides (
+                    id, target_entity_type, target_entity_id, override_type, patch_json,
+                    reason, created_by, created_at, expires_at, status
+                )
+                VALUES (?, 'price_zone', ?, 'delete_manual_zone', ?, ?, 'human', ?, ?, 'active')
+                """,
+                (
+                    override_id,
+                    zone_id,
+                    json.dumps(
+                        {
+                            "before": before,
+                            "after": {
+                                "status": "deleted",
+                                "end_time": end_time,
+                                "source": source,
+                                "valid_until": end_time,
+                            },
+                        },
+                        sort_keys=True,
+                    ),
+                    reason,
+                    now,
+                    end_time,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE price_zones
+                SET status = 'deleted',
+                    end_time = ?,
+                    valid_until = ?,
+                    source = ?,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (end_time, end_time, source, json.dumps(metadata, sort_keys=True), zone_id),
+            )
+            updated = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
             conn.commit()
             return zone_row_to_chart(updated)
 
@@ -430,6 +667,13 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def parse_playbooks(value: str | None) -> set[str] | None:
+    if value is None:
+        return None
+    playbooks = {item.strip() for item in value.split(",") if item.strip()}
+    return playbooks
+
+
 def resolve_override_expiry(now_iso: str, no_expiry: bool, expires_at: str | None) -> str | None:
     if no_expiry:
         return None
@@ -510,6 +754,28 @@ def validate_regime_overlays(overlays: list[str]) -> None:
     invalid = sorted(set(overlays) - allowed)
     if invalid:
         raise ValueErrorForApi(f"Invalid regime overlays: {', '.join(invalid)}")
+
+
+def validate_zone_type(zone_type: str, direction: str) -> None:
+    allowed = {
+        "support": {"bullish"},
+        "resistance": {"bearish"},
+        "order_block": {"bullish", "bearish"},
+        "fvg": {"bullish", "bearish"},
+        "consolidation": {"neutral"},
+        "liquidity_pool": {"bullish", "bearish", "neutral"},
+    }
+    if zone_type not in allowed:
+        raise ValueErrorForApi(f"zone_type must be one of: {', '.join(sorted(allowed))}")
+    if direction not in allowed[zone_type]:
+        valid_directions = ", ".join(sorted(allowed[zone_type]))
+        raise ValueErrorForApi(f"direction for {zone_type} must be one of: {valid_directions}")
+
+
+def latest_candle_time_for_create(symbol: str, timeframe: str, database: Path | str) -> str | None:
+    with connect(database) as conn:
+        init_db(conn)
+        return latest_candle_time(conn, symbol, timeframe)
 
 
 class ValueErrorForApi(ValueError):

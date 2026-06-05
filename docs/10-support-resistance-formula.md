@@ -1,27 +1,47 @@
-# Support / Resistance Formula
+# Support / Resistance Formula V2
 
-Tài liệu này ghi lại công thức SR hiện tại của MVP. Mục tiêu là có một nguồn tham chiếu rõ ràng để sau này điều chỉnh detector, touch, weight và invalidation mà không phải đọc lại toàn bộ code.
+Tài liệu này mô tả cách detector xác định, chấm điểm, cập nhật và invalidate các vùng Support / Resistance theo hướng **zone-based + reaction-quality-based**.
 
-Code chính: `semi_bot_trading/zones.py`
+Mục tiêu của V2:
 
-Config chính: `config/trading.toml`
+- Không chỉ đếm số lần giá chạm zone.
+- Phân biệt touch tốt và touch yếu.
+- Tăng weight cho vùng có phản ứng thật sự mạnh.
+- Giảm weight cho vùng bị test quá nhiều nhưng không còn phản ứng.
+- Dùng ATR để scale zone width theo volatility.
+- Tách score thành các thành phần rõ ràng, dễ debug và optimize.
+
+Code chính:
+
+```text
+semi_bot_trading/zones.py
+```
+
+Config chính:
+
+```text
+config/trading.toml
+```
+
+---
 
 ## 1. Input
 
-SR detector không đọc trực tiếp từ tất cả candle. Nó lấy input từ các swing đã được market structure detector xác nhận.
+SR detector không đọc trực tiếp từ toàn bộ candle để tạo zone ban đầu. Nó lấy input chính từ các swing đã được market structure detector xác nhận.
 
 - `Swing High` dùng để tạo `resistance`.
 - `Swing Low` dùng để tạo `support`.
 - Swing hiện tại được lấy từ detector `swing_v1`.
-- Timeframe hiện tại dùng theo chart/replay, MVP chủ yếu là `H1`.
+- Timeframe MVP chủ yếu là `H1`.
 
-Config hiện tại:
+Config đề xuất:
 
 ```toml
 [zones.support_resistance]
-detector = "sr_v1"
-tolerance_pct = 0.0015
+detector = "sr_v2"
+tolerance_pct = 0.0005
 min_zone_width = 1.0
+atr_width_multiplier = 0.25
 min_touches = 2
 lookback_swings = 300
 max_zones = 40
@@ -29,11 +49,14 @@ max_zones = 40
 
 Ý nghĩa:
 
-- `tolerance_pct`: khoảng sai số theo phần trăm giá để gom các swing gần nhau.
-- `min_zone_width`: độ rộng tối thiểu của vùng giá.
-- `min_touches`: số swing tối thiểu trong một cụm để tạo thành SR zone.
+- `tolerance_pct`: khoảng sai số theo phần trăm giá để gom swing gần nhau.
+- `min_zone_width`: độ rộng tối thiểu của vùng.
+- `atr_width_multiplier`: dùng ATR để tránh zone quá hẹp hoặc quá rộng.
+- `min_touches`: số swing tối thiểu trong một cụm để tạo zone.
 - `lookback_swings`: số swing gần nhất được đưa vào detector.
 - `max_zones`: số vùng tối đa trả về.
+
+---
 
 ## 2. Gom Swing Thành Cụm
 
@@ -44,12 +67,15 @@ resistance_candidates = all swings where swing_type == "high"
 support_candidates    = all swings where swing_type == "low"
 ```
 
-Các swing được sort theo giá tăng dần. Mỗi swing sẽ được so với center của từng cluster hiện có.
+Các swing được sort theo giá tăng dần. Mỗi swing được so với center của từng cluster hiện có.
 
-Công thức tolerance:
+Công thức tolerance V2:
 
 ```text
-tolerance = max(cluster_center * tolerance_pct, min_zone_width)
+raw_pct_width = cluster_center * tolerance_pct
+atr_width     = ATR(14) * atr_width_multiplier
+
+tolerance = max(raw_pct_width, atr_width, min_zone_width)
 ```
 
 Nếu:
@@ -62,15 +88,13 @@ thì swing đó được thêm vào cluster hiện tại.
 
 Nếu không match cluster nào, bot tạo cluster mới.
 
-Ví dụ với XAUUSD quanh giá `5000`:
+Lý do dùng ATR:
 
-```text
-tolerance = max(5000 * 0.0015, 1.0)
-          = max(7.5, 1.0)
-          = 7.5
-```
+- XAUUSD có volatility thay đổi rất mạnh theo từng giai đoạn.
+- Fixed percentage có thể tạo zone quá rộng khi giá cao.
+- ATR giúp zone phản ánh volatility hiện tại tốt hơn.
 
-Nghĩa là các Swing High gần nhau trong khoảng khoảng `7.5 giá` quanh cluster center có thể được gom vào cùng một resistance.
+---
 
 ## 3. Điều Kiện Tạo Zone
 
@@ -80,13 +104,15 @@ Một cluster chỉ trở thành zone khi:
 len(cluster.points) >= min_touches
 ```
 
-Config hiện tại:
+Config mặc định:
 
 ```text
 min_touches = 2
 ```
 
 Tức là ít nhất 2 swing high gần nhau mới tạo resistance, hoặc ít nhất 2 swing low gần nhau mới tạo support.
+
+---
 
 ## 4. Công Thức Biên Zone
 
@@ -95,17 +121,23 @@ Với mỗi cluster hợp lệ:
 ```text
 prices = all swing prices in cluster
 center = average(prices)
-half_width = max(center * tolerance_pct, min_zone_width)
+
+raw_pct_width = center * tolerance_pct
+atr_width     = ATR(14) * atr_width_multiplier
+half_width    = max(raw_pct_width, atr_width, min_zone_width)
 
 price_low  = min(prices) - half_width
 price_high = max(prices) + half_width
 ```
 
-Zone metadata lưu thêm:
+Zone metadata nên lưu:
 
 ```text
 center
+half_width
+atr_at_detection
 tolerance_pct
+atr_width_multiplier
 min_zone_width
 swing_point_ids
 swing_point_times
@@ -133,35 +165,11 @@ if cluster.swing_type == "low":
     direction = "bullish"
 ```
 
-## 5. Touch Count
+---
 
-Hiện tại có 2 loại touch.
+## 5. Touch Detection
 
-### 5.1. Base Touch
-
-Base touch là số swing tạo nên zone:
-
-```text
-touch_count_base = len(cluster.points)
-```
-
-Khi zone mới được tạo:
-
-```text
-metadata.touch_count = touch_count_base
-```
-
-Ví dụ 3 Swing High gần nhau tạo resistance:
-
-```text
-touch_count_base = 3
-```
-
-### 5.2. Touch Sau Khi Zone Được Detect
-
-Sau khi zone được tạo, lifecycle sẽ quét các candle từ `zone.detected_at` trở đi.
-
-Candle được xem là chạm zone nếu:
+V1 chỉ tính touch khi candle overlap zone:
 
 ```text
 candle.high >= zone.price_low
@@ -169,171 +177,313 @@ and
 candle.low <= zone.price_high
 ```
 
-Tức là chỉ cần range của candle overlap vùng giá là tính touch.
+V2 vẫn dùng overlap để detect touch ban đầu, nhưng phải phân loại touch.
 
-Để tránh đếm spam, nếu nhiều candle liên tiếp nằm trong zone thì chỉ tính là 1 touch. Logic này dùng biến `in_touch`:
+---
 
-```text
-if candle overlaps zone and not in_touch:
-    touch_count_after_detection += 1
-    last_touch_time = candle.open_time
+## 6. Touch Classification
 
-in_touch = candle overlaps zone
-```
+Mỗi lần candle chạm zone, phân loại thành các nhóm sau.
 
-Tổng touch:
+### 6.1. Wick Touch
 
-```text
-touch_count_total = touch_count_base + touch_count_after_detection
-```
+Giá chỉ râu nến chạm zone, body đóng ngoài zone.
 
-## 6. Confidence
-
-Khi zone mới được tạo từ cluster:
+Support wick touch:
 
 ```text
-confidence = min(0.35 + touch_count * 0.12, 1.0)
+candle.low <= zone.price_high
+AND candle.close > zone.price_high
 ```
 
-Sau lifecycle:
+Resistance wick touch:
 
 ```text
-confidence = min(0.35 + touch_count_total * 0.08, 1.0)
+candle.high >= zone.price_low
+AND candle.close < zone.price_low
 ```
 
-Nếu zone bị invalidated:
+Ý nghĩa:
+
+- Có rejection.
+- Nếu follow-through tốt thì đây là touch chất lượng.
+
+---
+
+### 6.2. Body Touch
+
+Body candle đi vào zone.
 
 ```text
-confidence = min(confidence, 0.25)
+body_low  = min(candle.open, candle.close)
+body_high = max(candle.open, candle.close)
+
+body_high >= zone.price_low
+AND body_low <= zone.price_high
 ```
 
-## 7. Weight Ban Đầu
+Ý nghĩa:
 
-Khi zone mới được tạo từ cluster:
+- Giá đã accept một phần trong zone.
+- Không xấu tuyệt đối, nhưng kém hơn wick rejection.
+
+---
+
+### 6.3. Close Inside Zone
+
+Candle đóng cửa bên trong zone.
 
 ```text
-touch_count = len(cluster.points)
-recency_rank = count(points where point.event_time >= latest_swing_time)
-
-weight = min(0.25 + touch_count * 0.10 + recency_rank * 0.10, 1.0)
+zone.price_low <= candle.close <= zone.price_high
 ```
 
-Lưu ý: `recency_rank` hiện tại thường chỉ cộng điểm cho cluster có chứa swing mới nhất trong toàn bộ input swings.
+Ý nghĩa:
 
-## 8. Weight Sau Lifecycle
+- Market đang cân bằng tại zone.
+- Nếu linger lâu, zone yếu dần.
 
-Sau khi lifecycle chạy, weight được tính lại theo công thức:
+---
+
+### 6.4. Clean Rejection Touch
+
+Touch được xem là clean rejection nếu:
+
+Support:
 
 ```text
-age_candles = number of candles from zone.detected_at to latest_time
-age_penalty = (age_candles / 100.0) * age_decay_per_100_candles
-touch_score = min(touch_count_total * 0.08, 0.45)
-
-weight = 0.30 + touch_score - age_penalty
+candle.low <= zone.price_high
+AND candle.close > zone.price_high
+AND lower_wick >= body * 1.5
+AND close_position >= 0.60
 ```
 
-Config hiện tại:
+Resistance:
+
+```text
+candle.high >= zone.price_low
+AND candle.close < zone.price_low
+AND upper_wick >= body * 1.5
+AND close_position <= 0.40
+```
+
+Trong đó:
+
+```text
+range = candle.high - candle.low
+body  = abs(candle.close - candle.open)
+
+close_position = (candle.close - candle.low) / range
+```
+
+---
+
+## 7. Reaction Quality After Touch
+
+Đây là phần quan trọng nhất của V2.
+
+Một zone không mạnh chỉ vì được chạm nhiều lần. Zone mạnh khi sau touch có phản ứng tốt.
+
+Reaction được đo trong `reaction_window_candles`.
+
+Config đề xuất:
 
 ```toml
-[zones.lifecycle]
-recent_touch_lookback_candles = 80
-age_decay_per_100_candles = 0.08
-freshness_bonus = 0.15
-invalidation_weight_multiplier = 0.15
+[zones.reaction]
+reaction_window_candles = 5
+min_reaction_atr = 0.8
+strong_reaction_atr = 1.5
+follow_through_close_required = true
 ```
 
-Nếu zone có touch gần đây:
+---
+
+## 8. Reaction Metrics
+
+### 8.1. Bounce Distance
+
+Support:
 
 ```text
-latest_index - last_touch_index <= recent_touch_lookback_candles
+bounce_distance = max(high of next N candles) - touch_low
 ```
 
-thì:
+Resistance:
 
 ```text
-weight += freshness_bonus
+bounce_distance = touch_high - min(low of next N candles)
 ```
 
-Nếu zone bị invalidated:
+Chuẩn hóa theo ATR:
 
 ```text
-weight *= invalidation_weight_multiplier
+bounce_atr = bounce_distance / ATR(14)
 ```
 
-Cuối cùng clamp:
+Score:
 
 ```text
-weight = min(max(weight, 0.05), 1.0)
+if bounce_atr >= strong_reaction_atr:
+    reaction_score += 0.20
+elif bounce_atr >= min_reaction_atr:
+    reaction_score += 0.10
+else:
+    reaction_score -= 0.08
 ```
 
-## 9. Invalidation
+---
 
-Resistance bị invalidated khi candle close vượt lên trên zone:
+### 8.2. Displacement After Touch
+
+Displacement là phản ứng mạnh sau khi chạm zone.
+
+Support bullish displacement:
 
 ```text
-candle.close > zone.price_high + close_break_buffer
+next_candle.close > next_candle.open
+AND body_size >= avg_body_20 * 1.3
+AND close_position >= 0.70
 ```
 
-Support bị invalidated khi candle close thủng xuống dưới zone:
+Resistance bearish displacement:
 
 ```text
-candle.close < zone.price_low - close_break_buffer
+next_candle.close < next_candle.open
+AND body_size >= avg_body_20 * 1.3
+AND close_position <= 0.30
 ```
 
-Config hiện tại:
+Score:
 
 ```text
-close_break_buffer = 0.0
+if displacement_after_touch:
+    reaction_score += 0.20
 ```
 
-Khi invalidated:
+---
+
+### 8.3. Momentum Follow-Through
+
+Sau touch, giá phải tiếp tục đi đúng hướng ít nhất vài candle.
+
+Support:
 
 ```text
-status = "invalidated"
-end_time = invalidated_at
-valid_until = invalidated_at
-metadata.invalidation_reason = "close_beyond_zone"
+close_after_N > touch_candle.close
 ```
 
-## 10. Sorting
-
-Sau khi detect xong, zones được sort:
+Resistance:
 
 ```text
-ORDER BY effective_weight DESC, detected_at DESC
+close_after_N < touch_candle.close
 ```
 
-Sau đó chỉ lấy:
+Score:
 
 ```text
-max_zones = 40
+if momentum_follow_through:
+    reaction_score += 0.15
+else:
+    reaction_score -= 0.05
 ```
 
-## 11. Hạn Chế Hiện Tại
+---
 
-Logic hiện tại đủ cho MVP và replay debug, nhưng còn đơn giản:
+### 8.4. Wick Absorption
 
-- Touch chỉ dựa vào candle overlap zone, chưa xét rejection thật sự.
-- Chưa phân biệt wick touch, body touch, close inside zone.
-- Chưa xét candle phản ứng sau touch.
-- Chưa xét liquidity sweep quanh SR.
-- Chưa xét BOS/CHOCH sau khi chạm vùng.
-- Chưa xét volume/tick volume.
-- `tolerance_pct = 0.0015` có thể làm vùng XAUUSD hơi rộng ở một số giai đoạn.
-- Weight chưa xét khoảng cách từ giá hiện tại tới zone.
-- Weight chưa xét confluence với OB/FVG/bias/regime.
+Wick absorption thể hiện giá quét vào zone nhưng bị đẩy ngược ra.
 
-## 12. Ý Tưởng Điều Chỉnh Sau
+Support:
 
-Các hướng nâng cấp nên cân nhắc:
+```text
+lower_wick / range >= 0.45
+AND close_position >= 0.60
+```
 
-- Tách `touch_strength` theo wick rejection, body rejection, close rejection.
-- Giảm weight nếu zone bị test quá nhiều lần mà phản ứng yếu.
-- Tăng weight nếu touch đi kèm liquidity sweep rồi reject.
-- Tăng weight nếu zone cùng hướng với H1 bias hoặc playbook hiện tại.
-- Dùng ATR-based width thay vì chỉ dùng phần trăm giá.
-- Tính `freshness` theo thời gian thực thay vì số candle.
-- Tách score thành nhiều thành phần rõ ràng:
+Resistance:
+
+```text
+upper_wick / range >= 0.45
+AND close_position <= 0.40
+```
+
+Score:
+
+```text
+if wick_absorption:
+    reaction_score += 0.12
+```
+
+---
+
+### 8.5. Clean Rejection
+
+Clean rejection là touch nhanh, reject rõ, không linger.
+
+Điều kiện:
+
+```text
+touch_duration_candles <= 2
+AND clean_rejection_touch == true
+```
+
+Score:
+
+```text
+if clean_rejection:
+    reaction_score += 0.12
+```
+
+Nếu giá nằm trong zone quá lâu:
+
+```text
+if touch_duration_candles >= 4:
+    reaction_score -= 0.10
+```
+
+---
+
+## 9. Level Decay
+
+Một zone không phải càng nhiều touch càng mạnh mãi mãi.
+
+V2 dùng logic:
+
+- Touch đầu tiên và thứ hai thường có giá trị cao.
+- Từ touch thứ ba trở đi, nếu phản ứng yếu thì zone bắt đầu bị consume.
+- Nếu giá linger lâu trong zone, zone yếu.
+- Nếu breakout mạnh khỏi zone, zone bị invalidated hoặc chuyển trạng thái.
+
+Config đề xuất:
+
+```toml
+[zones.decay]
+max_healthy_touches = 3
+weak_touch_penalty = 0.08
+too_many_touches_penalty = 0.06
+linger_penalty = 0.10
+```
+
+Công thức:
+
+```text
+if touch_count_total > max_healthy_touches:
+    weight -= (touch_count_total - max_healthy_touches) * too_many_touches_penalty
+```
+
+Nếu touch gần nhất có reaction yếu:
+
+```text
+if latest_reaction_score < 0:
+    weight -= weak_touch_penalty
+```
+
+---
+
+## 10. Zone Weight V2
+
+Không dùng một công thức weight đơn giản dựa chủ yếu vào touch count nữa.
+
+Công thức đề xuất:
 
 ```text
 weight =
@@ -344,6 +494,465 @@ weight =
   + confluence_score
   - age_penalty
   - mitigation_penalty
+  - overtest_penalty
   - invalidation_penalty
 ```
 
+Sau đó clamp:
+
+```text
+weight = min(max(weight, 0.05), 1.0)
+```
+
+---
+
+## 11. Weight Components
+
+### 11.1. Base Score
+
+```text
+base_score = 0.25
+```
+
+---
+
+### 11.2. Touch Score
+
+Touch score không nên tăng vô hạn.
+
+```text
+touch_score = min(touch_count_total * 0.06, 0.24)
+```
+
+---
+
+### 11.3. Recency Score
+
+Nếu zone có touch gần đây:
+
+```text
+if latest_index - last_touch_index <= recent_touch_lookback_candles:
+    recency_score = 0.12
+else:
+    recency_score = 0.00
+```
+
+---
+
+### 11.4. Reaction Score
+
+Reaction score là tổng các reaction quality gần đây, nhưng nên giới hạn.
+
+```text
+reaction_score = clamp(avg_recent_reaction_score, -0.20, 0.35)
+```
+
+Chỉ lấy các touch gần đây nhất, ví dụ:
+
+```text
+recent_reaction_count = 3
+```
+
+---
+
+### 11.5. Confluence Score
+
+Confluence có thể thêm sau.
+
+Ví dụ:
+
+```text
+if zone aligns with HTF bias:
+    confluence_score += 0.08
+
+if zone near EMA50 or EMA200:
+    confluence_score += 0.04
+
+if zone aligns with Fibonacci pullback:
+    confluence_score += 0.05
+
+if zone near session high/low:
+    confluence_score += 0.05
+```
+
+Clamp:
+
+```text
+confluence_score = min(confluence_score, 0.15)
+```
+
+---
+
+### 11.6. Age Penalty
+
+```text
+age_candles = number of candles from zone.detected_at to latest_time
+age_penalty = (age_candles / 100.0) * age_decay_per_100_candles
+```
+
+Config:
+
+```toml
+[zones.lifecycle]
+age_decay_per_100_candles = 0.06
+```
+
+---
+
+### 11.7. Overtest Penalty
+
+```text
+if touch_count_total > max_healthy_touches:
+    overtest_penalty = (touch_count_total - max_healthy_touches) * 0.06
+else:
+    overtest_penalty = 0
+```
+
+---
+
+### 11.8. Mitigation Penalty
+
+Nếu giá đã đi xuyên sâu vào zone nhiều lần nhưng chưa invalidate:
+
+```text
+penetration_ratio = max_penetration_depth / zone_width
+```
+
+```text
+if penetration_ratio > 0.70:
+    mitigation_penalty += 0.12
+elif penetration_ratio > 0.50:
+    mitigation_penalty += 0.06
+```
+
+Ý nghĩa:
+
+- Zone đã bị consume một phần.
+- Không nên giữ weight cao như zone fresh.
+
+---
+
+### 11.9. Invalidation Penalty
+
+Nếu zone bị invalidated:
+
+```text
+invalidation_penalty = 0.70
+```
+
+Hoặc đơn giản:
+
+```text
+weight *= invalidation_weight_multiplier
+```
+
+Config:
+
+```toml
+[zones.lifecycle]
+invalidation_weight_multiplier = 0.15
+```
+
+---
+
+## 12. Confidence V2
+
+Confidence không nên giống weight.
+
+- `weight`: zone có đáng ưu tiên không.
+- `confidence`: detector có chắc đây là zone thật không.
+
+Công thức đề xuất:
+
+```text
+confidence =
+    0.30
+  + min(touch_count_total * 0.08, 0.25)
+  + min(abs(avg_reaction_score), 0.20)
+  - invalidation_penalty
+```
+
+Clamp:
+
+```text
+confidence = min(max(confidence, 0.05), 1.0)
+```
+
+Nếu zone bị invalidated:
+
+```text
+confidence = min(confidence, 0.25)
+```
+
+---
+
+## 13. Invalidation V2
+
+Resistance bị invalidated khi candle close vượt lên trên zone với buffer:
+
+```text
+candle.close > zone.price_high + close_break_buffer
+```
+
+Support bị invalidated khi candle close thủng xuống dưới zone với buffer:
+
+```text
+candle.close < zone.price_low - close_break_buffer
+```
+
+Config đề xuất:
+
+```toml
+[zones.lifecycle]
+close_break_buffer_atr_multiplier = 0.15
+```
+
+Công thức:
+
+```text
+close_break_buffer = ATR(14) * close_break_buffer_atr_multiplier
+```
+
+Nếu invalidated:
+
+```text
+status = "invalidated"
+end_time = invalidated_at
+valid_until = invalidated_at
+metadata.invalidation_reason = "close_beyond_zone"
+```
+
+---
+
+## 14. Flip Zone Logic Optional
+
+Khi resistance bị break mạnh, nó có thể trở thành support.
+
+Khi support bị break mạnh, nó có thể trở thành resistance.
+
+Chỉ flip nếu breakout có chất lượng.
+
+Resistance -> Support:
+
+```text
+close > zone.price_high + buffer
+AND breakout_body >= avg_body_20 * 1.3
+AND close_position >= 0.70
+```
+
+Support -> Resistance:
+
+```text
+close < zone.price_low - buffer
+AND breakout_body >= avg_body_20 * 1.3
+AND close_position <= 0.30
+```
+
+Khi flip:
+
+```text
+old_zone.status = "flipped"
+new_zone.zone_type = opposite_type
+new_zone.source_zone_id = old_zone.id
+new_zone.weight = old_zone.weight * 0.70
+```
+
+Lưu ý:
+
+- Không nên bật flip zone ngay nếu MVP chưa ổn.
+- Nên log và debug trước.
+
+---
+
+## 15. Sorting
+
+Zones được sort theo:
+
+```text
+ORDER BY effective_weight DESC, detected_at DESC
+```
+
+Nhưng khi dùng để trade, nên filter thêm theo khoảng cách tới giá hiện tại:
+
+```text
+distance_to_price = abs(current_price - zone.center)
+```
+
+Có thể ưu tiên zone gần giá hiện tại:
+
+```text
+tradable_zones = zones where distance_to_price <= ATR(14) * 3
+```
+
+---
+
+## 16. Debug Metadata Nên Lưu
+
+Mỗi zone nên lưu thêm metadata để debug:
+
+```text
+touch_count_base
+touch_count_after_detection
+touch_count_total
+
+last_touch_time
+last_touch_type
+last_reaction_score
+
+avg_reaction_score
+max_reaction_score
+weak_touch_count
+clean_rejection_count
+displacement_reaction_count
+momentum_follow_through_count
+
+age_candles
+overtest_penalty
+mitigation_penalty
+age_penalty
+confluence_score
+
+weight_components
+```
+
+`weight_components` nên lưu dạng dictionary:
+
+```json
+{
+  "base_score": 0.25,
+  "touch_score": 0.18,
+  "recency_score": 0.12,
+  "reaction_score": 0.22,
+  "confluence_score": 0.05,
+  "age_penalty": 0.04,
+  "overtest_penalty": 0.06,
+  "mitigation_penalty": 0.00,
+  "invalidation_penalty": 0.00
+}
+```
+
+---
+
+## 17. Pseudocode
+
+```text
+for each zone:
+    reset lifecycle metrics
+
+    for each candle after zone.detected_at:
+        if candle overlaps zone:
+            if not currently_in_touch:
+                start new touch event
+
+            update touch event duration
+            classify touch type
+            calculate penetration depth
+
+        else:
+            if currently_in_touch:
+                finalize touch event
+
+                reaction = measure_reaction_after_touch(
+                    zone,
+                    touch_event,
+                    next_N_candles
+                )
+
+                update reaction metrics
+                update touch_count
+
+            currently_in_touch = false
+
+    calculate age_penalty
+    calculate touch_score
+    calculate recency_score
+    calculate reaction_score
+    calculate overtest_penalty
+    calculate mitigation_penalty
+    calculate confluence_score
+
+    weight = combine components
+    confidence = calculate confidence
+
+    check invalidation
+    optionally check flip zone
+```
+
+---
+
+## 18. Config Đề Xuất Tổng Hợp
+
+```toml
+[zones.support_resistance]
+detector = "sr_v2"
+tolerance_pct = 0.0005
+min_zone_width = 1.0
+atr_width_multiplier = 0.25
+min_touches = 2
+lookback_swings = 300
+max_zones = 40
+
+[zones.lifecycle]
+recent_touch_lookback_candles = 80
+age_decay_per_100_candles = 0.06
+freshness_bonus = 0.12
+invalidation_weight_multiplier = 0.15
+close_break_buffer_atr_multiplier = 0.15
+
+[zones.reaction]
+reaction_window_candles = 5
+min_reaction_atr = 0.8
+strong_reaction_atr = 1.5
+recent_reaction_count = 3
+follow_through_close_required = true
+
+[zones.decay]
+max_healthy_touches = 3
+weak_touch_penalty = 0.08
+too_many_touches_penalty = 0.06
+linger_penalty = 0.10
+```
+
+---
+
+## 19. Ưu Tiên Implement
+
+Không nên implement tất cả một lúc.
+
+Thứ tự nên làm:
+
+1. ATR-based zone width.
+2. Touch classification: wick touch, body touch, close inside zone.
+3. Reaction score sau touch.
+4. Weight components rõ ràng.
+5. Overtest penalty.
+6. Invalidation buffer bằng ATR.
+7. Debug metadata.
+8. Flip zone logic.
+
+---
+
+## 20. Triết Lý V2
+
+SR zone không mạnh vì nó được vẽ ra.
+
+SR zone mạnh khi:
+
+- Giá chạm zone rồi bị reject rõ.
+- Sau touch có displacement.
+- Có momentum follow-through.
+- Giá không linger quá lâu trong zone.
+- Zone chưa bị test quá nhiều lần.
+- Zone còn fresh và gần context hiện tại.
+
+Bot không nên hỏi:
+
+```text
+"Zone này có bao nhiêu touch?"
+```
+
+Bot nên hỏi:
+
+```text
+"Mỗi lần chạm zone này, market phản ứng chất lượng như thế nào?"
+```

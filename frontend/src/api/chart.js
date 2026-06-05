@@ -4,9 +4,13 @@ export async function fetchChartPayload(query) {
         timeframe: query.timeframe,
         limit: String(query.limit),
     });
+    if (query.startIndex !== null) {
+        params.set("start_index", String(query.startIndex));
+    }
     if (query.activeZonesOnly) {
         params.set("active_zones_only", "true");
     }
+    params.set("playbooks", query.selectedPlaybooks.length > 0 ? query.selectedPlaybooks.join(",") : "__none__");
     if (query.replayAt) {
         params.set("replay_at", query.replayAt);
     }
@@ -26,10 +30,27 @@ export async function fetchReplayTimeline(query) {
         timeframe: query.timeframe,
         limit: String(query.limit),
     });
+    if (query.startIndex !== null) {
+        params.set("start_index", String(query.startIndex));
+    }
     const response = await fetch(`/api/replay/timeline?${params.toString()}`);
     if (!response.ok) {
         const body = await response.json().catch(() => null);
         throw new Error(body?.detail ?? `Replay timeline failed with ${response.status}`);
+    }
+    return response.json();
+}
+export async function createManualZone(input) {
+    const response = await fetch("/api/zones", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail ?? `Zone create failed with ${response.status}`);
     }
     return response.json();
 }
@@ -44,6 +65,21 @@ export async function updateZoneOverride(zoneId, input) {
     if (!response.ok) {
         const body = await response.json().catch(() => null);
         throw new Error(body?.detail ?? `Zone update failed with ${response.status}`);
+    }
+    return response.json();
+}
+export async function deleteManualZone(zoneId, reason) {
+    const params = new URLSearchParams();
+    if (reason) {
+        params.set("reason", reason);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const response = await fetch(`/api/zones/${encodeURIComponent(zoneId)}${suffix}`, {
+        method: "DELETE",
+    });
+    if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail ?? `Zone delete failed with ${response.status}`);
     }
     return response.json();
 }

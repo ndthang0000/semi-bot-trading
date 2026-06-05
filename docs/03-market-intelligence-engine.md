@@ -208,6 +208,20 @@ Order Block là vùng giá quan trọng nơi Smart Money/Institutional có thể
 - Mitigated từ 50% trở lên: giảm weight rõ.
 - Mitigated 80-100%: giảm weight mạnh, coi như yếu hoặc gần mất hiệu lực.
 
+Implementation MVP:
+
+- Detector id: `order_block_v1`.
+- Vùng chính dùng body của last opposite candle trước displacement.
+- Displacement phải đủ mạnh theo ATR/range và body ratio.
+- Displacement phải close phá swing structure gần nhất theo đúng hướng.
+- Không fallback nếu không tìm được last opposite candle.
+- OB quá mỏng/quá rộng so với ATR bị bỏ qua.
+- OB cùng hướng overlap mạnh sẽ được merge/giữ vùng có rank tốt hơn.
+- Metadata lưu `candidate_time`, `displacement_time`, `displacement_range_atr`, `body_width_atr`, `broken_swing_*`, `wick_extension_low/high`, `mitigation_ratio`.
+- `active`: chưa mitigate đáng kể.
+- `mitigated`: giá quay lại fill khoảng 80% body zone.
+- `invalidated`: close xuyên qua body zone ngược hướng OB.
+
 Scoring:
 
 - Có BOS/CHOCH sau OB: tăng weight.
@@ -243,6 +257,17 @@ Lifecycle:
 - `filled`: fill 80-100%, coi như mitigated hoàn toàn.
 - `invalidated`: giá phá qua theo rule.
 
+Implementation MVP:
+
+- Detector id: `fvg_v1`.
+- Bullish FVG: `candle3.low > candle1.high`.
+- Bearish FVG: `candle3.high < candle1.low`.
+- Nến giữa cần range lớn hơn `2 ATR`, với ATR lấy từ các nến trước cây middle.
+- Gap value cần lớn hơn `0.25 ATR`.
+- Body/range của nến giữa vẫn cần đủ rõ để tránh wick-only displacement.
+- Metadata lưu `gap_size`, `gap_atr_ratio`, `middle_range_atr`, `fill_ratio`, `consequent_encroachment`, `middle_body_ratio`.
+- Fill 50-79% giảm weight; fill từ 80% chuyển sang `mitigated`.
+
 ## Liquidity Sweep
 
 Detector ban đầu:
@@ -262,6 +287,15 @@ Output:
 - Reclaim candle.
 - Related zone.
 - Potential reversal context.
+
+Implementation MVP:
+
+- Detector id: `liquidity_v1`.
+- Output hiện là zone type `liquidity_pool` mỏng quanh swing bị sweep.
+- Buy-side sweep: sweep swing high, direction bearish.
+- Sell-side sweep: sweep swing low, direction bullish.
+- Metadata lưu `swing_point_id`, `sweep_type`, `sweep_time`, `swept_level`.
+- Equal high/equal low pooling nâng cao sẽ bổ sung sau.
 
 ## Consolidation / Range
 
@@ -284,6 +318,14 @@ metadata:
   touches_low: 2
   atr_percentile: 0.24
 ```
+
+Implementation MVP:
+
+- Detector id: `consolidation_v1`.
+- Sliding window tìm vùng có width/ATR thấp, range efficiency thấp, và touch cả hai biên.
+- `active`: chưa breakout.
+- `broken`: close breakout khỏi biên range theo buffer.
+- Metadata lưu `window_candles`, `width_atr`, `range_efficiency`, `high_touches`, `low_touches`.
 
 ## Zone Scoring Engine
 

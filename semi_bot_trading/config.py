@@ -45,6 +45,7 @@ class RegimeConfig:
 class SupportResistanceConfig:
     tolerance_pct: float
     min_zone_width: float
+    atr_width_multiplier: float
     min_touches: int
     lookback_swings: int
     max_zones: int
@@ -53,10 +54,105 @@ class SupportResistanceConfig:
 @dataclass(frozen=True)
 class ZoneLifecycleConfig:
     close_break_buffer: float
+    close_break_buffer_atr_multiplier: float
     recent_touch_lookback_candles: int
     age_decay_per_100_candles: float
     freshness_bonus: float
     invalidation_weight_multiplier: float
+
+
+@dataclass(frozen=True)
+class ZoneReactionConfig:
+    reaction_window_candles: int
+    min_reaction_atr: float
+    strong_reaction_atr: float
+    recent_reaction_count: int
+    follow_through_close_required: bool
+
+
+@dataclass(frozen=True)
+class ZoneDecayConfig:
+    max_healthy_touches: int
+    weak_touch_penalty: float
+    too_many_touches_penalty: float
+    linger_penalty: float
+
+
+@dataclass(frozen=True)
+class SmcZoneConfig:
+    max_candles: int
+    lookback_swings: int
+    fvg_middle_candle_atr_multiplier: float
+    fvg_gap_atr_ratio: float
+    fvg_min_width_atr_ratio: float
+    fvg_h1_max_active_days: float
+    fvg_h1_decay_start_days: float
+    fvg_m15_max_active_days: float
+    fvg_m15_decay_start_days: float
+    ob_displacement_atr_multiplier: float
+    ob_min_body_ratio: float
+    ob_min_width_atr_ratio: float
+    ob_max_width_atr_ratio: float
+    ob_require_structure_break: bool
+    ob_merge_overlap_ratio: float
+    ob_h1_max_active_days: float
+    ob_h1_decay_start_days: float
+    ob_m15_max_active_days: float
+    ob_m15_decay_start_days: float
+    max_fvg_zones: int
+    max_order_block_zones: int
+    max_liquidity_zones: int
+    max_consolidation_zones: int
+
+    def fvg_max_active_days_for(self, timeframe: str) -> float:
+        return self.fvg_m15_max_active_days if timeframe.upper() == "M15" else self.fvg_h1_max_active_days
+
+    def fvg_decay_start_days_for(self, timeframe: str) -> float:
+        return self.fvg_m15_decay_start_days if timeframe.upper() == "M15" else self.fvg_h1_decay_start_days
+
+    def ob_max_active_days_for(self, timeframe: str) -> float:
+        return self.ob_m15_max_active_days if timeframe.upper() == "M15" else self.ob_h1_max_active_days
+
+    def ob_decay_start_days_for(self, timeframe: str) -> float:
+        return self.ob_m15_decay_start_days if timeframe.upper() == "M15" else self.ob_h1_decay_start_days
+
+
+@dataclass(frozen=True)
+class PriceActionConfig:
+    timeframe: str
+    atr_period: int
+    displacement_atr_multiplier: float
+    displacement_body_ratio: float
+    pinbar_wick_body_ratio: float
+    pinbar_min_wick_ratio: float
+    engulfing_min_body_ratio: float
+    marubozu_min_body_ratio: float
+    star_large_body_ratio: float
+    star_small_body_ratio: float
+
+
+@dataclass(frozen=True)
+class StrategyConfig:
+    timeframe: str
+    atr_period: int
+    approach_atr_multiplier: float
+    breakout_buffer_atr_multiplier: float
+    waiting_candles: int
+    min_risk_reward: float
+    max_eligible: int
+    max_waiting: int
+    trend_pullback_fvg_min_width_atr: float
+    trend_pullback_fvg_max_width_atr: float
+
+
+@dataclass(frozen=True)
+class BacktestConfig:
+    spread: float
+    slippage: float
+    max_hold_candles: int
+    warmup_candles: int
+    auto_accept: bool
+    zone_snapshot_candles: int
 
 
 @dataclass(frozen=True)
@@ -71,6 +167,12 @@ class AppConfig:
     regime: RegimeConfig
     support_resistance: SupportResistanceConfig
     zone_lifecycle: ZoneLifecycleConfig
+    zone_reaction: ZoneReactionConfig
+    zone_decay: ZoneDecayConfig
+    smc_zones: SmcZoneConfig
+    price_action: PriceActionConfig
+    strategy: StrategyConfig
+    backtest: BacktestConfig
 
     def swing_for(self, timeframe: str) -> SwingConfig:
         key = timeframe.upper()
@@ -90,12 +192,20 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
     structure = raw.get("structure", {})
     context = raw.get("context", {})
     zones = raw.get("zones", {})
+    price_action = raw.get("price_action", {})
+    strategy = raw.get("strategy", {})
+    strategy_playbooks = strategy.get("playbooks", {})
+    trend_pullback = strategy_playbooks.get("trend_pullback", {}) if isinstance(strategy_playbooks, dict) else {}
+    backtest = raw.get("backtest", {})
     swing = structure.get("swing", {})
     breaks = structure.get("breaks", {})
     bias = context.get("bias", {})
     regime = context.get("regime", {})
     support_resistance = zones.get("support_resistance", {})
     zone_lifecycle = zones.get("lifecycle", {})
+    zone_reaction = zones.get("reaction", {})
+    zone_decay = zones.get("decay", {})
+    smc_zones = zones.get("smc", {})
     swing_timeframes = swing.get("timeframes", {})
     default_tolerance = float(swing.get("tolerance", 0.0))
 
@@ -126,16 +236,88 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
         support_resistance=SupportResistanceConfig(
             tolerance_pct=float(support_resistance.get("tolerance_pct", 0.0015)),
             min_zone_width=float(support_resistance.get("min_zone_width", 1.0)),
+            atr_width_multiplier=float(support_resistance.get("atr_width_multiplier", 0.0)),
             min_touches=int(support_resistance.get("min_touches", 2)),
             lookback_swings=int(support_resistance.get("lookback_swings", 300)),
             max_zones=int(support_resistance.get("max_zones", 40)),
         ),
         zone_lifecycle=ZoneLifecycleConfig(
             close_break_buffer=float(zone_lifecycle.get("close_break_buffer", 0.0)),
+            close_break_buffer_atr_multiplier=float(zone_lifecycle.get("close_break_buffer_atr_multiplier", 0.0)),
             recent_touch_lookback_candles=int(zone_lifecycle.get("recent_touch_lookback_candles", 80)),
             age_decay_per_100_candles=float(zone_lifecycle.get("age_decay_per_100_candles", 0.08)),
             freshness_bonus=float(zone_lifecycle.get("freshness_bonus", 0.15)),
             invalidation_weight_multiplier=float(zone_lifecycle.get("invalidation_weight_multiplier", 0.15)),
+        ),
+        zone_reaction=ZoneReactionConfig(
+            reaction_window_candles=int(zone_reaction.get("reaction_window_candles", 5)),
+            min_reaction_atr=float(zone_reaction.get("min_reaction_atr", 0.8)),
+            strong_reaction_atr=float(zone_reaction.get("strong_reaction_atr", 1.5)),
+            recent_reaction_count=int(zone_reaction.get("recent_reaction_count", 3)),
+            follow_through_close_required=bool(zone_reaction.get("follow_through_close_required", True)),
+        ),
+        zone_decay=ZoneDecayConfig(
+            max_healthy_touches=int(zone_decay.get("max_healthy_touches", 3)),
+            weak_touch_penalty=float(zone_decay.get("weak_touch_penalty", 0.08)),
+            too_many_touches_penalty=float(zone_decay.get("too_many_touches_penalty", 0.06)),
+            linger_penalty=float(zone_decay.get("linger_penalty", 0.10)),
+        ),
+        smc_zones=SmcZoneConfig(
+            max_candles=int(smc_zones.get("max_candles", 5000)),
+            lookback_swings=int(smc_zones.get("lookback_swings", 300)),
+            fvg_middle_candle_atr_multiplier=float(smc_zones.get("fvg_middle_candle_atr_multiplier", 2.0)),
+            fvg_gap_atr_ratio=float(smc_zones.get("fvg_gap_atr_ratio", 0.25)),
+            fvg_min_width_atr_ratio=float(smc_zones.get("fvg_min_width_atr_ratio", 1.0)),
+            fvg_h1_max_active_days=float(smc_zones.get("fvg_h1_max_active_days", 2.0)),
+            fvg_h1_decay_start_days=float(smc_zones.get("fvg_h1_decay_start_days", 0.75)),
+            fvg_m15_max_active_days=float(smc_zones.get("fvg_m15_max_active_days", 1.0)),
+            fvg_m15_decay_start_days=float(smc_zones.get("fvg_m15_decay_start_days", 0.5)),
+            ob_displacement_atr_multiplier=float(smc_zones.get("ob_displacement_atr_multiplier", 1.5)),
+            ob_min_body_ratio=float(smc_zones.get("ob_min_body_ratio", 0.60)),
+            ob_min_width_atr_ratio=float(smc_zones.get("ob_min_width_atr_ratio", 0.05)),
+            ob_max_width_atr_ratio=float(smc_zones.get("ob_max_width_atr_ratio", 1.0)),
+            ob_require_structure_break=bool(smc_zones.get("ob_require_structure_break", True)),
+            ob_merge_overlap_ratio=float(smc_zones.get("ob_merge_overlap_ratio", 0.60)),
+            ob_h1_max_active_days=float(smc_zones.get("ob_h1_max_active_days", 3.0)),
+            ob_h1_decay_start_days=float(smc_zones.get("ob_h1_decay_start_days", 1.0)),
+            ob_m15_max_active_days=float(smc_zones.get("ob_m15_max_active_days", 2.0)),
+            ob_m15_decay_start_days=float(smc_zones.get("ob_m15_decay_start_days", 1.0)),
+            max_fvg_zones=int(smc_zones.get("max_fvg_zones", 80)),
+            max_order_block_zones=int(smc_zones.get("max_order_block_zones", 60)),
+            max_liquidity_zones=int(smc_zones.get("max_liquidity_zones", 80)),
+            max_consolidation_zones=int(smc_zones.get("max_consolidation_zones", 30)),
+        ),
+        price_action=PriceActionConfig(
+            timeframe=str(price_action.get("timeframe", "M15")).upper(),
+            atr_period=int(price_action.get("atr_period", 14)),
+            displacement_atr_multiplier=float(price_action.get("displacement_atr_multiplier", 1.5)),
+            displacement_body_ratio=float(price_action.get("displacement_body_ratio", 0.60)),
+            pinbar_wick_body_ratio=float(price_action.get("pinbar_wick_body_ratio", 2.0)),
+            pinbar_min_wick_ratio=float(price_action.get("pinbar_min_wick_ratio", 0.55)),
+            engulfing_min_body_ratio=float(price_action.get("engulfing_min_body_ratio", 0.45)),
+            marubozu_min_body_ratio=float(price_action.get("marubozu_min_body_ratio", 0.75)),
+            star_large_body_ratio=float(price_action.get("star_large_body_ratio", 0.45)),
+            star_small_body_ratio=float(price_action.get("star_small_body_ratio", 0.35)),
+        ),
+        strategy=StrategyConfig(
+            timeframe=str(strategy.get("timeframe", "M15")).upper(),
+            atr_period=int(strategy.get("atr_period", 14)),
+            approach_atr_multiplier=float(strategy.get("approach_atr_multiplier", 0.5)),
+            breakout_buffer_atr_multiplier=float(strategy.get("breakout_buffer_atr_multiplier", 0.15)),
+            waiting_candles=int(strategy.get("waiting_candles", 4)),
+            min_risk_reward=float(strategy.get("min_risk_reward", 2.0)),
+            max_eligible=int(strategy.get("max_eligible", 3)),
+            max_waiting=int(strategy.get("max_waiting", 5)),
+            trend_pullback_fvg_min_width_atr=float(trend_pullback.get("fvg_min_width_atr", 1.5)),
+            trend_pullback_fvg_max_width_atr=float(trend_pullback.get("fvg_max_width_atr", 4.0)),
+        ),
+        backtest=BacktestConfig(
+            spread=float(backtest.get("spread", 0.30)),
+            slippage=float(backtest.get("slippage", 0.10)),
+            max_hold_candles=int(backtest.get("max_hold_candles", 96)),
+            warmup_candles=int(backtest.get("warmup_candles", 80)),
+            auto_accept=bool(backtest.get("auto_accept", True)),
+            zone_snapshot_candles=int(backtest.get("zone_snapshot_candles", 600)),
         ),
     )
 

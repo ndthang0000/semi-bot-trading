@@ -30,6 +30,23 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["layers"]["structure_timeframe"], "H1")
         self.assertEqual(payload["layers"]["structure"][0]["id"], "h1-s1")
 
+    def test_chart_endpoint_supports_start_index_window(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=1&start_index=1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["range"]["start_index"], 1)
+        self.assertEqual(len(payload["layers"]["candles"]), 1)
+        self.assertEqual(payload["layers"]["candles"][0]["time"], "2026-01-01T00:15:00+00:00")
+
     def test_health_endpoint(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -60,6 +77,39 @@ class ApiTest(unittest.TestCase):
             payload["times"],
             ["2026-01-01T00:00:00+00:00", "2026-01-01T00:15:00+00:00"],
         )
+
+    def test_replay_timeline_supports_start_index_window(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.get("/api/replay/timeline?symbol=XAUUSD&timeframe=M15&limit=1&start_index=1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["start_index"], 1)
+        self.assertEqual(payload["total_count"], 2)
+        self.assertEqual(payload["times"], ["2026-01-01T00:15:00+00:00"])
+
+    def test_replay_timeline_accepts_large_limit(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.get("/api/replay/timeline?symbol=XAUUSD&timeframe=M15&limit=10000")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["limit"], 10000)
+        self.assertEqual(payload["count"], 2)
 
     def test_chart_replay_recomputes_from_replay_start(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -156,6 +206,75 @@ class ApiTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "disabled")
         self.assertEqual(payload["visual_end"], "2026-01-01T00:15:00+00:00")
+
+    def test_create_manual_zone_persists_human_entity_and_audit_trail(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.post(
+                "/api/zones",
+                json={
+                    "symbol": "XAUUSD",
+                    "timeframe": "M15",
+                    "zone_type": "fvg",
+                    "direction": "bullish",
+                    "price_low": 1996.5,
+                    "price_high": 1999.5,
+                    "visual_start": "2026-01-01T00:00:00+00:00",
+                    "visual_end": "2026-01-01T00:15:00+00:00",
+                    "weight": 0.72,
+                    "confidence": 0.9,
+                    "no_expiry": True,
+                    "reason": "manual replay note",
+                },
+            )
+
+            with connect(db_path) as conn:
+                override_count = conn.execute("SELECT COUNT(*) AS count FROM overrides").fetchone()["count"]
+                zone_count = conn.execute("SELECT COUNT(*) AS count FROM price_zones").fetchone()["count"]
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["type"], "fvg")
+        self.assertEqual(payload["direction"], "bullish")
+        self.assertEqual(payload["source"], "human")
+        self.assertEqual(payload["detector"], "human_manual_v1")
+        self.assertEqual(payload["weight"], 0.72)
+        self.assertEqual(payload["metadata"]["human_created"], True)
+        self.assertEqual(zone_count, 1)
+        self.assertEqual(override_count, 1)
+
+    def test_delete_zone_marks_deleted_and_hides_from_chart(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_zone(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.delete("/api/zones/z1?reason=manual%20delete")
+            chart_response = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=2")
+
+            with connect(db_path) as conn:
+                override_count = conn.execute("SELECT COUNT(*) AS count FROM overrides").fetchone()["count"]
+                zone = conn.execute("SELECT * FROM price_zones WHERE id = 'z1'").fetchone()
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "deleted")
+        self.assertEqual(payload["visual_end"], "2026-01-01T00:15:00+00:00")
+        self.assertEqual(payload["source"], "mixed")
+        self.assertEqual(override_count, 1)
+        self.assertEqual(zone["status"], "deleted")
+        self.assertEqual(chart_response.status_code, 200)
+        self.assertEqual(chart_response.json()["layers"]["zones"], [])
 
     def test_context_override_updates_effective_context_and_audit_trail(self) -> None:
         with TemporaryDirectory() as temp_dir:

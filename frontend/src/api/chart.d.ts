@@ -1,14 +1,16 @@
-import type { ChartPayload, MarketContext, PriceZone, ReplayTimeline, Timeframe } from "../types";
+import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe } from "../types";
 type ChartQuery = {
     symbol: string;
     timeframe: Timeframe;
     limit: number;
+    startIndex: number | null;
     activeZonesOnly: boolean;
+    selectedPlaybooks: PlaybookKey[];
     replayAt?: string | null;
     replayStart?: string | null;
 };
 export declare function fetchChartPayload(query: ChartQuery): Promise<ChartPayload>;
-export declare function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOnly" | "replayAt" | "replayStart">): Promise<ReplayTimeline>;
+export declare function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOnly" | "selectedPlaybooks" | "replayAt" | "replayStart">): Promise<ReplayTimeline>;
 export type ZoneOverrideInput = {
     price_low: number;
     price_high: number;
@@ -20,7 +22,25 @@ export type ZoneOverrideInput = {
     no_expiry: boolean;
     reason?: string;
 };
+export type ZoneCreateInput = {
+    symbol: string;
+    timeframe: Timeframe;
+    zone_type: string;
+    direction: string;
+    price_low: number;
+    price_high: number;
+    visual_start: string;
+    visual_end?: string | null;
+    weight: number;
+    confidence: number;
+    status: "active" | "disabled";
+    client_kind?: string;
+    no_expiry: boolean;
+    reason?: string;
+};
+export declare function createManualZone(input: ZoneCreateInput): Promise<PriceZone>;
 export declare function updateZoneOverride(zoneId: string, input: ZoneOverrideInput): Promise<PriceZone>;
+export declare function deleteManualZone(zoneId: string, reason?: string): Promise<PriceZone>;
 export type ContextOverrideInput = {
     value?: string;
     secondary_value?: string | null;
