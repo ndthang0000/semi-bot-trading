@@ -1,4 +1,4 @@
-import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe } from "../types";
+import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe, TradeHistoryResponse, TradeReview } from "../types";
 
 type ChartQuery = {
   symbol: string;
@@ -52,6 +52,65 @@ export async function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOn
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Replay timeline failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export type TradeHistoryQuery = {
+  symbol: string;
+  timeframe: Timeframe;
+  limit: number;
+  offset: number;
+  selectedPlaybooks: PlaybookKey[];
+  status?: string;
+  side?: string;
+  outcome?: string;
+  backtest?: boolean | null;
+  sort: string;
+};
+
+export async function fetchTradeHistory(query: TradeHistoryQuery): Promise<TradeHistoryResponse> {
+  const params = new URLSearchParams({
+    symbol: query.symbol,
+    timeframe: query.timeframe,
+    limit: String(query.limit),
+    offset: String(query.offset),
+    sort: query.sort,
+  });
+  params.set("playbooks", query.selectedPlaybooks.length > 0 ? query.selectedPlaybooks.join(",") : "__none__");
+  if (query.status) params.set("status", query.status);
+  if (query.side) params.set("side", query.side);
+  if (query.outcome && query.outcome !== "all") params.set("outcome", query.outcome);
+  if (query.backtest !== null && query.backtest !== undefined) params.set("backtest", String(query.backtest));
+
+  const response = await fetch(`/api/trades?${params.toString()}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Trade history failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export type TradeReviewInput = {
+  grade?: string | null;
+  verdict: string;
+  mistake_tags: string[];
+  should_trade_again: string;
+  comment: string;
+  reviewer?: string;
+};
+
+export async function updateTradeReview(tradeOrderId: string, input: TradeReviewInput): Promise<TradeReview> {
+  const response = await fetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/review`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Trade review failed with ${response.status}`);
   }
   return response.json();
 }

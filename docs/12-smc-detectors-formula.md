@@ -82,7 +82,36 @@ fvg_middle_candle_atr_multiplier = 2.0
 
 Nếu `candle2.high == candle2.low`, hoặc không có đủ ATR baseline, bỏ qua cụm này.
 
-### 2.3. Bullish FVG
+### 2.3. Điều kiện follow-through của candle 3
+
+Sau khi candle 2 tạo displacement, candle 3 phải xác nhận rằng imbalance vẫn đi theo hướng đó, thay vì hồi ngược ngay lập tức.
+
+```text
+third_body_ratio = abs(candle3.close - candle3.open) / (candle3.high - candle3.low)
+```
+
+Default:
+
+```text
+fvg_third_candle_follow_through_required = true
+fvg_third_candle_min_body_ratio = 0.20
+```
+
+Rule:
+
+```text
+Bullish FVG:
+    candle3.close > candle3.open
+    third_body_ratio >= fvg_third_candle_min_body_ratio
+
+Bearish FVG:
+    candle3.close < candle3.open
+    third_body_ratio >= fvg_third_candle_min_body_ratio
+```
+
+Lý do: nếu candle 3 tạo gap nhưng đóng ngược hướng ngay, đó thường là imbalance chất lượng thấp hoặc bị fill quá nhanh. Rule này không dùng dữ liệu tương lai sau candle 3, nên replay/backtest vẫn không bị look-ahead.
+
+### 2.4. Bullish FVG
 
 ```text
 candle3.low > candle1.high
@@ -109,7 +138,7 @@ start_time = candle3.open_time
 detected_at = candle3.open_time
 ```
 
-### 2.4. Bearish FVG
+### 2.5. Bearish FVG
 
 ```text
 candle3.high < candle1.low
@@ -129,7 +158,7 @@ start_time = candle3.open_time
 detected_at = candle3.open_time
 ```
 
-### 2.5. Consequent Encroachment
+### 2.6. Consequent Encroachment
 
 CE 50% được lưu trong metadata:
 
@@ -139,7 +168,7 @@ consequent_encroachment = (price_low + price_high) / 2
 
 Hiện CE chỉ là metadata để debug/confluence sau này, chưa dùng để tự invalid zone.
 
-### 2.6. Fill ratio
+### 2.7. Fill ratio
 
 FVG bullish:
 
@@ -161,7 +190,7 @@ Chỉ tính khi candle sau đó có `candle.high > price_low`.
 
 Bot lấy fill ratio lớn nhất kể từ sau khi FVG được tạo.
 
-### 2.7. Lifecycle
+### 2.8. Lifecycle
 
 Default:
 
@@ -1009,6 +1038,8 @@ lookback_swings = 300
 fvg_middle_candle_atr_multiplier = 2.0
 fvg_gap_atr_ratio = 0.25
 fvg_min_width_atr_ratio = 1.0
+fvg_third_candle_follow_through_required = true
+fvg_third_candle_min_body_ratio = 0.20
 ob_displacement_atr_multiplier = 1.5
 ob_min_body_ratio = 0.60
 ob_min_width_atr_ratio = 0.05
@@ -1028,6 +1059,8 @@ max_consolidation_zones = 30
 - `fvg_middle_candle_atr_multiplier`: cây middle candle của FVG phải có range lớn hơn ATR bao nhiêu lần.
 - `fvg_gap_atr_ratio`: gap value của FVG phải lớn hơn ATR bao nhiêu lần.
 - `fvg_min_width_atr_ratio`: FVG quá mỏng so với ATR sẽ không được tạo zone. Default `1.0`, nghĩa là gap phải rộng ít nhất 1 ATR.
+- `fvg_third_candle_follow_through_required`: yêu cầu candle 3 đóng cùng hướng FVG để tránh gap hồi ngược ngay.
+- `fvg_third_candle_min_body_ratio`: body tối thiểu của candle 3 khi follow-through được bật.
 - `ob_displacement_atr_multiplier`: displacement candle của OB phải lớn hơn ATR bao nhiêu lần.
 - `ob_min_body_ratio`: body/range tối thiểu của displacement candle.
 - `ob_min_width_atr_ratio`: OB body zone quá mỏng so với ATR sẽ bị bỏ qua.

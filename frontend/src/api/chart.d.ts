@@ -1,4 +1,4 @@
-import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe } from "../types";
+import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe, TradeHistoryResponse, TradeReview } from "../types";
 type ChartQuery = {
     symbol: string;
     timeframe: Timeframe;
@@ -11,6 +11,28 @@ type ChartQuery = {
 };
 export declare function fetchChartPayload(query: ChartQuery): Promise<ChartPayload>;
 export declare function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOnly" | "selectedPlaybooks" | "replayAt" | "replayStart">): Promise<ReplayTimeline>;
+export type TradeHistoryQuery = {
+    symbol: string;
+    timeframe: Timeframe;
+    limit: number;
+    offset: number;
+    selectedPlaybooks: PlaybookKey[];
+    status?: string;
+    side?: string;
+    outcome?: string;
+    backtest?: boolean | null;
+    sort: string;
+};
+export declare function fetchTradeHistory(query: TradeHistoryQuery): Promise<TradeHistoryResponse>;
+export type TradeReviewInput = {
+    grade?: string | null;
+    verdict: string;
+    mistake_tags: string[];
+    should_trade_again: string;
+    comment: string;
+    reviewer?: string;
+};
+export declare function updateTradeReview(tradeOrderId: string, input: TradeReviewInput): Promise<TradeReview>;
 export type ZoneOverrideInput = {
     price_low: number;
     price_high: number;

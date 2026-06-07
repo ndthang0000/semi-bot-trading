@@ -5,7 +5,7 @@ from typing import Any
 
 from .chart import CHART_PAYLOAD_VERSION, load_chart_candles, load_chart_trades, load_chart_zones
 from .config import AppConfig
-from .context import percentile_rank, rolling_average, true_ranges
+from .context import percentile_rank, rolling_average, score_bias_from_structure, true_ranges
 from .price_action import detect_price_action_patterns
 from .smc_zones import detect_smc_zones
 from .strategy import build_setup_candidates
@@ -71,6 +71,8 @@ def build_realtime_replay_payload(
         config.support_resistance.max_zones,
         candle_slices,
         config.support_resistance.atr_width_multiplier,
+        candidate_close_break_buffer=config.zone_lifecycle.close_break_buffer,
+        candidate_close_break_buffer_atr_multiplier=config.zone_lifecycle.close_break_buffer_atr_multiplier,
     )
     zones = apply_lifecycle_to_zones(
         zones,
@@ -98,6 +100,8 @@ def build_realtime_replay_payload(
         fvg_middle_candle_atr_multiplier=config.smc_zones.fvg_middle_candle_atr_multiplier,
         fvg_gap_atr_ratio=config.smc_zones.fvg_gap_atr_ratio,
         fvg_min_width_atr_ratio=config.smc_zones.fvg_min_width_atr_ratio,
+        fvg_third_candle_follow_through_required=config.smc_zones.fvg_third_candle_follow_through_required,
+        fvg_third_candle_min_body_ratio=config.smc_zones.fvg_third_candle_min_body_ratio,
         fvg_max_active_days=config.smc_zones.fvg_max_active_days_for(timeframe),
         fvg_decay_start_days=config.smc_zones.fvg_decay_start_days_for(timeframe),
         ob_displacement_atr_multiplier=config.smc_zones.ob_displacement_atr_multiplier,
@@ -313,7 +317,7 @@ def build_replay_contexts(
     config: AppConfig,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     contexts: dict[str, dict[str, dict[str, Any]]] = {timeframe: {}}
-    bias = detect_replay_bias(symbol, timeframe, structure_points, config)
+    bias = detect_replay_bias(symbol, timeframe, structure_points, candles, config)
     if bias:
         contexts[timeframe]["bias"] = bias
     regime = detect_replay_regime(symbol, timeframe, structure_points, candles, config)
@@ -322,55 +326,75 @@ def build_replay_contexts(
     return contexts
 
 
-def detect_replay_bias(symbol: str, timeframe: str, points: list[StructurePoint], config: AppConfig) -> dict[str, Any] | None:
+def detect_replay_bias(
+    symbol: str,
+    timeframe: str,
+    points: list[StructurePoint],
+    candles: list[CandleView],
+    config: AppConfig,
+) -> dict[str, Any] | None:
     swings = [point for point in points if point.point_type in ("HH", "HL", "LH", "LL")][-config.bias.recent_swings :]
     breaks = [point for point in points if point.point_type in ("BOS", "CHOCH")][-config.bias.recent_breaks :]
     if not swings and not breaks:
         return None
 
-    swing_score = sum(1 if point.point_type in ("HH", "HL") else -1 for point in swings)
-    break_score = 0
-    latest_break_direction: str | None = None
-    latest_break_type: str | None = None
-    for point in breaks:
-        direction = point.metadata.get("direction")
-        if direction == "up":
-            break_score += 1
-        elif direction == "down":
-            break_score -= 1
-        latest_break_direction = str(direction) if direction in ("up", "down") else None
-        latest_break_type = point.point_type
-
-    raw_score = swing_score + break_score
-    if raw_score >= 2:
-        value = "bullish"
-    elif raw_score <= -2:
-        value = "bearish"
-    else:
-        value = "neutral"
-    if latest_break_type == "CHOCH" and latest_break_direction == "up" and value == "bearish":
-        value = "neutral"
-    elif latest_break_type == "CHOCH" and latest_break_direction == "down" and value == "bullish":
-        value = "neutral"
-
-    total_inputs = max(len(swings) + len(breaks), 1)
-    confidence = min(abs(raw_score) / total_inputs, 1.0)
-    if value == "neutral":
-        confidence = max(0.35, 1.0 - confidence)
+    swing_rows = [
+        {
+            "point_type": point.point_type,
+            "price": point.price,
+            "event_time": point.event_time,
+            "metadata": point.metadata,
+        }
+        for point in swings
+    ]
+    break_rows = [
+        {
+            "point_type": point.point_type,
+            "price": point.price,
+            "event_time": point.event_time,
+            "metadata": point.metadata,
+        }
+        for point in breaks
+    ]
+    candle_rows = [
+        {
+            "open_time": candle.open_time,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+        }
+        for candle in candles[-60:]
+    ]
+    score = score_bias_from_structure(swing_rows, break_rows, candle_rows)
+    value = str(score["value"])
+    confidence = float(score["confidence"])
     valid_from = (breaks or swings)[-1].event_time
     return context_to_chart(
         value=value,
         confidence=round(confidence, 4),
         valid_from=valid_from,
         metadata={
-            "detector": "bias_v1_replay",
+            "detector": "bias_v2_replay",
+            "version": 2,
             "symbol": symbol,
             "timeframe": timeframe,
-            "swing_score": swing_score,
-            "break_score": break_score,
-            "raw_score": raw_score,
+            "swing_score": round(float(score["swing_score"]), 6),
+            "break_score": round(float(score["break_score"]), 6),
+            "raw_score": round(float(score["raw_score"]), 6),
+            "normalized_score": round(float(score["normalized_score"]), 6),
+            "total_weight": round(float(score["total_weight"]), 6),
+            "latest_break_type": score["latest_break_type"],
+            "latest_break_direction": score["latest_break_direction"],
+            "latest_choch_direction": score["latest_choch_direction"],
+            "neutral_reason": score["neutral_reason"],
+            "choch_neutralized": score["choch_neutralized"],
+            "range_neutralized": score["range_neutralized"],
+            "range_efficiency": round(float(score["range_efficiency"]), 6) if score["range_efficiency"] is not None else None,
+            "atr": round(float(score["atr"]), 6) if score["atr"] is not None else None,
             "recent_swings": len(swings),
             "recent_breaks": len(breaks),
+            "swing_points": score["swing_contributions"],
+            "break_points": score["break_contributions"],
         },
     )
 

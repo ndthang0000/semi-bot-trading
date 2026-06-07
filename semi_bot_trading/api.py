@@ -6,9 +6,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from .chart import build_chart_payload
+from .chart import build_chart_payload, trade_order_row_to_chart
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
 from .db import connect, init_db
@@ -58,6 +59,15 @@ class ContextOverrideRequest(BaseModel):
     expires_at: str | None = None
     reason: str | None = None
     use_bot: bool = False
+
+
+class TradeReviewRequest(BaseModel):
+    grade: str | None = None
+    verdict: str = "unreviewed"
+    mistake_tags: list[str] = Field(default_factory=list)
+    should_trade_again: str = "unknown"
+    comment: str = ""
+    reviewer: str = "human"
 
 
 def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
@@ -195,6 +205,200 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 "end": times[-1] if times else None,
                 "count": len(times),
             }
+
+    @app.get("/api/trades")
+    def trades(
+        symbol: str = Query(default=None),
+        timeframe: str = Query(default="H1"),
+        limit: int = Query(default=200, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        playbooks: str | None = None,
+        status: str | None = None,
+        side: str | None = None,
+        outcome: str | None = Query(default=None),
+        backtest: bool | None = Query(default=None),
+        sort: str = Query(default="opened_at_desc"),
+    ) -> dict[str, Any]:
+        resolved_symbol = symbol or config.symbol
+        resolved_timeframe = timeframe.upper()
+        allowed_playbooks = parse_playbooks(playbooks)
+        where = ["trade_orders.symbol = ?", "trade_orders.opened_at IS NOT NULL"]
+        params: list[Any] = [resolved_symbol]
+        if allowed_playbooks is not None:
+            if not allowed_playbooks:
+                return {
+                    "symbol": resolved_symbol,
+                    "timeframe": resolved_timeframe,
+                    "limit": limit,
+                    "offset": offset,
+                    "total": 0,
+                    "trades": [],
+                }
+            placeholders = ", ".join("?" for _ in allowed_playbooks)
+            where.append(f"trade_ideas.playbook IN ({placeholders})")
+            params.extend(sorted(allowed_playbooks))
+        if status:
+            where.append("trade_orders.status = ?")
+            params.append(status)
+        if side:
+            if side not in {"buy", "sell", "long", "short"}:
+                raise HTTPException(status_code=422, detail="side must be buy, sell, long, or short")
+            where.append("trade_orders.side = ?")
+            params.append("buy" if side == "long" else "sell" if side == "short" else side)
+        if outcome:
+            if outcome == "win":
+                where.append("trade_orders.pnl_r > 0")
+            elif outcome == "loss":
+                where.append("trade_orders.pnl_r <= 0")
+            elif outcome != "all":
+                raise HTTPException(status_code=422, detail="outcome must be all, win, or loss")
+        if backtest is not None:
+            where.append("json_extract(trade_orders.metadata_json, '$.backtest') = ?")
+            params.append(1 if backtest else 0)
+
+        order_by = {
+            "opened_at_desc": "trade_orders.opened_at DESC",
+            "opened_at_asc": "trade_orders.opened_at ASC",
+            "pnl_r_desc": "trade_orders.pnl_r DESC, trade_orders.opened_at DESC",
+            "pnl_r_asc": "trade_orders.pnl_r ASC, trade_orders.opened_at DESC",
+        }.get(sort)
+        if order_by is None:
+            raise HTTPException(status_code=422, detail="sort must be opened_at_desc, opened_at_asc, pnl_r_desc, or pnl_r_asc")
+
+        where_sql = " AND ".join(where)
+        with connect(config.database) as conn:
+            init_db(conn)
+            total = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS count
+                    FROM trade_orders
+                    JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
+                    WHERE {where_sql}
+                    """,
+                    params,
+                ).fetchone()["count"]
+            )
+            rows = conn.execute(
+                f"""
+                SELECT trade_orders.id, trade_orders.trade_idea_id, trade_orders.side,
+                       trade_orders.order_type, trade_orders.status, trade_orders.entry_price,
+                       trade_orders.stop_loss, trade_orders.take_profit_json,
+                       trade_orders.quantity, trade_orders.opened_at, trade_orders.closed_at,
+                       trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
+                       trade_orders.source, trade_orders.metadata_json,
+                       trade_ideas.playbook, trade_ideas.direction,
+                       trade_reviews.id AS review_id,
+                       trade_reviews.grade AS review_grade,
+                       trade_reviews.verdict AS review_verdict,
+                       trade_reviews.mistake_tags_json AS review_mistake_tags_json,
+                       trade_reviews.should_trade_again AS review_should_trade_again,
+                       trade_reviews.comment AS review_comment,
+                       trade_reviews.reviewer AS review_reviewer,
+                       trade_reviews.created_at AS review_created_at,
+                       trade_reviews.updated_at AS review_updated_at,
+                       (
+                         SELECT COUNT(*) - 1
+                         FROM candles
+                         WHERE candles.symbol = trade_orders.symbol
+                           AND candles.timeframe = ?
+                           AND candles.open_time <= trade_orders.opened_at
+                       ) AS chart_index
+                FROM trade_orders
+                JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
+                LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
+                WHERE {where_sql}
+                ORDER BY {order_by}
+                LIMIT ? OFFSET ?
+                """,
+                [resolved_timeframe, *params, limit, offset],
+            ).fetchall()
+        return {
+            "symbol": resolved_symbol,
+            "timeframe": resolved_timeframe,
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "trades": [
+                {
+                    **trade_order_row_to_chart(row),
+                    "chart_index": int(row["chart_index"]) if row["chart_index"] is not None and int(row["chart_index"]) >= 0 else None,
+                }
+                for row in rows
+            ],
+        }
+
+    @app.get("/api/trades/{trade_order_id}/review")
+    def get_trade_review(trade_order_id: str) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            ensure_trade_exists(conn, trade_order_id)
+            row = conn.execute(
+                """
+                SELECT *
+                FROM trade_reviews
+                WHERE trade_order_id = ?
+                """,
+                (trade_order_id,),
+            ).fetchone()
+        return trade_review_row_to_api(row, trade_order_id)
+
+    @app.put("/api/trades/{trade_order_id}/review")
+    def upsert_trade_review(trade_order_id: str, request: TradeReviewRequest = Body(...)) -> dict[str, Any]:
+        normalized = normalize_trade_review_request(request)
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            ensure_trade_exists(conn, trade_order_id)
+            existing = conn.execute(
+                """
+                SELECT id, created_at
+                FROM trade_reviews
+                WHERE trade_order_id = ?
+                """,
+                (trade_order_id,),
+            ).fetchone()
+            review_id = existing["id"] if existing is not None else f"trade-review-{uuid.uuid4()}"
+            created_at = existing["created_at"] if existing is not None else now
+            conn.execute(
+                """
+                INSERT INTO trade_reviews (
+                    id, trade_order_id, grade, verdict, mistake_tags_json,
+                    should_trade_again, comment, reviewer, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trade_order_id) DO UPDATE SET
+                    grade = excluded.grade,
+                    verdict = excluded.verdict,
+                    mistake_tags_json = excluded.mistake_tags_json,
+                    should_trade_again = excluded.should_trade_again,
+                    comment = excluded.comment,
+                    reviewer = excluded.reviewer,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    review_id,
+                    trade_order_id,
+                    normalized["grade"],
+                    normalized["verdict"],
+                    json.dumps(normalized["mistake_tags"], ensure_ascii=False),
+                    normalized["should_trade_again"],
+                    normalized["comment"],
+                    normalized["reviewer"],
+                    created_at,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT *
+                FROM trade_reviews
+                WHERE trade_order_id = ?
+                """,
+                (trade_order_id,),
+            ).fetchone()
+            conn.commit()
+        return trade_review_row_to_api(row, trade_order_id)
 
     @app.patch("/api/zones/{zone_id}")
     def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...)) -> dict[str, Any]:
@@ -687,6 +891,93 @@ def json_loads(value: str | None, default: Any) -> Any:
     if value in (None, ""):
         return default
     return json.loads(value)
+
+
+def ensure_trade_exists(conn: Any, trade_order_id: str) -> None:
+    row = conn.execute(
+        """
+        SELECT id
+        FROM trade_orders
+        WHERE id = ?
+        """,
+        (trade_order_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Trade order not found")
+
+
+def normalize_trade_review_request(request: TradeReviewRequest) -> dict[str, Any]:
+    grade = request.grade.strip().upper() if isinstance(request.grade, str) and request.grade.strip() else None
+    if grade is not None and grade not in {"A", "B", "C", "D"}:
+        raise HTTPException(status_code=422, detail="grade must be A, B, C, D, or empty")
+
+    verdict = request.verdict.strip().lower()
+    allowed_verdicts = {"unreviewed", "good_trade", "bad_trade", "should_skip", "missed_context"}
+    if verdict not in allowed_verdicts:
+        raise HTTPException(status_code=422, detail=f"verdict must be one of: {', '.join(sorted(allowed_verdicts))}")
+
+    should_trade_again = request.should_trade_again.strip().lower()
+    allowed_should_trade_again = {"unknown", "yes", "no", "conditional"}
+    if should_trade_again not in allowed_should_trade_again:
+        raise HTTPException(
+            status_code=422,
+            detail=f"should_trade_again must be one of: {', '.join(sorted(allowed_should_trade_again))}",
+        )
+
+    tags = []
+    seen_tags = set()
+    for tag in request.mistake_tags:
+        normalized_tag = tag.strip().lower()
+        if not normalized_tag or normalized_tag in seen_tags:
+            continue
+        seen_tags.add(normalized_tag)
+        tags.append(normalized_tag)
+    if len(tags) > 20:
+        raise HTTPException(status_code=422, detail="mistake_tags supports at most 20 tags")
+
+    reviewer = request.reviewer.strip() or "human"
+    if len(reviewer) > 80:
+        raise HTTPException(status_code=422, detail="reviewer is too long")
+    comment = request.comment.strip()
+    if len(comment) > 5000:
+        raise HTTPException(status_code=422, detail="comment is too long")
+
+    return {
+        "grade": grade,
+        "verdict": verdict,
+        "mistake_tags": tags,
+        "should_trade_again": should_trade_again,
+        "comment": comment,
+        "reviewer": reviewer,
+    }
+
+
+def trade_review_row_to_api(row: Any | None, trade_order_id: str) -> dict[str, Any]:
+    if row is None:
+        return {
+            "id": None,
+            "trade_order_id": trade_order_id,
+            "grade": None,
+            "verdict": "unreviewed",
+            "mistake_tags": [],
+            "should_trade_again": "unknown",
+            "comment": "",
+            "reviewer": "human",
+            "created_at": None,
+            "updated_at": None,
+        }
+    return {
+        "id": row["id"],
+        "trade_order_id": row["trade_order_id"],
+        "grade": row["grade"],
+        "verdict": row["verdict"],
+        "mistake_tags": json_loads(row["mistake_tags_json"], []),
+        "should_trade_again": row["should_trade_again"],
+        "comment": row["comment"] or "",
+        "reviewer": row["reviewer"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def latest_candle_time(conn: Any, symbol: str, timeframe: str) -> str | None:

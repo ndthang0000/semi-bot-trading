@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 
 from semi_bot_trading.config import StrategyConfig
-from semi_bot_trading.strategy import build_setup_candidates, classify_zone_reaction
+from semi_bot_trading.strategy import build_setup_candidates, classify_zone_reaction, classify_zone_reaction_v2
 
 
 def candle(time: str, open_: float, high: float, low: float, close: float) -> dict[str, object]:
@@ -84,6 +84,21 @@ CONFIG = StrategyConfig(
     max_waiting=5,
     trend_pullback_fvg_min_width_atr=1.5,
     trend_pullback_fvg_max_width_atr=4.0,
+    zone_reaction_v2_enabled=True,
+    zone_reaction_v2_fakeout_max_atr=0.5,
+    zone_reaction_v2_reject_body_min_ratio=1.5,
+    zone_reaction_v2_reject_avg_body_period=20,
+    zone_reaction_v2_slow_min_bars=3,
+    zone_reaction_v2_slow_max_bars=8,
+    zone_reaction_v2_slow_body_max_ratio=0.8,
+    zone_reaction_v2_breakout_min_body_atr=0.8,
+    zone_reaction_v2_breakout_min_close_outside_atr=0.75,
+    zone_reaction_v2_consolidation_breakout_body_atr=1.2,
+    zone_reaction_v2_retest_max_bars=8,
+    zone_reaction_v2_rr_minimum=2.0,
+    zone_reaction_v2_allow_neutral_range_trade=True,
+    zone_reaction_v2_block_news_or_risk_off=True,
+    zone_reaction_v2_confluence_score_bonus=0.08,
 )
 
 
@@ -186,6 +201,25 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("blocked", trend["status"])
         self.assertIn("below Trend Pullback minimum", " ".join(trend["blocked_reason"]))
 
+    def test_trend_pullback_does_not_use_order_block_primary_zone(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 112, 113, 104, 108.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("order_block", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+            allowed_playbooks={"trend_pullback"},
+        )
+
+        self.assertEqual([], candidates)
+
     def test_allowed_playbooks_filters_candidates_before_ranking(self) -> None:
         candles = [
             candle("00:00", 110, 112, 108, 111),
@@ -244,6 +278,180 @@ class StrategyTest(unittest.TestCase):
 
         self.assertIn("failed_breakout_trap", playbooks)
         self.assertNotIn("breakout_retest", playbooks)
+
+    def test_zone_reaction_v2_fakeout_can_create_single_zone_setup(self) -> None:
+        candles = [
+            candle("00:00", 108, 109, 107, 108),
+            candle("00:15", 108, 108.5, 107.5, 108.1),
+            candle("00:30", 106, 108, 104, 106.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("zone_reaction_v2", candidates[0]["playbook"])
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("fakeout", candidates[0]["zone_reaction_state"])
+        self.assertEqual("fakeout", candidates[0]["metadata"]["reaction_v2"])
+        self.assertEqual(1, candidates[0]["metadata"]["confluence_count"])
+
+    def test_zone_reaction_v2_excludes_order_block(self) -> None:
+        candles = [candle("00:30", 106, 108, 104, 106.5)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("order_block", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual([], candidates)
+
+    def test_zone_reaction_v2_blocks_news_regime(self) -> None:
+        candles = [candle("00:30", 106, 108, 104, 106.5)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "news"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertIn("Regime news blocks", " ".join(candidates[0]["blocked_reason"]))
+
+    def test_zone_reaction_v2_excludes_consolidation_to_avoid_overtrading(self) -> None:
+        candles = [candle("00:30", 103, 107, 99, 101)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("consolidation", "neutral", 100, 110)],
+            contexts("neutral", "ranging"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual([], candidates)
+
+    def test_zone_reaction_v2_clean_break_against_bias_is_transition_blocked(self) -> None:
+        candles = [
+            candle("00:00", 108, 109, 107, 108),
+            candle("00:15", 108, 108.5, 107.5, 108.1),
+            candle("00:30", 106, 106.5, 99, 100),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertEqual("clean_breakout", candidates[0]["zone_reaction_state"])
+        self.assertEqual("transition_bearish", candidates[0]["metadata"]["bias_phase"])
+
+    def test_zone_reaction_v2_clean_break_with_bias_waits_for_retest(self) -> None:
+        candles = [
+            candle("00:00", 108, 109, 107, 108),
+            candle("00:15", 108, 108.5, 107.5, 108.1),
+            candle("00:30", 106, 106.5, 99, 100),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bearish", "trending"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("clean_breakout", candidates[0]["zone_reaction_state"])
+
+    def test_zone_reaction_v2_clean_break_requires_one_atr_close_outside_zone(self) -> None:
+        candles = [
+            candle("00:00", 108, 109, 107, 108),
+            candle("00:15", 108, 108.5, 107.5, 108.1),
+            candle("00:30", 107.5, 107.8, 101, 104),
+        ]
+
+        reaction = classify_zone_reaction_v2(zone("support", "bullish", 105, 107), candles, atr=2, config=CONFIG)
+
+        self.assertNotEqual("clean_breakout", reaction.state)
+        self.assertEqual("waiting_bos", reaction.state)
+
+    def test_zone_reaction_v2_breakout_retest_reject_creates_entry(self) -> None:
+        candles = [
+            candle("00:00", 108, 109, 107, 108),
+            candle("00:15", 108, 108.5, 107.5, 108.1),
+            candle("00:30", 106, 106.5, 97, 98),
+            candle("00:45", 98, 106.2, 97.5, 103),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bearish", "trending"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("retest_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual("short", candidates[0]["direction"])
+        self.assertIn("WAITING_RETEST", candidates[0]["metadata"]["state_machine_path"])
+
+    def test_zone_reaction_v2_detects_slow_reaction(self) -> None:
+        candles = [
+            candle("00:00", 106, 106.4, 105.4, 106.1),
+            candle("00:15", 106.1, 106.5, 105.5, 106.0),
+            candle("00:30", 106.0, 106.3, 105.6, 106.1),
+        ]
+
+        reaction = classify_zone_reaction_v2(zone("support", "bullish", 105, 107), candles, atr=4, config=CONFIG)
+
+        self.assertEqual("slow_reaction", reaction.state)
+        self.assertEqual("long", reaction.direction)
+
+    def test_zone_reaction_v2_waiting_bos_becomes_eligible_after_trigger(self) -> None:
+        candles = [candle("00:30", 106, 107.5, 105.5, 106.4)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [point("BOS", "up", "00:30")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
 
     def test_rr_below_config_minimum_blocks_candidate(self) -> None:
         strict_config = replace(CONFIG, min_risk_reward=2.5)

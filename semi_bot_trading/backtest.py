@@ -505,6 +505,8 @@ class IncrementalBacktestTimeline:
                 self.config.support_resistance.max_zones,
                 available_slices,
                 self.config.support_resistance.atr_width_multiplier,
+                candidate_close_break_buffer=self.config.zone_lifecycle.close_break_buffer,
+                candidate_close_break_buffer_atr_multiplier=self.config.zone_lifecycle.close_break_buffer_atr_multiplier,
             )
             sr_zones = apply_lifecycle_to_zones(
                 sr_zones,
@@ -532,6 +534,8 @@ class IncrementalBacktestTimeline:
             fvg_middle_candle_atr_multiplier=self.config.smc_zones.fvg_middle_candle_atr_multiplier,
             fvg_gap_atr_ratio=self.config.smc_zones.fvg_gap_atr_ratio,
             fvg_min_width_atr_ratio=self.config.smc_zones.fvg_min_width_atr_ratio,
+            fvg_third_candle_follow_through_required=self.config.smc_zones.fvg_third_candle_follow_through_required,
+            fvg_third_candle_min_body_ratio=self.config.smc_zones.fvg_third_candle_min_body_ratio,
             fvg_max_active_days=self.config.smc_zones.fvg_max_active_days_for(self.config.bias.timeframe),
             fvg_decay_start_days=self.config.smc_zones.fvg_decay_start_days_for(self.config.bias.timeframe),
             ob_displacement_atr_multiplier=self.config.smc_zones.ob_displacement_atr_multiplier,
@@ -734,15 +738,18 @@ def simulate_trade(
     if direction == "long":
         entry_price = raw_open + half_spread + slippage
         stop = float(stop_loss)
-        tp = float(take_profit[0])
         initial_risk = entry_price - stop
     else:
         entry_price = raw_open - half_spread - slippage
         stop = float(stop_loss)
-        tp = float(take_profit[0])
         initial_risk = stop - entry_price
     if initial_risk <= 0:
         return None
+    target_rr = target_risk_reward(candidate)
+    if direction == "long":
+        tp = entry_price + initial_risk * target_rr
+    else:
+        tp = entry_price - initial_risk * target_rr
 
     end_index = min(len(candles) - 1, entry_index + max_hold_candles)
     exit_status = "time_exit"
@@ -792,9 +799,20 @@ def simulate_trade(
             "candidate_metadata": candidate.get("metadata") or {},
             "spread": spread,
             "slippage": slippage,
+            "target_rr_after_fill": target_rr,
+            "cost_model": "entry uses bid/ask plus adverse slippage; exits use bid/ask side without extra exit slippage",
             "conservative_intrabar_order": "SL first when SL and TP are both inside same candle",
         },
     )
+
+
+def target_risk_reward(candidate: dict[str, Any]) -> float:
+    value = candidate.get("risk_reward")
+    try:
+        target = float(value) if value is not None else 2.0
+    except (TypeError, ValueError):
+        target = 2.0
+    return max(target, 0.01)
 
 
 def persist_backtest_result(
@@ -1008,16 +1026,16 @@ def exit_on_candle(
         stop_hit = low - half_spread <= stop
         tp_hit = high - half_spread >= take_profit
         if stop_hit:
-            return "stopped", stop - slippage
+            return "stopped", stop
         if tp_hit:
-            return "target_hit", take_profit - slippage
+            return "target_hit", take_profit
     else:
         stop_hit = high + half_spread >= stop
         tp_hit = low + half_spread <= take_profit
         if stop_hit:
-            return "stopped", stop + slippage
+            return "stopped", stop
         if tp_hit:
-            return "target_hit", take_profit + slippage
+            return "target_hit", take_profit
     return None
 
 

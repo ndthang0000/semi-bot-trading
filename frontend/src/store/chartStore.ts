@@ -5,6 +5,8 @@ import type {
   PlaybookKey,
   PriceZone,
   SelectedEntity,
+  TradeOrder,
+  TradeFocusRequest,
   Timeframe,
   ZoneFocusRequest,
   ZoneTypeVisibility,
@@ -24,6 +26,7 @@ export const defaultSelectedPlaybooks: PlaybookKey[] = ["trend_pullback"];
 
 export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibilityKey[]; structure: boolean }> = {
   trend_pullback: { zones: ["support", "resistance", "order_block", "fvg"], structure: true },
+  zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   ob_mitigation_continuation: { zones: ["order_block"], structure: true },
   fvg_fill_go: { zones: ["fvg"], structure: true },
   breakout_retest: { zones: ["consolidation"], structure: true },
@@ -48,6 +51,7 @@ type ChartState = {
   addEntityKind: AddEntityKind | null;
   selected: SelectedEntity | null;
   zoneFocusRequest: ZoneFocusRequest | null;
+  tradeFocusRequest: TradeFocusRequest | null;
   setTimeframe: (timeframe: Timeframe) => void;
   setLimit: (limit: number) => void;
   setStartIndex: (startIndex: number | null) => void;
@@ -64,6 +68,7 @@ type ChartState = {
   setAddEntityKind: (kind: AddEntityKind | null) => void;
   setSelected: (selected: SelectedEntity | null) => void;
   focusZone: (zone: PriceZone) => void;
+  focusTrade: (trade: TradeOrder) => void;
 };
 
 export const useChartStore = create<ChartState>()(
@@ -83,6 +88,7 @@ export const useChartStore = create<ChartState>()(
       addEntityKind: null,
       selected: null,
       zoneFocusRequest: null,
+      tradeFocusRequest: null,
       setTimeframe: (timeframe) => set({ timeframe, selected: null }),
       setLimit: (limit) => set({ limit: Math.min(Math.max(limit, 1), 15000) }),
       setStartIndex: (startIndex) => set({ startIndex: startIndex === null ? null : Math.max(0, Math.floor(startIndex)), selected: null }),
@@ -144,6 +150,13 @@ export const useChartStore = create<ChartState>()(
             zone,
           },
         })),
+      focusTrade: (trade) =>
+        set((state) => ({
+          tradeFocusRequest: {
+            id: (state.tradeFocusRequest?.id ?? 0) + 1,
+            trade,
+          },
+        })),
     }),
     {
       name: "semi-bot-chart-layer-settings",
@@ -176,6 +189,7 @@ export const useChartStore = create<ChartState>()(
           selected: null,
           addEntityKind: null,
           zoneFocusRequest: null,
+          tradeFocusRequest: null,
         };
         return {
           ...merged,

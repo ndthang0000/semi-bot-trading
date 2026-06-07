@@ -105,6 +105,34 @@ class ZoneDetectorTest(unittest.TestCase):
         self.assertEqual(later_zone.price_high, early_zone.price_high)
         self.assertEqual(later_zone.metadata["atr_at_detection"], early_zone.metadata["atr_at_detection"])
 
+    def test_rejects_support_candidate_broken_before_detection(self) -> None:
+        swings = [
+            SwingPoint("l1", "HL", 1922.34, "2023-09-06T08:00:00+00:00", "low"),
+            SwingPoint("l2", "HL", 1922.35, "2023-09-15T19:00:00+00:00", "low"),
+            SwingPoint("l3", "HL", 1922.72, "2023-09-18T14:00:00+00:00", "low"),
+        ]
+        candles = [
+            CandleSlice("2023-09-06T08:00:00+00:00", open=1922.78, high=1924.87, low=1922.34, close=1924.68),
+            CandleSlice("2023-09-06T14:00:00+00:00", open=1928.07, high=1928.07, low=1915.15, close=1918.10),
+            CandleSlice("2023-09-15T19:00:00+00:00", open=1923.99, high=1924.45, low=1922.35, close=1922.45),
+            CandleSlice("2023-09-18T14:00:00+00:00", open=1923.90, high=1927.54, low=1922.72, close=1926.84),
+        ]
+
+        zones = detect_support_resistance_zones(
+            swings,
+            symbol="XAUUSD",
+            timeframe="H1",
+            tolerance_pct=0.0005,
+            min_zone_width=1.0,
+            min_touches=3,
+            max_zones=10,
+            atr_candles=candles,
+            atr_width_multiplier=0.25,
+            candidate_close_break_buffer_atr_multiplier=0.15,
+        )
+
+        self.assertEqual(zones, [])
+
     def test_scores_reaction_quality_after_touch(self) -> None:
         swings = [
             SwingPoint("l1", "HL", 1990, "2026-01-01T01:00:00+00:00", "low"),

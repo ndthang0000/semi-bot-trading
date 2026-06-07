@@ -75,6 +75,28 @@ class SmcZoneTest(unittest.TestCase):
 
         self.assertEqual([], zones)
 
+    def test_fvg_requires_third_candle_follow_through_by_default(self) -> None:
+        candles = [
+            candle("00:00", 100, 101, 99, 100),
+            candle("01:00", 100, 101, 99, 100),
+            candle("02:00", 100, 101, 99, 100),
+            candle("03:00", 100, 102, 99, 101),
+            candle("04:00", 101, 102, 90, 91),
+            candle("05:00", 92, 96, 90, 95),
+        ]
+
+        zones = detect_fvg_zones(candles, "XAUUSD", "H1")
+        loose_zones = detect_fvg_zones(
+            candles,
+            "XAUUSD",
+            "H1",
+            third_candle_follow_through_required=False,
+        )
+
+        self.assertEqual([], zones)
+        self.assertEqual(1, len(loose_zones))
+        self.assertEqual("bearish", loose_zones[0].direction)
+
     def test_h1_fvg_expires_after_three_days_before_late_fill(self) -> None:
         candles = [
             candle("00:00", 100, 101, 99, 100),

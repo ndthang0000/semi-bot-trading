@@ -1,13 +1,22 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Layers, MousePointer2, RotateCcw, Save, Target, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { deleteManualZone, updateZoneOverride } from "../api/chart";
+import { useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { History, Layers, MousePointer2, RotateCcw, Save, Target, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { deleteManualZone, fetchTradeHistory, updateTradeReview, updateZoneOverride } from "../api/chart";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
+const TRADE_FILTER_STORAGE_KEY = "semi-bot-trade-history-filters";
 export function Inspector({ payload, onZoneUpdated }) {
     const selected = useChartStore((state) => state.selected);
     const setSelected = useChartStore((state) => state.setSelected);
     const focusZone = useChartStore((state) => state.focusZone);
+    const focusTrade = useChartStore((state) => state.focusTrade);
+    const setStartIndex = useChartStore((state) => state.setStartIndex);
+    const symbol = useChartStore((state) => state.symbol);
+    const timeframe = useChartStore((state) => state.timeframe);
+    const limit = useChartStore((state) => state.limit);
+    const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
     const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
     const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
     const showZones = useChartStore((state) => state.showZones);
@@ -21,10 +30,117 @@ export function Inspector({ payload, onZoneUpdated }) {
         ? filterImportantZoneList(layerFilteredZones, lastCandle.close, lastCandle.time, maxVisibleZones, selectedZoneId)
         : layerFilteredZones.slice().sort((a, b) => b.weight - a.weight);
     const [activeTab, setActiveTab] = useState("zones");
-    return (_jsxs("aside", { className: "grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900", children: [_jsx("div", { className: "border-b border-ink-700 p-3", children: _jsxs("div", { className: "grid grid-cols-2 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1", children: [_jsxs("button", { className: `inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${activeTab === "zones" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"}`, type: "button", onClick: () => setActiveTab("zones"), children: [_jsx(Layers, { size: 16 }), "Zones", _jsx("span", { className: "rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400", children: visibleZones.length })] }), _jsxs("button", { className: `inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${activeTab === "setups" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"}`, type: "button", onClick: () => setActiveTab("setups"), children: [_jsx(Target, { size: 16 }), "Setups", _jsx("span", { className: "rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400", children: setupCandidates.length })] })] }) }), activeTab === "zones" ? (_jsx(ZonesTab, { importantZonesOnly: importantZonesOnly, onZoneUpdated: onZoneUpdated, selected: selected, setSelected: setSelected, focusZone: focusZone, visibleZones: visibleZones, totalZones: zones.length })) : (_jsx(SetupsPanel, { candidates: setupCandidates, zones: zones }))] }));
+    const [toast, setToast] = useState(null);
+    const showToast = useCallback((kind, text) => {
+        setToast({ id: Date.now(), kind, text });
+    }, []);
+    useEffect(() => {
+        if (!toast)
+            return;
+        const timeoutId = window.setTimeout(() => setToast(null), 3200);
+        return () => window.clearTimeout(timeoutId);
+    }, [toast]);
+    return (_jsxs("aside", { className: "relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900", children: [toast ? _jsx(Toast, { toast: toast, onClose: () => setToast(null) }) : null, _jsx("div", { className: "border-b border-ink-700 p-3", children: _jsxs("div", { className: "grid grid-cols-3 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1", children: [_jsxs("button", { className: `inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${activeTab === "zones" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"}`, type: "button", onClick: () => setActiveTab("zones"), children: [_jsx(Layers, { size: 16 }), "Zones", _jsx("span", { className: "rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400", children: visibleZones.length })] }), _jsxs("button", { className: `inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${activeTab === "setups" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"}`, type: "button", onClick: () => setActiveTab("setups"), children: [_jsx(Target, { size: 16 }), "Setups", _jsx("span", { className: "rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400", children: setupCandidates.length })] }), _jsxs("button", { className: `inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${activeTab === "trades" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"}`, type: "button", onClick: () => setActiveTab("trades"), children: [_jsx(History, { size: 16 }), "Trades"] })] }) }), activeTab === "zones" ? (_jsx(ZonesTab, { importantZonesOnly: importantZonesOnly, onZoneUpdated: onZoneUpdated, selected: selected, setSelected: setSelected, focusZone: focusZone, showToast: showToast, visibleZones: visibleZones, totalZones: zones.length })) : activeTab === "setups" ? (_jsx(SetupsPanel, { candidates: setupCandidates, zones: zones })) : (_jsx(TradesTab, { focusTrade: focusTrade, limit: limit, selected: selected, selectedPlaybooks: selectedPlaybooks, setSelected: setSelected, setStartIndex: setStartIndex, symbol: symbol, timeframe: timeframe }))] }));
 }
-function ZonesTab({ selected, visibleZones, totalZones, importantZonesOnly, onZoneUpdated, setSelected, focusZone, }) {
-    return (_jsxs("div", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden", children: [_jsxs("section", { className: "min-h-0 border-b border-ink-700 p-4", children: [_jsxs("div", { className: "mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(MousePointer2, { size: 14 }), "Selected"] }), !selected ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-4 text-sm text-slate-500", children: "Click a zone or marker" })) : selected.kind === "zone" ? (_jsx(ZoneEditor, { zone: selected.entity, onZoneUpdated: onZoneUpdated })) : selected.kind === "structure" ? (_jsxs("div", { className: "grid gap-2 text-sm", children: [_jsx(Detail, { label: "Type", value: selected.entity.type }), _jsx(Detail, { label: "Price", value: price(selected.entity.price) }), _jsx(Detail, { label: "Time", value: compactTime(selected.entity.time) }), _jsx(Detail, { label: "Detector", value: selected.entity.detector }), _jsx(Detail, { label: "Direction", value: selected.entity.direction ?? "--" })] })) : (_jsx(TradeDetails, { trade: selected.entity }))] }), _jsxs("section", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4", children: [_jsxs("div", { className: "mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(Layers, { size: 14 }), "Zones", importantZonesOnly ? (_jsxs("span", { className: "ml-auto normal-case tracking-normal text-slate-600", children: [visibleZones.length, "/", totalZones] })) : null] }), _jsx("div", { className: "min-h-0 overflow-y-auto overscroll-contain pr-1", children: _jsx("div", { className: "grid gap-2", children: visibleZones.map((zone) => (_jsxs("button", { className: `rounded-md border p-3 text-left transition ${selected?.kind === "zone" && selected.entity.id === zone.id
+function Toast({ toast, onClose }) {
+    return (_jsx("div", { className: "pointer-events-none absolute right-4 top-4 z-[80]", children: _jsxs("div", { className: `pointer-events-auto flex max-w-[320px] items-start gap-3 rounded-md border px-3 py-2 text-sm shadow-2xl shadow-black/40 ${toast.kind === "success"
+                ? "border-emerald-300/50 bg-emerald-950/95 text-emerald-50"
+                : "border-rose-300/50 bg-rose-950/95 text-rose-50"}`, children: [_jsx("span", { className: "min-w-0 leading-relaxed", children: toast.text }), _jsx("button", { className: "text-slate-400 hover:text-slate-100", type: "button", onClick: onClose, children: "x" })] }) }));
+}
+function TradesTab({ symbol, timeframe, limit, selectedPlaybooks, selected, setSelected, setStartIndex, focusTrade, }) {
+    const storedFilters = useMemo(() => readTradeHistoryFilters(), []);
+    const [status, setStatus] = useState(storedFilters.status);
+    const [side, setSide] = useState(storedFilters.side);
+    const [outcome, setOutcome] = useState(storedFilters.outcome);
+    const [sort, setSort] = useState(storedFilters.sort);
+    const [page, setPage] = useState(storedFilters.page);
+    const pageSize = 120;
+    const offset = page * pageSize;
+    const query = useQuery({
+        queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, sort, offset],
+        queryFn: () => fetchTradeHistory({
+            symbol,
+            timeframe,
+            limit: pageSize,
+            offset,
+            selectedPlaybooks,
+            status: status || undefined,
+            side: side || undefined,
+            outcome,
+            backtest: true,
+            sort,
+        }),
+        staleTime: 10_000,
+    });
+    const trades = query.data?.trades ?? [];
+    const total = query.data?.total ?? 0;
+    const selectedTradeId = selected?.kind === "trade" ? selected.entity.id : null;
+    const summary = useMemo(() => {
+        const totalR = trades.reduce((sum, trade) => sum + (trade.pnl_r ?? 0), 0);
+        const wins = trades.filter((trade) => (trade.pnl_r ?? 0) > 0).length;
+        return { totalR, wins };
+    }, [trades]);
+    useEffect(() => {
+        writeTradeHistoryFilters({ status, side, outcome, sort, page });
+    }, [outcome, page, side, sort, status]);
+    useEffect(() => {
+        setPage((current) => (current === 0 ? current : 0));
+    }, [outcome, side, sort, status, selectedPlaybooks]);
+    const selectTrade = (trade) => {
+        setSelected({ kind: "trade", entity: trade });
+        if (typeof trade.chart_index === "number") {
+            const nextStart = Math.max(0, trade.chart_index - Math.floor(limit * 0.55));
+            setStartIndex(nextStart);
+        }
+        focusTrade(trade);
+    };
+    return (_jsxs("section", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4", children: [_jsxs("div", { className: "mb-3 grid gap-3", children: [_jsxs("div", { className: "flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(History, { size: 14 }), "Trade History", _jsx("span", { className: "ml-auto normal-case tracking-normal text-slate-600", children: total })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx(TradeSelect, { value: status, onChange: setStatus, options: [["", "All status"], ["target_hit", "Target"], ["stopped", "Stopped"], ["time_exit", "Time exit"]] }), _jsx(TradeSelect, { value: outcome, onChange: setOutcome, options: [["all", "All PnL"], ["win", "Wins"], ["loss", "Losses"]] }), _jsx(TradeSelect, { value: side, onChange: setSide, options: [["", "Both side"], ["buy", "Buy"], ["sell", "Sell"]] }), _jsx(TradeSelect, { value: sort, onChange: setSort, options: [["opened_at_desc", "Newest"], ["opened_at_asc", "Oldest"], ["pnl_r_desc", "Best R"], ["pnl_r_asc", "Worst R"]] })] }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-xs text-slate-400", children: [_jsxs("span", { children: [trades.length, " shown \u00B7 ", summary.wins, " wins"] }), _jsxs("span", { className: summary.totalR >= 0 ? "text-emerald-300" : "text-rose-300", children: [summary.totalR.toFixed(2), "R"] })] })] }), _jsx("div", { className: "min-h-0 overflow-y-auto overscroll-contain pr-1", children: query.isLoading ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500", children: "Loading trades..." })) : query.isError ? (_jsx("div", { className: "rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-100", children: query.error instanceof Error ? query.error.message : "Could not load trades." })) : trades.length === 0 ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500", children: "No trades match current filters" })) : (_jsx("div", { className: "grid gap-2", children: trades.map((trade) => (_jsxs("button", { className: `rounded-md border p-3 text-left transition ${selectedTradeId === trade.id ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850 hover:border-slate-600"}`, type: "button", onClick: () => selectTrade(trade), children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "truncate text-sm font-semibold text-slate-100", children: playbookLabel(trade.playbook) }), _jsx("span", { className: trade.side === "buy" ? "text-xs text-emerald-300" : "text-xs text-rose-300", children: trade.side })] }), _jsxs("div", { className: "mt-1 flex items-center justify-between gap-2 text-xs text-slate-400", children: [_jsx("span", { children: compactTime(trade.opened_at) }), _jsx("span", { className: trade.status === "target_hit" ? "text-emerald-300" : trade.status === "stopped" ? "text-rose-300" : "text-yellow-200", children: trade.status })] }), _jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500", children: [_jsxs("span", { children: ["Entry ", price(trade.entry_price)] }), _jsxs("span", { children: ["SL ", price(trade.stop_loss)] }), _jsx("span", { className: (trade.pnl_r ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300", children: formatR(trade.pnl_r) })] })] }, trade.id))) })) }), _jsxs("div", { className: "mt-3 grid grid-cols-2 gap-2", children: [_jsx("button", { className: "rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40", disabled: page === 0, type: "button", onClick: () => setPage((current) => Math.max(0, current - 1)), children: "Prev" }), _jsx("button", { className: "rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40", disabled: offset + pageSize >= total, type: "button", onClick: () => setPage((current) => current + 1), children: "Next" })] })] }));
+}
+function TradeSelect({ value, onChange, options, }) {
+    return (_jsx("select", { className: "h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400", value: value, onChange: (event) => {
+            onChange(event.target.value);
+        }, children: options.map(([optionValue, label]) => (_jsx("option", { value: optionValue, children: label }, optionValue))) }));
+}
+function readTradeHistoryFilters() {
+    const defaults = {
+        status: "",
+        side: "",
+        outcome: "all",
+        sort: "opened_at_desc",
+        page: 0,
+    };
+    if (typeof window === "undefined")
+        return defaults;
+    try {
+        const raw = window.localStorage.getItem(TRADE_FILTER_STORAGE_KEY);
+        if (!raw)
+            return defaults;
+        const parsed = JSON.parse(raw);
+        return {
+            status: typeof parsed.status === "string" ? parsed.status : defaults.status,
+            side: typeof parsed.side === "string" ? parsed.side : defaults.side,
+            outcome: typeof parsed.outcome === "string" ? parsed.outcome : defaults.outcome,
+            sort: typeof parsed.sort === "string" ? parsed.sort : defaults.sort,
+            page: Number.isFinite(parsed.page) ? Math.max(0, Math.floor(Number(parsed.page))) : defaults.page,
+        };
+    }
+    catch {
+        return defaults;
+    }
+}
+function writeTradeHistoryFilters(filters) {
+    if (typeof window === "undefined")
+        return;
+    window.localStorage.setItem(TRADE_FILTER_STORAGE_KEY, JSON.stringify({
+        status: filters.status,
+        side: filters.side,
+        outcome: filters.outcome,
+        sort: filters.sort,
+        page: Math.max(0, Math.floor(filters.page)),
+    }));
+}
+function ZonesTab({ selected, visibleZones, totalZones, importantZonesOnly, onZoneUpdated, setSelected, focusZone, showToast, }) {
+    return (_jsxs("div", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden", children: [_jsxs("section", { className: "min-h-0 border-b border-ink-700 p-4", children: [_jsxs("div", { className: "mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(MousePointer2, { size: 14 }), "Selected"] }), !selected ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-4 text-sm text-slate-500", children: "Click a zone or marker" })) : selected.kind === "zone" ? (_jsx(ZoneEditor, { zone: selected.entity, onZoneUpdated: onZoneUpdated, showToast: showToast })) : selected.kind === "structure" ? (_jsxs("div", { className: "grid gap-2 text-sm", children: [_jsx(Detail, { label: "Type", value: selected.entity.type }), _jsx(Detail, { label: "Price", value: price(selected.entity.price) }), _jsx(Detail, { label: "Time", value: compactTime(selected.entity.time) }), _jsx(Detail, { label: "Detector", value: selected.entity.detector }), _jsx(Detail, { label: "Direction", value: selected.entity.direction ?? "--" })] })) : (_jsx(TradeDetails, { trade: selected.entity, showToast: showToast }))] }), _jsxs("section", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4", children: [_jsxs("div", { className: "mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(Layers, { size: 14 }), "Zones", importantZonesOnly ? (_jsxs("span", { className: "ml-auto normal-case tracking-normal text-slate-600", children: [visibleZones.length, "/", totalZones] })) : null] }), _jsx("div", { className: "min-h-0 overflow-y-auto overscroll-contain pr-1", children: _jsx("div", { className: "grid gap-2", children: visibleZones.map((zone) => (_jsxs("button", { className: `rounded-md border p-3 text-left transition ${selected?.kind === "zone" && selected.entity.id === zone.id
                                     ? "border-cyan-400 bg-cyan-400/10"
                                     : "border-ink-700 bg-ink-850 hover:border-slate-600"}`, type: "button", onClick: () => {
                                     setSelected({ kind: "zone", entity: zone });
@@ -58,7 +174,7 @@ function SetupsPanel({ candidates, zones }) {
                                         return;
                                     event.preventDefault();
                                     focusCandidate(candidate);
-                                }, children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "truncate text-sm font-semibold text-slate-100", children: playbookLabel(candidate.playbook) }), _jsx("span", { className: candidate.direction === "long" ? "text-xs text-emerald-300" : "text-xs text-rose-300", children: candidate.direction })] }), _jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400", children: [_jsxs("span", { children: ["score ", candidate.score.toFixed(2)] }), _jsx("span", { children: candidate.zone_reaction_state }), candidate.risk_reward ? _jsxs("span", { children: ["RR ", candidate.risk_reward.toFixed(2)] }) : null] }), candidate.entry && candidate.stop_loss ? (_jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500", children: [_jsxs("span", { children: ["Entry ", price(candidate.entry)] }), _jsxs("span", { children: ["SL ", price(candidate.stop_loss)] }), candidate.take_profit[0] ? _jsxs("span", { children: ["TP ", price(candidate.take_profit[0])] }) : null] })) : null, _jsx("div", { className: "mt-1 truncate text-[11px] text-slate-500", children: (candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--") }), _jsxs("div", { className: "mt-2 flex flex-wrap gap-1", children: [_jsx(SetupAction, { label: watchedIds.has(candidate.id) ? "Watching" : "Watch", onClick: () => setWatchedIds((current) => toggleSetValue(current, candidate.id)) }), _jsx(SetupAction, { label: "Reject", onClick: () => setRejectedIds((current) => addSetValue(current, candidate.id)) }), _jsx(SetupAction, { label: "Disable PB", onClick: () => setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook)) })] })] }, candidate.id)))] }, status)) : null) }) }))] }));
+                                }, children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "truncate text-sm font-semibold text-slate-100", children: playbookLabel(candidate.playbook) }), _jsx("span", { className: candidate.direction === "long" ? "text-xs text-emerald-300" : "text-xs text-rose-300", children: candidate.direction })] }), _jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400", children: [_jsxs("span", { children: ["score ", candidate.score.toFixed(2)] }), _jsx("span", { children: candidate.zone_reaction_state }), candidate.risk_reward ? _jsxs("span", { children: ["RR ", candidate.risk_reward.toFixed(2)] }) : null] }), candidate.entry && candidate.stop_loss ? (_jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500", children: [_jsxs("span", { children: ["Entry ", price(candidate.entry)] }), _jsxs("span", { children: ["SL ", price(candidate.stop_loss)] }), candidate.take_profit[0] ? _jsxs("span", { children: ["TP ", price(candidate.take_profit[0])] }) : null] })) : null, _jsx("div", { className: "mt-1 truncate text-[11px] text-slate-500", children: (candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--") }), _jsx(StateMachine, { steps: readStateMachine(candidate.metadata.state_machine), compact: true }), _jsxs("div", { className: "mt-2 flex flex-wrap gap-1", children: [_jsx(SetupAction, { label: watchedIds.has(candidate.id) ? "Watching" : "Watch", onClick: () => setWatchedIds((current) => toggleSetValue(current, candidate.id)) }), _jsx(SetupAction, { label: "Reject", onClick: () => setRejectedIds((current) => addSetValue(current, candidate.id)) }), _jsx(SetupAction, { label: "Disable PB", onClick: () => setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook)) })] })] }, candidate.id)))] }, status)) : null) }) }))] }));
 }
 function SetupAction({ label, onClick }) {
     return (_jsx("span", { className: "rounded border border-ink-700 bg-ink-950 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-500 hover:text-cyan-100", role: "button", tabIndex: 0, onClick: (event) => {
@@ -75,17 +191,107 @@ function SetupAction({ label, onClick }) {
 function TradeMetric({ label, value }) {
     return (_jsxs("div", { className: "flex items-center justify-between gap-3", children: [_jsx("span", { className: "text-xs text-slate-500", children: label }), _jsx("strong", { className: "shrink-0 whitespace-nowrap text-right text-sm text-slate-100", children: value })] }));
 }
-function TradeDetails({ trade }) {
+function TradeDetails({ trade, showToast }) {
+    const setSelected = useChartStore((state) => state.setSelected);
     const metadata = trade.metadata ?? {};
     const candidateMetadata = readObject(metadata.candidate_metadata);
+    const stateMachine = readStateMachine(candidateMetadata.state_machine);
     const reasons = readStringList(metadata.reason);
     const blockedReasons = readStringList(metadata.blocked_reason);
     const triggerTypes = readStringList(candidateMetadata.trigger_types);
     const takeProfit = firstTakeProfitPrice(trade.take_profit);
     const statusNote = tradeStatusNote(trade.status);
-    return (_jsxs("div", { className: "grid gap-3 text-sm", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx(Detail, { label: "Playbook", value: playbookLabel(trade.playbook) }), _jsx(Detail, { label: "Side", value: trade.side }), _jsx(Detail, { label: "Status", value: trade.status }), _jsx(Detail, { label: "Backtest", value: metadata.backtest === true ? "true" : "--" })] }), statusNote ? (_jsx("div", { className: "rounded-md border border-yellow-300/25 bg-yellow-300/[0.06] p-2 text-xs leading-relaxed text-yellow-50", children: statusNote })) : null, _jsxs("div", { className: "grid gap-2 rounded-md border border-ink-700 bg-ink-950/60 p-3", children: [_jsx(TradeMetric, { label: "Entry", value: price(trade.entry_price) }), _jsx(TradeMetric, { label: "SL", value: price(trade.stop_loss) }), _jsx(TradeMetric, { label: "TP", value: price(takeProfit) }), _jsx(TradeMetric, { label: "Exit", value: price(trade.close_price) }), _jsx(TradeMetric, { label: "PnL R", value: trade.pnl_r === null ? "--" : `${trade.pnl_r.toFixed(2)}R` }), _jsx(TradeMetric, { label: "Score", value: formatUnknownNumber(metadata.score) })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx(Detail, { label: "Opened", value: compactTime(trade.opened_at) }), _jsx(Detail, { label: "Closed", value: compactTime(trade.closed_at) }), _jsx(Detail, { label: "Reaction", value: String(metadata.zone_reaction_state ?? "--") }), _jsx(Detail, { label: "Zone", value: String(candidateMetadata.zone_type ?? "--") }), _jsx(Detail, { label: "Trigger", value: triggerTypes.length > 0 ? triggerTypes.join(" + ") : "--" })] }), _jsxs("div", { className: "grid gap-1", children: [_jsx("div", { className: "text-xs text-slate-500", children: "Reason" }), _jsx("div", { className: "rounded-md border border-cyan-400/25 bg-cyan-400/[0.06] p-2 text-xs leading-relaxed text-cyan-50", children: reasons.length > 0 ? (_jsx("ul", { className: "grid gap-1", children: reasons.map((reason, index) => (_jsxs("li", { children: ["\u2022 ", reason] }, `${reason}-${index}`))) })) : ("--") })] }), blockedReasons.length > 0 ? (_jsxs("div", { className: "grid gap-1", children: [_jsx("div", { className: "text-xs text-slate-500", children: "Blocked reason at signal" }), _jsx("div", { className: "rounded-md border border-rose-400/25 bg-rose-500/[0.06] p-2 text-xs leading-relaxed text-rose-50", children: _jsx("ul", { className: "grid gap-1", children: blockedReasons.map((reason, index) => (_jsxs("li", { children: ["\u2022 ", reason] }, `${reason}-${index}`))) }) })] })) : null] }));
+    return (_jsxs("div", { className: "grid gap-3 text-sm", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx(Detail, { label: "Playbook", value: playbookLabel(trade.playbook) }), _jsx(Detail, { label: "Side", value: trade.side }), _jsx(Detail, { label: "Status", value: trade.status }), _jsx(Detail, { label: "Backtest", value: metadata.backtest === true ? "true" : "--" })] }), statusNote ? (_jsx("div", { className: "rounded-md border border-yellow-300/25 bg-yellow-300/[0.06] p-2 text-xs leading-relaxed text-yellow-50", children: statusNote })) : null, _jsxs("div", { className: "grid gap-2 rounded-md border border-ink-700 bg-ink-950/60 p-3", children: [_jsx(TradeMetric, { label: "Entry", value: price(trade.entry_price) }), _jsx(TradeMetric, { label: "SL", value: price(trade.stop_loss) }), _jsx(TradeMetric, { label: "TP", value: price(takeProfit) }), _jsx(TradeMetric, { label: "Exit", value: price(trade.close_price) }), _jsx(TradeMetric, { label: "PnL R", value: trade.pnl_r === null ? "--" : `${trade.pnl_r.toFixed(2)}R` }), _jsx(TradeMetric, { label: "Score", value: formatUnknownNumber(metadata.score) })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx(Detail, { label: "Opened", value: compactTime(trade.opened_at) }), _jsx(Detail, { label: "Closed", value: compactTime(trade.closed_at) }), _jsx(Detail, { label: "Reaction", value: String(metadata.zone_reaction_state ?? "--") }), _jsx(Detail, { label: "Zone", value: String(candidateMetadata.zone_type ?? "--") }), _jsx(Detail, { label: "Trigger", value: triggerTypes.length > 0 ? triggerTypes.join(" + ") : "--" })] }), _jsx(StateMachine, { steps: stateMachine }), _jsxs("div", { className: "grid gap-1", children: [_jsx("div", { className: "text-xs text-slate-500", children: "Reason" }), _jsx("div", { className: "rounded-md border border-cyan-400/25 bg-cyan-400/[0.06] p-2 text-xs leading-relaxed text-cyan-50", children: reasons.length > 0 ? (_jsx("ul", { className: "grid gap-1", children: reasons.map((reason, index) => (_jsxs("li", { children: ["\u2022 ", reason] }, `${reason}-${index}`))) })) : ("--") })] }), blockedReasons.length > 0 ? (_jsxs("div", { className: "grid gap-1", children: [_jsx("div", { className: "text-xs text-slate-500", children: "Blocked reason at signal" }), _jsx("div", { className: "rounded-md border border-rose-400/25 bg-rose-500/[0.06] p-2 text-xs leading-relaxed text-rose-50", children: _jsx("ul", { className: "grid gap-1", children: blockedReasons.map((reason, index) => (_jsxs("li", { children: ["\u2022 ", reason] }, `${reason}-${index}`))) }) })] })) : null, _jsx(TradeReviewEditor, { trade: trade, showToast: showToast, onSaved: (review) => {
+                    setSelected({ kind: "trade", entity: { ...trade, review } });
+                } })] }));
 }
-function ZoneEditor({ zone, onZoneUpdated }) {
+const REVIEW_TAGS = [
+    ["wrong_bias", "Wrong bias"],
+    ["wrong_regime", "Wrong regime"],
+    ["weak_zone", "Weak zone"],
+    ["zone_already_broken", "Zone broken"],
+    ["weak_reaction", "Weak reaction"],
+    ["weak_breakout", "Weak breakout"],
+    ["bad_entry", "Bad entry"],
+    ["sl_too_tight", "SL too tight"],
+    ["tp_unrealistic", "TP unrealistic"],
+    ["against_momentum", "Against momentum"],
+    ["news_risk", "News risk"],
+    ["good_context", "Good context"],
+];
+function TradeReviewEditor({ trade, onSaved, showToast, }) {
+    const review = trade.review;
+    const [grade, setGrade] = useState(review?.grade ?? "");
+    const [verdict, setVerdict] = useState(review?.verdict ?? "unreviewed");
+    const [shouldTradeAgain, setShouldTradeAgain] = useState(review?.should_trade_again ?? "unknown");
+    const [mistakeTags, setMistakeTags] = useState(new Set(review?.mistake_tags ?? []));
+    const [comment, setComment] = useState(review?.comment ?? "");
+    const [error, setError] = useState(null);
+    const mutation = useMutation({
+        mutationFn: () => updateTradeReview(trade.id, {
+            grade: grade || null,
+            verdict,
+            mistake_tags: Array.from(mistakeTags),
+            should_trade_again: shouldTradeAgain,
+            comment,
+            reviewer: "human",
+        }),
+        onSuccess: (savedReview) => {
+            setError(null);
+            onSaved(savedReview);
+            showToast("success", "Trade review saved.");
+        },
+        onError: (err) => {
+            const message = err instanceof Error ? err.message : "Could not save trade review.";
+            setError(message);
+            showToast("error", message);
+        },
+    });
+    const saveReview = useCallback(() => {
+        mutation.mutate();
+    }, [mutation]);
+    useEffect(() => {
+        setGrade(review?.grade ?? "");
+        setVerdict(review?.verdict ?? "unreviewed");
+        setShouldTradeAgain(review?.should_trade_again ?? "unknown");
+        setMistakeTags(new Set(review?.mistake_tags ?? []));
+        setComment(review?.comment ?? "");
+        setError(null);
+    }, [review, trade.id]);
+    const toggleTag = (tag) => {
+        setMistakeTags((current) => toggleSetValue(current, tag));
+    };
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if (isEditableTarget(event.target))
+                return;
+            if (event.key.toLowerCase() !== "s")
+                return;
+            event.preventDefault();
+            saveReview();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [saveReview]);
+    return (_jsxs("div", { className: "grid gap-3 rounded-md border border-ink-700 bg-ink-950/60 p-3", children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("div", { className: "text-xs font-semibold uppercase tracking-[0.14em] text-slate-500", children: "Human Review" }), _jsxs("div", { className: "flex items-center gap-2", children: [review?.updated_at ? _jsx("span", { className: "hidden text-[10px] text-slate-600 sm:inline", children: compactTime(review.updated_at) }) : null, _jsxs("button", { className: "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-cyan-400/60 bg-cyan-400/15 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50", disabled: mutation.isPending, title: "Save review (S)", type: "button", onClick: saveReview, children: [_jsx(Save, { size: 13 }), mutation.isPending ? "Saving" : "Save"] })] })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx(ReviewSelect, { value: grade, onChange: setGrade, options: [["", "No grade"], ["A", "A"], ["B", "B"], ["C", "C"], ["D", "D"]] }), _jsx(ReviewSelect, { value: verdict, onChange: setVerdict, options: [
+                            ["unreviewed", "Unreviewed"],
+                            ["good_trade", "Good trade"],
+                            ["bad_trade", "Bad trade"],
+                            ["should_skip", "Should skip"],
+                            ["missed_context", "Missed context"],
+                        ] })] }), _jsx(ReviewSelect, { value: shouldTradeAgain, onChange: setShouldTradeAgain, options: [
+                    ["unknown", "Trade again?"],
+                    ["yes", "Yes"],
+                    ["no", "No"],
+                    ["conditional", "Conditional"],
+                ] }), _jsx("div", { className: "flex flex-wrap gap-1.5", children: REVIEW_TAGS.map(([tag, label]) => (_jsx("button", { className: `rounded border px-2 py-1 text-[11px] transition ${mistakeTags.has(tag)
+                        ? "border-cyan-300/70 bg-cyan-300/15 text-cyan-100"
+                        : "border-ink-700 bg-ink-850 text-slate-400 hover:border-slate-500 hover:text-slate-200"}`, type: "button", onClick: () => toggleTag(tag), children: label }, tag))) }), _jsxs("label", { className: "grid gap-1 text-xs text-slate-500", children: ["Comment", _jsx("textarea", { className: "min-h-24 resize-y rounded-md border border-ink-700 bg-ink-850 px-2 py-2 text-sm leading-relaxed text-slate-100 outline-none focus:border-cyan-400", placeholder: "V\u00ED d\u1EE5: Breakout qu\u00E1 y\u1EBFu, zone \u0111\u00E3 b\u1ECB xuy\u00EAn tr\u01B0\u1EDBc \u0111\u00F3, n\u00EAn b\u1ECF qua l\u1EC7nh n\u00E0y...", value: comment, onChange: (event) => setComment(event.target.value) })] }), error ? _jsx("div", { className: "rounded-md border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-100", children: error }) : null, _jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-400/60 bg-cyan-400/15 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50", disabled: mutation.isPending, title: "Save review (S)", type: "button", onClick: saveReview, children: [_jsx(Save, { size: 14 }), mutation.isPending ? "Saving review" : "Save review (S)"] })] }));
+}
+function ReviewSelect({ value, onChange, options, }) {
+    return (_jsx("select", { className: "h-9 min-w-0 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400", value: value, onChange: (event) => onChange(event.target.value), children: options.map(([optionValue, label]) => (_jsx("option", { value: optionValue, children: label }, optionValue))) }));
+}
+function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
     const setSelected = useChartStore((state) => state.setSelected);
     const [priceLow, setPriceLow] = useState(String(zone.price_low));
     const [priceHigh, setPriceHigh] = useState(String(zone.price_high));
@@ -149,14 +355,17 @@ function ZoneEditor({ zone, onZoneUpdated }) {
             });
             setSelected({ kind: "zone", entity: updated });
             onZoneUpdated();
+            showToast("success", "Zone override saved.");
         }
         catch (err) {
-            setError(err instanceof Error ? err.message : "Could not save zone override.");
+            const message = err instanceof Error ? err.message : "Could not save zone override.";
+            setError(message);
+            showToast("error", message);
         }
         finally {
             setIsSaving(false);
         }
-    }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, status, weight, zone]);
+    }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, weight, zone]);
     const deleteZone = useCallback(async () => {
         if (isSaving)
             return;
@@ -169,14 +378,17 @@ function ZoneEditor({ zone, onZoneUpdated }) {
             await deleteManualZone(zone.id, reason.trim() || "hotkey/manual delete");
             setSelected(null);
             onZoneUpdated();
+            showToast("success", "Zone deleted from chart.");
         }
         catch (err) {
-            setError(err instanceof Error ? err.message : "Could not delete zone.");
+            const message = err instanceof Error ? err.message : "Could not delete zone.";
+            setError(message);
+            showToast("error", message);
         }
         finally {
             setIsSaving(false);
         }
-    }, [isSaving, onZoneUpdated, reason, setSelected, zone.id]);
+    }, [isSaving, onZoneUpdated, reason, setSelected, showToast, zone.id]);
     useEffect(() => {
         const onKeyDown = (event) => {
             if (isEditableTarget(event.target))
@@ -331,6 +543,39 @@ function addSetValue(current, value) {
     next.add(value);
     return next;
 }
+function StateMachine({ steps, compact = false }) {
+    if (steps.length === 0)
+        return null;
+    return (_jsxs("div", { className: compact ? "mt-2 flex flex-wrap gap-1" : "grid gap-1", children: [!compact ? _jsx("div", { className: "text-xs text-slate-500", children: "State machine" }) : null, _jsx("div", { className: "flex flex-wrap gap-1", children: steps.map((step) => (_jsx("span", { className: `rounded border px-1.5 py-0.5 text-[10px] ${step.status === "active"
+                        ? "border-cyan-300/70 bg-cyan-300/15 text-cyan-100"
+                        : step.status === "done"
+                            ? "border-emerald-300/30 bg-emerald-300/[0.06] text-emerald-200"
+                            : "border-ink-700 bg-ink-950 text-slate-500"}`, title: step.label, children: compact ? shortStateLabel(step.key) : step.key }, step.key))) })] }));
+}
+function shortStateLabel(value) {
+    const labels = {
+        IDLE: "IDLE",
+        ZONE_TOUCHED: "TOUCH",
+        REACTING_IN_ZONE: "REACT",
+        WAIT_FOR_BOS: "BOS",
+        WAITING_RETEST: "RETEST",
+        BIAS_WARNING: "WARN",
+        PREPARE_ENTRY: "ENTRY",
+    };
+    return labels[value] ?? value;
+}
+function readStateMachine(value) {
+    if (!Array.isArray(value))
+        return [];
+    return value
+        .map((item) => (item && typeof item === "object" && !Array.isArray(item) ? item : null))
+        .filter((item) => item !== null)
+        .map((item) => ({
+        key: typeof item.key === "string" ? item.key : "--",
+        label: typeof item.label === "string" ? item.label : "--",
+        status: typeof item.status === "string" ? item.status : "pending",
+    }));
+}
 function readObject(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -349,6 +594,11 @@ function firstTakeProfitPrice(values) {
 }
 function formatUnknownNumber(value) {
     return typeof value === "number" ? value.toFixed(2) : "--";
+}
+function formatR(value) {
+    if (value === null || value === undefined || Number.isNaN(value))
+        return "--";
+    return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`;
 }
 function tradeStatusNote(status) {
     if (status === "time_exit") {

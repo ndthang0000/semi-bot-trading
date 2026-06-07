@@ -85,6 +85,8 @@ class SmcZoneConfig:
     fvg_middle_candle_atr_multiplier: float
     fvg_gap_atr_ratio: float
     fvg_min_width_atr_ratio: float
+    fvg_third_candle_follow_through_required: bool
+    fvg_third_candle_min_body_ratio: float
     fvg_h1_max_active_days: float
     fvg_h1_decay_start_days: float
     fvg_m15_max_active_days: float
@@ -143,6 +145,21 @@ class StrategyConfig:
     max_waiting: int
     trend_pullback_fvg_min_width_atr: float
     trend_pullback_fvg_max_width_atr: float
+    zone_reaction_v2_enabled: bool
+    zone_reaction_v2_fakeout_max_atr: float
+    zone_reaction_v2_reject_body_min_ratio: float
+    zone_reaction_v2_reject_avg_body_period: int
+    zone_reaction_v2_slow_min_bars: int
+    zone_reaction_v2_slow_max_bars: int
+    zone_reaction_v2_slow_body_max_ratio: float
+    zone_reaction_v2_breakout_min_body_atr: float
+    zone_reaction_v2_breakout_min_close_outside_atr: float
+    zone_reaction_v2_consolidation_breakout_body_atr: float
+    zone_reaction_v2_retest_max_bars: int
+    zone_reaction_v2_rr_minimum: float
+    zone_reaction_v2_allow_neutral_range_trade: bool
+    zone_reaction_v2_block_news_or_risk_off: bool
+    zone_reaction_v2_confluence_score_bonus: float
 
 
 @dataclass(frozen=True)
@@ -196,6 +213,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
     strategy = raw.get("strategy", {})
     strategy_playbooks = strategy.get("playbooks", {})
     trend_pullback = strategy_playbooks.get("trend_pullback", {}) if isinstance(strategy_playbooks, dict) else {}
+    zone_reaction_v2 = strategy_playbooks.get("zone_reaction_v2", {}) if isinstance(strategy_playbooks, dict) else {}
     backtest = raw.get("backtest", {})
     swing = structure.get("swing", {})
     breaks = structure.get("breaks", {})
@@ -268,6 +286,10 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             fvg_middle_candle_atr_multiplier=float(smc_zones.get("fvg_middle_candle_atr_multiplier", 2.0)),
             fvg_gap_atr_ratio=float(smc_zones.get("fvg_gap_atr_ratio", 0.25)),
             fvg_min_width_atr_ratio=float(smc_zones.get("fvg_min_width_atr_ratio", 1.0)),
+            fvg_third_candle_follow_through_required=bool(
+                smc_zones.get("fvg_third_candle_follow_through_required", True)
+            ),
+            fvg_third_candle_min_body_ratio=float(smc_zones.get("fvg_third_candle_min_body_ratio", 0.20)),
             fvg_h1_max_active_days=float(smc_zones.get("fvg_h1_max_active_days", 2.0)),
             fvg_h1_decay_start_days=float(smc_zones.get("fvg_h1_decay_start_days", 0.75)),
             fvg_m15_max_active_days=float(smc_zones.get("fvg_m15_max_active_days", 1.0)),
@@ -310,6 +332,25 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             max_waiting=int(strategy.get("max_waiting", 5)),
             trend_pullback_fvg_min_width_atr=float(trend_pullback.get("fvg_min_width_atr", 1.5)),
             trend_pullback_fvg_max_width_atr=float(trend_pullback.get("fvg_max_width_atr", 4.0)),
+            zone_reaction_v2_enabled=bool(zone_reaction_v2.get("enabled", True)),
+            zone_reaction_v2_fakeout_max_atr=float(zone_reaction_v2.get("fakeout_max_atr", 0.5)),
+            zone_reaction_v2_reject_body_min_ratio=float(zone_reaction_v2.get("reject_body_min_ratio", 1.5)),
+            zone_reaction_v2_reject_avg_body_period=int(zone_reaction_v2.get("reject_avg_body_period", 20)),
+            zone_reaction_v2_slow_min_bars=int(zone_reaction_v2.get("slow_min_bars", 3)),
+            zone_reaction_v2_slow_max_bars=int(zone_reaction_v2.get("slow_max_bars", 8)),
+            zone_reaction_v2_slow_body_max_ratio=float(zone_reaction_v2.get("slow_body_max_ratio", 0.8)),
+            zone_reaction_v2_breakout_min_body_atr=float(zone_reaction_v2.get("breakout_min_body_atr", 0.8)),
+            zone_reaction_v2_breakout_min_close_outside_atr=float(
+                zone_reaction_v2.get("breakout_min_close_outside_atr", 0.5)
+            ),
+            zone_reaction_v2_consolidation_breakout_body_atr=float(
+                zone_reaction_v2.get("consolidation_breakout_body_atr", 1.2)
+            ),
+            zone_reaction_v2_retest_max_bars=int(zone_reaction_v2.get("retest_max_bars", 8)),
+            zone_reaction_v2_rr_minimum=float(zone_reaction_v2.get("rr_minimum", 2.0)),
+            zone_reaction_v2_allow_neutral_range_trade=bool(zone_reaction_v2.get("allow_neutral_range_trade", True)),
+            zone_reaction_v2_block_news_or_risk_off=bool(zone_reaction_v2.get("block_news_or_risk_off", True)),
+            zone_reaction_v2_confluence_score_bonus=float(zone_reaction_v2.get("confluence_score_bonus", 0.08)),
         ),
         backtest=BacktestConfig(
             spread=float(backtest.get("spread", 0.30)),

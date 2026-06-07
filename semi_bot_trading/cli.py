@@ -13,6 +13,7 @@ from .context import detect_and_store_bias, detect_and_store_regime, latest_cont
 from .db import DEFAULT_DB_PATH, connect, init_db
 from .importer import import_data_dir
 from .price_action import detect_and_store_price_action_patterns
+from .research import read_research_csv, render_research_html, render_research_report, run_research_events
 from .replay import replay_candles
 from .smc_zones import detect_and_store_smc_zones
 from .strategy import PLAYBOOK_ZONE_TYPES
@@ -345,6 +346,12 @@ def cmd_detect_smc_zones(args: argparse.Namespace) -> None:
             fvg_min_width_atr_ratio=args.fvg_min_width_atr_ratio
             if args.fvg_min_width_atr_ratio is not None
             else smc_config.fvg_min_width_atr_ratio,
+            fvg_third_candle_follow_through_required=not args.fvg_allow_no_third_candle_follow_through
+            if args.fvg_allow_no_third_candle_follow_through
+            else smc_config.fvg_third_candle_follow_through_required,
+            fvg_third_candle_min_body_ratio=args.fvg_third_candle_min_body_ratio
+            if args.fvg_third_candle_min_body_ratio is not None
+            else smc_config.fvg_third_candle_min_body_ratio,
             fvg_max_active_days=smc_config.fvg_max_active_days_for(timeframe),
             fvg_decay_start_days=smc_config.fvg_decay_start_days_for(timeframe),
             ob_displacement_atr_multiplier=args.ob_displacement_atr_multiplier
@@ -600,10 +607,61 @@ def cmd_backtest_report(args: argparse.Namespace) -> None:
             include_human_zones=args.include_human_zones,
             allowed_playbooks=allowed_playbooks,
         )
+        run_id = None
+        if args.persist:
+            run_id = persist_backtest_result(
+                conn,
+                result,
+                candle_limit=args.limit,
+                clear_previous=args.clear_backtest_trades,
+            )
     print(render_backtest_report(result, max_rows=args.max_rows))
+    if run_id:
+        print(f"Persisted backtest run: {run_id}")
     if args.html_output:
         args.html_output.parent.mkdir(parents=True, exist_ok=True)
         args.html_output.write_text(render_backtest_html(result, max_rows=args.max_rows))
+        print(f"HTML report: {args.html_output}")
+
+
+def cmd_research_events(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    db_path = args.db or config.database
+    allowed_playbooks = parse_playbooks_arg(args.playbook)
+    statuses = parse_statuses_arg(args.statuses)
+    with connect(db_path) as conn:
+        init_db(conn)
+        result = run_research_events(
+            conn,
+            config,
+            symbol=symbol,
+            limit=args.limit,
+            output=args.output,
+            statuses=statuses,
+            allowed_playbooks=allowed_playbooks,
+            spread=args.spread,
+            slippage=args.slippage,
+            max_hold_candles=args.max_hold_candles,
+            warmup_candles=args.warmup_candles,
+            include_human_zones=args.include_human_zones,
+            train_end_year=args.train_end_year,
+            validation_year=args.validation_year,
+        )
+    print(
+        f"Research events {symbol} {config.strategy.timeframe}: "
+        f"{len(result.rows)} events, {result.evaluated_candles}/{result.timeline_count} candles evaluated"
+    )
+    print(f"CSV output: {result.output}")
+    print(f"Lookahead guard: {result.lookahead_guard}")
+
+
+def cmd_research_report(args: argparse.Namespace) -> None:
+    rows = read_research_csv(args.input)
+    print(render_research_report(rows, max_rows=args.max_rows, min_samples=args.min_samples))
+    if args.html_output:
+        args.html_output.parent.mkdir(parents=True, exist_ok=True)
+        args.html_output.write_text(render_research_html(rows, max_rows=args.max_rows, min_samples=args.min_samples))
         print(f"HTML report: {args.html_output}")
 
 
@@ -618,6 +676,17 @@ def parse_playbooks_arg(values: list[str] | None) -> set[str] | None:
         known = ", ".join(sorted(PLAYBOOK_ZONE_TYPES))
         raise SystemExit(f"Unknown playbook(s): {', '.join(unknown)}. Known playbooks: {known}")
     return playbooks or None
+
+
+def parse_statuses_arg(value: str | None) -> set[str] | None:
+    if not value:
+        return None
+    allowed = {"watching", "waiting_confirmation", "eligible", "blocked", "expired"}
+    statuses = {item.strip() for item in value.split(",") if item.strip()}
+    unknown = sorted(statuses - allowed)
+    if unknown:
+        raise SystemExit(f"Unknown research status: {', '.join(unknown)}. Known statuses: {', '.join(sorted(allowed))}")
+    return statuses or None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -754,6 +823,8 @@ def build_parser() -> argparse.ArgumentParser:
     smc_zones_parser.add_argument("--fvg-middle-candle-atr-multiplier", type=float)
     smc_zones_parser.add_argument("--fvg-gap-atr-ratio", type=float)
     smc_zones_parser.add_argument("--fvg-min-width-atr-ratio", type=float)
+    smc_zones_parser.add_argument("--fvg-allow-no-third-candle-follow-through", action="store_true")
+    smc_zones_parser.add_argument("--fvg-third-candle-min-body-ratio", type=float)
     smc_zones_parser.add_argument("--ob-displacement-atr-multiplier", type=float)
     smc_zones_parser.add_argument("--ob-min-body-ratio", type=float)
     smc_zones_parser.add_argument("--ob-min-width-atr-ratio", type=float)
@@ -888,6 +959,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include manually drawn historical zones. Disabled by default to avoid hindsight in bot-only reports.",
     )
+    report_parser.add_argument("--persist", action="store_true", help="Store run/trades so they appear in chart payload.")
+    report_parser.add_argument(
+        "--clear-backtest-trades",
+        action="store_true",
+        help="Delete previous persisted backtest trades for this symbol before storing the new report run.",
+    )
     report_parser.add_argument("--max-rows", type=int, default=20)
     report_parser.add_argument(
         "--html-output",
@@ -895,6 +972,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write a visual HTML report to this file.",
     )
     report_parser.set_defaults(func=cmd_backtest_report)
+
+    research_events_parser = subparsers.add_parser(
+        "research-events",
+        help="Generate setup-level research samples for edge discovery.",
+    )
+    add_common_config_arg(research_events_parser)
+    add_common_db_arg(research_events_parser)
+    research_events_parser.add_argument("--symbol")
+    research_events_parser.add_argument("--limit", type=int, default=30000)
+    research_events_parser.add_argument("--output", type=Path, default=Path("var/research_events.csv"))
+    research_events_parser.add_argument("--spread", type=float)
+    research_events_parser.add_argument("--slippage", type=float)
+    research_events_parser.add_argument("--max-hold-candles", type=int)
+    research_events_parser.add_argument("--warmup-candles", type=int)
+    research_events_parser.add_argument(
+        "--playbook",
+        action="append",
+        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook trend_pullback.",
+    )
+    research_events_parser.add_argument(
+        "--statuses",
+        default="eligible,waiting_confirmation",
+        help="Candidate statuses to sample. Default: eligible,waiting_confirmation.",
+    )
+    research_events_parser.add_argument(
+        "--include-human-zones",
+        action="store_true",
+        help="Include manually drawn historical zones. Disabled by default to avoid hindsight in research.",
+    )
+    research_events_parser.add_argument("--train-end-year", type=int, default=2024)
+    research_events_parser.add_argument("--validation-year", type=int, default=2025)
+    research_events_parser.set_defaults(func=cmd_research_events)
+
+    research_report_parser = subparsers.add_parser(
+        "research-report",
+        help="Summarize setup-level research CSV and optionally render an HTML edge report.",
+    )
+    research_report_parser.add_argument("--input", type=Path, default=Path("var/research_events.csv"))
+    research_report_parser.add_argument("--max-rows", type=int, default=20)
+    research_report_parser.add_argument("--min-samples", type=int, default=20)
+    research_report_parser.add_argument("--html-output", type=Path)
+    research_report_parser.set_defaults(func=cmd_research_report)
 
     serve_parser = subparsers.add_parser(
         "serve-chart",

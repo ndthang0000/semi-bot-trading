@@ -42,6 +42,7 @@ def candidate(direction: str = "long") -> dict[str, object]:
         "zone_reaction_state": "rejected",
         "stop_loss": 95 if direction == "long" else 105,
         "take_profit": [110 if direction == "long" else 90],
+        "risk_reward": 2.0,
     }
 
 
@@ -74,15 +75,30 @@ class BacktestTest(unittest.TestCase):
         self.assertEqual("2026-01-01T00:15:00+00:00", trade.signal_time)
         self.assertEqual("2026-01-01T00:15:00+00:00", trade.entry_time)
 
-    def test_long_exit_uses_bid_side_costs(self) -> None:
+    def test_long_exit_uses_bid_side_for_trigger_without_extra_exit_slippage(self) -> None:
         hit = exit_on_candle(candle("00:15", 100, 111, 99, 109), "long", stop=95, take_profit=110, half_spread=0.2, slippage=0.1)
 
-        self.assertEqual(("target_hit", 109.9), hit)
+        self.assertEqual(("target_hit", 110), hit)
 
-    def test_short_stop_uses_ask_side_costs(self) -> None:
+    def test_short_stop_uses_ask_side_for_trigger_without_extra_exit_slippage(self) -> None:
         hit = exit_on_candle(candle("00:15", 100, 106, 90, 95), "short", stop=105, take_profit=90, half_spread=0.2, slippage=0.1)
 
-        self.assertEqual(("stopped", 105.1), hit)
+        self.assertEqual(("stopped", 105), hit)
+
+    def test_take_profit_is_recomputed_from_filled_entry_to_keep_two_r(self) -> None:
+        candles = [
+            candle("00:00", 100, 102, 98, 101),
+            candle("00:15", 102, 104, 99, 103),
+            candle("00:30", 103, 118, 102, 116),
+        ]
+
+        trade = simulate_trade(candidate("long"), candles, signal_index=0, spread=0.4, slippage=0.1, max_hold_candles=4)
+
+        self.assertIsNotNone(trade)
+        assert trade is not None
+        self.assertEqual(102.3, trade.entry_price)
+        self.assertEqual(116.9, trade.take_profit)
+        self.assertEqual(2.0, trade.pnl_r)
 
     def test_same_candle_stop_and_target_is_conservative(self) -> None:
         hit = exit_on_candle(candle("00:15", 100, 111, 94, 101), "long", stop=95, take_profit=110, half_spread=0.0, slippage=0.0)

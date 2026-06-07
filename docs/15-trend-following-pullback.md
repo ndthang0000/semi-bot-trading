@@ -22,8 +22,9 @@ Playbook này chỉ cần các entity sau:
 
 - `support`: vùng mua tiềm năng khi H1 bullish.
 - `resistance`: vùng bán tiềm năng khi H1 bearish.
-- `order_block`: Demand OB cho long, Supply OB cho short.
 - `fvg`: Bullish FVG cho long, Bearish FVG cho short.
+
+`order_block` tạm thời không còn được dùng làm primary zone cho Trend Pullback vì research/backtest cho thấy OB kéo performance xuống mạnh khi trade độc lập. OB vẫn được detect và hiển thị trên chart để human dùng làm confluence phụ, hoặc để các playbook riêng như `ob_mitigation_continuation` xử lý.
 
 Riêng FVG trong Trend Pullback có filter chất lượng riêng:
 
@@ -53,7 +54,6 @@ Khi chạy CLI với `--playbook trend_pullback`, backtest incremental sẽ ch�
 2. H1 regime là `trending`.
 3. Giá M15 pullback về một trong các vùng:
    - support
-   - Demand OB
    - Bullish FVG
 4. M15 có reaction state phù hợp:
    - `rejected`: tốt nhất.
@@ -73,7 +73,6 @@ Khi chạy CLI với `--playbook trend_pullback`, backtest incremental sẽ ch�
 2. H1 regime là `trending`.
 3. Giá M15 pullback về một trong các vùng:
    - resistance
-   - Supply OB
    - Bearish FVG
 4. M15 có reaction state phù hợp:
    - `rejected`: tốt nhất.
@@ -91,7 +90,8 @@ Khi chạy CLI với `--playbook trend_pullback`, backtest incremental sẽ ch�
 
 - Signal chỉ được tạo sau khi nến M15 xác nhận đã đóng.
 - Entry backtest fill ở open của nến M15 tiếp theo.
-- Spread và slippage được cộng vào entry/exit để giảm look-ahead và giảm ảo tưởng edge.
+- Entry dùng bid/ask side và adverse slippage; sau khi fill, TP được tính lại theo risk thực tế để giữ đúng target RR.
+- Exit SL/TP dùng bid/ask side; model mặc định không cộng thêm slippage ở exit.
 - Stop loss đặt theo vùng:
   - Long: dưới zone low.
   - Short: trên zone high.

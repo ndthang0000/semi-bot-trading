@@ -228,7 +228,7 @@ def zone_from_cluster(
         price_high=round(price_high, 5),
         start_time=cluster.first_time,
         end_time=None,
-        valid_from=cluster.first_time,
+        valid_from=cluster.last_time,
         valid_until=None,
         invalidated_at=None,
         invalidated_by_structure_point_id=None,
@@ -313,6 +313,26 @@ def invalidates_zone(candle: CandleSlice, zone: PriceZone, close_break_buffer: f
         return candle.close > zone.price_high + close_break_buffer
     if zone.zone_type == "support":
         return candle.close < zone.price_low - close_break_buffer
+    return False
+
+
+def invalidated_before_detection(
+    zone: PriceZone,
+    candles: list[CandleSlice] | None,
+    close_break_buffer: float,
+    close_break_buffer_atr_multiplier: float,
+) -> bool:
+    if not candles or zone.start_time >= zone.detected_at:
+        return False
+    atr_value = latest_atr(candles, end_time=zone.detected_at) or max(zone.price_high - zone.price_low, 1.0)
+    effective_close_break_buffer = max(close_break_buffer, atr_value * close_break_buffer_atr_multiplier)
+    for candle in candles:
+        if candle.open_time <= zone.start_time:
+            continue
+        if candle.open_time >= zone.detected_at:
+            break
+        if invalidates_zone(candle, zone, effective_close_break_buffer):
+            return True
     return False
 
 
@@ -773,6 +793,8 @@ def detect_support_resistance_zones(
     atr_candles: list[CandleSlice] | None = None,
     atr_width_multiplier: float = 0.0,
     atr_value: float | None = None,
+    candidate_close_break_buffer: float = 0.0,
+    candidate_close_break_buffer_atr_multiplier: float = 0.0,
 ) -> list[PriceZone]:
     if not swings:
         return []
@@ -798,6 +820,17 @@ def detect_support_resistance_zones(
         for cluster in clusters
         if len(cluster.points) >= min_touches
     ]
+    if atr_candles and (candidate_close_break_buffer > 0 or candidate_close_break_buffer_atr_multiplier > 0):
+        zones = [
+            zone
+            for zone in zones
+            if not invalidated_before_detection(
+                zone,
+                atr_candles,
+                candidate_close_break_buffer,
+                candidate_close_break_buffer_atr_multiplier,
+            )
+        ]
     zones.sort(key=lambda zone: (zone.effective_weight, zone.detected_at), reverse=True)
     return zones[:max_zones]
 
@@ -901,6 +934,8 @@ def detect_and_store_support_resistance_zones(
         max_zones,
         candles,
         atr_width_multiplier,
+        candidate_close_break_buffer=close_break_buffer,
+        candidate_close_break_buffer_atr_multiplier=close_break_buffer_atr_multiplier,
     )
     zones = apply_lifecycle_to_zones(
         zones,

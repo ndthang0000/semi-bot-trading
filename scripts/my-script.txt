@@ -1,0 +1,25 @@
+Chạy backtest
+python -m semi_bot_trading.cli backtest-strategies \
+  --limit 60000 \
+  --engine incremental \
+  --persist \
+  --clear-backtest-trades
+
+python -m semi_bot_trading.cli backtest-strategies \
+  --limit 60000 \
+  --engine incremental \
+  --playbook trend_pullback \
+  --persist \
+  --clear-backtest-trades \
+  --html-output var/reports/trend_pullback_bias_v2.html
+
+Chạy tạo zone FVG
+python -m semi_bot_trading.cli detect-smc-zones --timeframe H1
+
+python -m semi_bot_trading.cli backtest-report \
+  --limit 60000 \
+  --engine incremental \
+  --playbook zone_reaction_v2 \
+  --persist \
+  --clear-backtest-trades \
+  --html-output var/reports/zone_reaction_v2.html

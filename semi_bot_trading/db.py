@@ -176,6 +176,23 @@ CREATE TABLE IF NOT EXISTS trade_fills (
 CREATE INDEX IF NOT EXISTS idx_trade_fills_order
 ON trade_fills(trade_order_id, fill_time);
 
+CREATE TABLE IF NOT EXISTS trade_reviews (
+    id TEXT PRIMARY KEY,
+    trade_order_id TEXT NOT NULL UNIQUE,
+    grade TEXT,
+    verdict TEXT NOT NULL DEFAULT 'unreviewed',
+    mistake_tags_json TEXT NOT NULL DEFAULT '[]',
+    should_trade_again TEXT NOT NULL DEFAULT 'unknown',
+    comment TEXT NOT NULL DEFAULT '',
+    reviewer TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(trade_order_id) REFERENCES trade_orders(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_reviews_lookup
+ON trade_reviews(verdict, updated_at);
+
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,

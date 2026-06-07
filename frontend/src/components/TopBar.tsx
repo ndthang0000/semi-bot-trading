@@ -443,6 +443,7 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "trend_pullback", label: "Trend Pullback" },
+  { key: "zone_reaction_v2", label: "Zone Reaction V2" },
   { key: "ob_mitigation_continuation", label: "OB Mitigation" },
   { key: "fvg_fill_go", label: "FVG Fill And Go" },
   { key: "breakout_retest", label: "Breakout Retest" },

@@ -80,10 +80,11 @@ Trend Pullback vẫn là playbook ưu tiên đầu tiên vì bền vững hơn c
 
 - H1 bias cùng hướng rõ.
 - H1 regime trending.
-- Giá chạm Order Block + FVG hoặc zone confluence theo hướng H1 bias.
+- Giá chạm support/resistance hoặc FVG theo hướng H1 bias.
+- Order Block chỉ dùng làm confluence phụ trong Trend Pullback, không dùng làm primary entry zone ở phiên bản hiện tại.
 - Entry cần tối thiểu 3 confluence:
   - H1 bias đúng hướng.
-  - Giá chạm OB + FVG.
+  - Giá chạm vùng pullback hợp lệ.
   - M15 confirmation: displacement mạnh + price action candle như engulfing/pinbar/marubozu hoặc BOS.
 - Không guess entry khi chưa có trigger rõ ràng.
 
@@ -94,7 +95,7 @@ required_context:
   h1_bias: bullish
   h1_regime: trending
   zone:
-    type_any: [support, order_block, fvg, demand]
+    type_any: [support, fvg]
     direction: bullish
     weight_min: 0.6
 entry_trigger:
@@ -292,7 +293,9 @@ Backtest guard:
 - Swing chỉ được dùng sau `confirmed_at`, không dùng pivot chưa confirm.
 - Incremental engine precompute detector theo chunk lịch sử, nhưng mỗi candle chỉ expose zone/structure/context đã xuất hiện tại thời điểm đó.
 - Entry fill ở nến M15 kế tiếp, không dùng giá của candle signal để vào lệnh.
-- Spread/slippage được cộng vào entry và exit theo hướng bất lợi.
+- Entry fill ở nến M15 kế tiếp theo bid/ask side và adverse slippage.
+- Sau khi có entry fill, TP được tính lại theo risk thực tế để giữ target RR của setup.
+- Exit SL/TP dùng bid/ask side theo hướng đóng vị thế; không cộng thêm slippage ở exit trong model mặc định.
 - Nếu cùng một candle chạm cả SL và TP, simulator giả định SL hit trước để conservative.
 
 Config:

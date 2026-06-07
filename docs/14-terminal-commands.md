@@ -218,7 +218,8 @@ Test FVG filter khác:
 ```bash
 python -m semi_bot_trading.cli detect-smc-zones --timeframe H1 \
   --fvg-middle-candle-atr-multiplier 2.0 \
-  --fvg-gap-atr-ratio 0.25
+  --fvg-gap-atr-ratio 0.25 \
+  --fvg-third-candle-min-body-ratio 0.20
 ```
 
 Test OB filter khác:
@@ -385,7 +386,78 @@ Hoặc dùng script:
 HTML_OUTPUT=var/reports/trend_pullback.html ./scripts/backtest_trend_pullback.sh
 ```
 
-## 8. Test và build
+## 8. Research / edge discovery
+
+Sinh dataset setup-level để thống kê edge trước khi viết strategy:
+
+```bash
+python -m semi_bot_trading.cli research-events \
+  --limit 30000 \
+  --output var/research_events.csv
+```
+
+Chạy riêng một playbook, ví dụ Trend Pullback:
+
+```bash
+python -m semi_bot_trading.cli research-events \
+  --limit 30000 \
+  --playbook trend_pullback \
+  --output var/research_trend_pullback.csv
+```
+
+Chạy riêng Zone Reaction V2:
+
+```bash
+python -m semi_bot_trading.cli backtest-report \
+  --limit 30000 \
+  --engine incremental \
+  --playbook zone_reaction_v2 \
+  --html-output var/reports/zone_reaction_v2.html
+
+python -m semi_bot_trading.cli backtest-report \
+  --limit 30000 \
+  --engine incremental \
+  --playbook zone_reaction_v2 \
+  --persist \
+  --clear-backtest-trades \
+  --html-output var/reports/zone_reaction_v2.html
+
+python -m semi_bot_trading.cli research-events \
+  --limit 30000 \
+  --playbook zone_reaction_v2 \
+  --output var/research_zone_reaction_v2.csv
+
+python -m semi_bot_trading.cli research-report \
+  --input var/research_zone_reaction_v2.csv \
+  --html-output var/reports/research_zone_reaction_v2.html
+```
+
+Mặc định chỉ sample `eligible,waiting_confirmation`. Nếu muốn xem cả setup bị block:
+
+```bash
+python -m semi_bot_trading.cli research-events \
+  --limit 30000 \
+  --statuses eligible,waiting_confirmation,blocked \
+  --output var/research_with_blocked.csv
+```
+
+Tạo report text và HTML từ CSV:
+
+```bash
+python -m semi_bot_trading.cli research-report \
+  --input var/research_events.csv \
+  --html-output var/reports/research_events.html
+```
+
+Chia data mặc định:
+
+```text
+train      <= 2024
+validation = 2025
+test       >= 2026
+```
+
+## 9. Test và build
 
 Chạy toàn bộ Python tests:
 

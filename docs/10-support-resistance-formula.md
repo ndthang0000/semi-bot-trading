@@ -148,10 +148,12 @@ Zone time:
 
 ```text
 start_time  = first swing time in cluster
-valid_from  = first swing time in cluster
+valid_from  = last swing time in cluster, after min_touches is satisfied
 detected_at = last swing time in cluster
 end_time    = null until invalidated
 ```
+
+`start_time` chỉ là mốc trực quan để nhìn zone bắt nguồn từ đâu. Bot không được dùng zone để tạo setup trước `detected_at`.
 
 Zone type:
 
@@ -722,6 +724,26 @@ valid_until = invalidated_at
 metadata.invalidation_reason = "close_beyond_zone"
 ```
 
+### 13.1. Pre-Detection Integrity Check
+
+Trước khi chấp nhận một SR cluster, bot phải kiểm tra đoạn từ swing đầu tiên đến lúc zone đủ `min_touches`.
+
+Nếu trong đoạn `start_time < candle.open_time < detected_at` đã có candle close phá vùng theo rule invalidation, cluster đó không được tạo thành zone.
+
+Support candidate bị loại nếu:
+
+```text
+candle.close < zone.price_low - close_break_buffer
+```
+
+Resistance candidate bị loại nếu:
+
+```text
+candle.close > zone.price_high + close_break_buffer
+```
+
+Lý do: một vùng support được tạo từ các swing low cũ nhưng đã từng bị close xuyên thủng trước khi đủ touches thì không còn là support nguyên vẹn. Nếu giá quay lại vùng đó, nó nên được xem là context khác, ví dụ retest/flip/resistance, không phải support còn sống.
+
 ---
 
 ## 14. Flip Zone Logic Optional
@@ -837,6 +859,9 @@ weight_components
 
 ```text
 for each zone:
+    if zone was invalidated between first swing and detected_at:
+        discard zone
+
     reset lifecycle metrics
 
     for each candle after zone.detected_at:

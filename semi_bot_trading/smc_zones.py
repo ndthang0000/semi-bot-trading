@@ -41,6 +41,8 @@ def detect_fvg_zones(
     middle_candle_atr_multiplier: float = 2.0,
     gap_atr_ratio: float = 0.25,
     min_width_atr_ratio: float = 1.0,
+    third_candle_follow_through_required: bool = True,
+    third_candle_min_body_ratio: float = 0.20,
     max_zones: int = 80,
     fill_threshold: float = 0.80,
     partial_fill_threshold: float = 0.50,
@@ -69,9 +71,16 @@ def detect_fvg_zones(
         middle_range_atr = middle_range / atr_value
         if middle_range_atr < middle_candle_atr_multiplier:
             continue
+        third_body_ratio = candle_body(third) / candle_range(third) if candle_range(third) > 0 else 0.0
 
         zone: PriceZone | None = None
         if third.low > first.high and (third.low - first.high) / atr_value >= max(gap_atr_ratio, min_width_atr_ratio):
+            if third_candle_follow_through_required and not has_fvg_follow_through(
+                third,
+                "bullish",
+                third_candle_min_body_ratio,
+            ):
+                continue
             zone = create_fvg_zone(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -84,8 +93,16 @@ def detect_fvg_zones(
                 gap_atr_ratio=(third.low - first.high) / atr_value,
                 atr_value=atr_value,
                 middle_time=middle.open_time,
+                third_body_ratio=third_body_ratio,
+                third_candle_follow_through_required=third_candle_follow_through_required,
             )
         elif third.high < first.low and (first.low - third.high) / atr_value >= max(gap_atr_ratio, min_width_atr_ratio):
+            if third_candle_follow_through_required and not has_fvg_follow_through(
+                third,
+                "bearish",
+                third_candle_min_body_ratio,
+            ):
+                continue
             zone = create_fvg_zone(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -98,6 +115,8 @@ def detect_fvg_zones(
                 gap_atr_ratio=(first.low - third.high) / atr_value,
                 atr_value=atr_value,
                 middle_time=middle.open_time,
+                third_body_ratio=third_body_ratio,
+                third_candle_follow_through_required=third_candle_follow_through_required,
             )
         if zone is None:
             continue
@@ -116,6 +135,18 @@ def detect_fvg_zones(
     return zones[:max_zones]
 
 
+def has_fvg_follow_through(candle: CandleSlice, direction: str, min_body_ratio: float) -> bool:
+    candle_range_value = candle_range(candle)
+    if candle.open is None or candle_range_value <= 0:
+        return False
+    body_ratio = candle_body(candle) / candle_range_value
+    if body_ratio < min_body_ratio:
+        return False
+    if direction == "bullish":
+        return candle.close > candle.open
+    return candle.close < candle.open
+
+
 def create_fvg_zone(
     symbol: str,
     timeframe: str,
@@ -128,6 +159,8 @@ def create_fvg_zone(
     gap_atr_ratio: float,
     atr_value: float,
     middle_time: str,
+    third_body_ratio: float,
+    third_candle_follow_through_required: bool,
 ) -> PriceZone:
     width = max(price_high - price_low, 0.0)
     confidence = min(0.40 + middle_body_ratio * 0.25 + min(middle_range_atr, 3.0) * 0.08, 0.92)
@@ -158,6 +191,8 @@ def create_fvg_zone(
             "middle_candle_time": middle_time,
             "middle_body_ratio": round(middle_body_ratio, 4),
             "middle_range_atr": round(middle_range_atr, 4),
+            "third_body_ratio": round(third_body_ratio, 4),
+            "third_candle_follow_through_required": third_candle_follow_through_required,
             "gap_size": round(width, 5),
             "gap_atr_ratio": round(gap_atr_ratio, 4),
             "atr_at_detection": round(atr_value, 5),
@@ -920,6 +955,8 @@ def detect_smc_zones(
     fvg_middle_candle_atr_multiplier: float = 2.0,
     fvg_gap_atr_ratio: float = 0.25,
     fvg_min_width_atr_ratio: float = 1.0,
+    fvg_third_candle_follow_through_required: bool = True,
+    fvg_third_candle_min_body_ratio: float = 0.20,
     fvg_max_active_days: float | None = None,
     fvg_decay_start_days: float | None = None,
     ob_displacement_atr_multiplier: float = 1.5,
@@ -949,6 +986,8 @@ def detect_smc_zones(
             middle_candle_atr_multiplier=fvg_middle_candle_atr_multiplier,
             gap_atr_ratio=fvg_gap_atr_ratio,
             min_width_atr_ratio=fvg_min_width_atr_ratio,
+            third_candle_follow_through_required=fvg_third_candle_follow_through_required,
+            third_candle_min_body_ratio=fvg_third_candle_min_body_ratio,
             max_active_days=fvg_max_active_days,
             decay_start_days=fvg_decay_start_days,
             max_zones=max_fvg_zones,
@@ -996,6 +1035,8 @@ def detect_and_store_smc_zones(
     fvg_middle_candle_atr_multiplier: float = 2.0,
     fvg_gap_atr_ratio: float = 0.25,
     fvg_min_width_atr_ratio: float = 1.0,
+    fvg_third_candle_follow_through_required: bool = True,
+    fvg_third_candle_min_body_ratio: float = 0.20,
     fvg_max_active_days: float | None = None,
     fvg_decay_start_days: float | None = None,
     ob_displacement_atr_multiplier: float = 1.5,
@@ -1026,6 +1067,8 @@ def detect_and_store_smc_zones(
         fvg_middle_candle_atr_multiplier=fvg_middle_candle_atr_multiplier,
         fvg_gap_atr_ratio=fvg_gap_atr_ratio,
         fvg_min_width_atr_ratio=fvg_min_width_atr_ratio,
+        fvg_third_candle_follow_through_required=fvg_third_candle_follow_through_required,
+        fvg_third_candle_min_body_ratio=fvg_third_candle_min_body_ratio,
         fvg_max_active_days=fvg_max_active_days,
         fvg_decay_start_days=fvg_decay_start_days,
         ob_displacement_atr_multiplier=ob_displacement_atr_multiplier,

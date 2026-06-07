@@ -241,9 +241,19 @@ def load_chart_trades(
                trade_orders.quantity, trade_orders.opened_at, trade_orders.closed_at,
                trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
                trade_orders.source, trade_orders.metadata_json,
-               trade_ideas.playbook, trade_ideas.direction
+               trade_ideas.playbook, trade_ideas.direction,
+               trade_reviews.id AS review_id,
+               trade_reviews.grade AS review_grade,
+               trade_reviews.verdict AS review_verdict,
+               trade_reviews.mistake_tags_json AS review_mistake_tags_json,
+               trade_reviews.should_trade_again AS review_should_trade_again,
+               trade_reviews.comment AS review_comment,
+               trade_reviews.reviewer AS review_reviewer,
+               trade_reviews.created_at AS review_created_at,
+               trade_reviews.updated_at AS review_updated_at
         FROM trade_orders
         JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
+        LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
         WHERE trade_orders.symbol = ?
           AND trade_orders.opened_at IS NOT NULL
           AND trade_orders.opened_at <= ?
@@ -253,29 +263,52 @@ def load_chart_trades(
         """,
         params,
     ).fetchall()
-    return [
-        {
-            "id": row["id"],
-            "trade_idea_id": row["trade_idea_id"],
-            "playbook": row["playbook"],
-            "direction": row["direction"],
-            "side": row["side"],
-            "order_type": row["order_type"],
-            "status": row["status"],
-            "entry_price": float(row["entry_price"]) if row["entry_price"] is not None else None,
-            "stop_loss": float(row["stop_loss"]),
-            "take_profit": json_loads(row["take_profit_json"], []),
-            "quantity": float(row["quantity"]),
-            "opened_at": row["opened_at"],
-            "closed_at": row["closed_at"],
-            "close_price": float(row["close_price"]) if row["close_price"] is not None else None,
-            "pnl": float(row["pnl"]) if row["pnl"] is not None else None,
-            "pnl_r": float(row["pnl_r"]) if row["pnl_r"] is not None else None,
-            "source": row["source"],
-            "metadata": json_loads(row["metadata_json"], {}),
+    return [trade_order_row_to_chart(row) for row in rows]
+
+
+def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
+    result = {
+        "id": row["id"],
+        "trade_idea_id": row["trade_idea_id"],
+        "playbook": row["playbook"],
+        "direction": row["direction"],
+        "side": row["side"],
+        "order_type": row["order_type"],
+        "status": row["status"],
+        "entry_price": float(row["entry_price"]) if row["entry_price"] is not None else None,
+        "stop_loss": float(row["stop_loss"]) if row["stop_loss"] is not None else None,
+        "take_profit": json_loads(row["take_profit_json"], []),
+        "quantity": float(row["quantity"]),
+        "opened_at": row["opened_at"],
+        "closed_at": row["closed_at"],
+        "close_price": float(row["close_price"]) if row["close_price"] is not None else None,
+        "pnl": float(row["pnl"]) if row["pnl"] is not None else None,
+        "pnl_r": float(row["pnl_r"]) if row["pnl_r"] is not None else None,
+        "source": row["source"],
+        "metadata": json_loads(row["metadata_json"], {}),
+    }
+    if row_has_key(row, "review_id") and row["review_id"] is not None:
+        result["review"] = {
+            "id": row["review_id"],
+            "trade_order_id": row["id"],
+            "grade": row["review_grade"],
+            "verdict": row["review_verdict"],
+            "mistake_tags": json_loads(row["review_mistake_tags_json"], []),
+            "should_trade_again": row["review_should_trade_again"],
+            "comment": row["review_comment"] or "",
+            "reviewer": row["review_reviewer"],
+            "created_at": row["review_created_at"],
+            "updated_at": row["review_updated_at"],
         }
-        for row in rows
-    ]
+    else:
+        result["review"] = None
+    return result
+
+
+def row_has_key(row: Any, key: str) -> bool:
+    if hasattr(row, "keys"):
+        return key in row.keys()
+    return key in row
 
 
 def build_chart_payload(

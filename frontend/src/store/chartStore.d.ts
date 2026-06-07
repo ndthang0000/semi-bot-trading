@@ -1,4 +1,4 @@
-import type { AddEntityKind, PlaybookKey, PriceZone, SelectedEntity, Timeframe, ZoneFocusRequest, ZoneTypeVisibility, ZoneVisibilityKey } from "../types";
+import type { AddEntityKind, PlaybookKey, PriceZone, SelectedEntity, TradeOrder, TradeFocusRequest, Timeframe, ZoneFocusRequest, ZoneTypeVisibility, ZoneVisibilityKey } from "../types";
 export declare const defaultZoneTypeVisibility: ZoneTypeVisibility;
 export declare const defaultSelectedPlaybooks: PlaybookKey[];
 export declare const playbookLayerRequirements: Record<PlaybookKey, {
@@ -20,6 +20,7 @@ type ChartState = {
     addEntityKind: AddEntityKind | null;
     selected: SelectedEntity | null;
     zoneFocusRequest: ZoneFocusRequest | null;
+    tradeFocusRequest: TradeFocusRequest | null;
     setTimeframe: (timeframe: Timeframe) => void;
     setLimit: (limit: number) => void;
     setStartIndex: (startIndex: number | null) => void;
@@ -36,6 +37,7 @@ type ChartState = {
     setAddEntityKind: (kind: AddEntityKind | null) => void;
     setSelected: (selected: SelectedEntity | null) => void;
     focusZone: (zone: PriceZone) => void;
+    focusTrade: (trade: TradeOrder) => void;
 };
 export declare const useChartStore: import("zustand").UseBoundStore<Omit<import("zustand").StoreApi<ChartState>, "setState" | "persist"> & {
     setState(partial: ChartState | Partial<ChartState> | ((state: ChartState) => ChartState | Partial<ChartState>), replace?: false | undefined): unknown;

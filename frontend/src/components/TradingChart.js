@@ -26,6 +26,7 @@ export function TradingChart({ payload, onEntityCreated }) {
     const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
     const addEntityKind = useChartStore((state) => state.addEntityKind);
     const zoneFocusRequest = useChartStore((state) => state.zoneFocusRequest);
+    const tradeFocusRequest = useChartStore((state) => state.tradeFocusRequest);
     const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
     const [zoneBoxes, setZoneBoxes] = useState([]);
     const [structureDots, setStructureDots] = useState([]);
@@ -48,6 +49,7 @@ export function TradingChart({ payload, onEntityCreated }) {
     const maxVisibleZonesRef = useRef(maxVisibleZones);
     const addEntityKindRef = useRef(addEntityKind);
     const handledZoneFocusRequestRef = useRef(null);
+    const handledTradeFocusRequestRef = useRef(null);
     const drawPreviewZoneRef = useRef(drawPreviewZone);
     const candleDataRef = useRef([]);
     const appliedCandleKeyRef = useRef(null);
@@ -427,6 +429,14 @@ export function TradingChart({ payload, onEntityCreated }) {
         handledZoneFocusRequestRef.current = zoneFocusRequest.id;
         focusZoneOnChart(chartRef.current, zoneFocusRequest.zone, payloadRef.current.layers.candles, scheduleOverlayRecalc);
     }, [scheduleOverlayRecalc, zoneFocusRequest]);
+    useEffect(() => {
+        if (!tradeFocusRequest || handledTradeFocusRequestRef.current === tradeFocusRequest.id)
+            return;
+        setSelected({ kind: "trade", entity: tradeFocusRequest.trade });
+        if (focusTradeOnChart(chartRef.current, tradeFocusRequest.trade, payloadRef.current.layers.candles, scheduleOverlayRecalc)) {
+            handledTradeFocusRequestRef.current = tradeFocusRequest.id;
+        }
+    }, [payload.range.end, payload.range.start, scheduleOverlayRecalc, setSelected, tradeFocusRequest]);
     useEffect(() => {
         const container = containerRef.current;
         if (!container)
@@ -1091,6 +1101,34 @@ function focusZoneOnChart(chart, zone, candles, scheduleOverlayRecalc) {
     else {
         requestAnimationFrame(scheduleOverlayRecalc);
     }
+}
+function focusTradeOnChart(chart, trade, candles, scheduleOverlayRecalc) {
+    if (!chart || candles.length === 0 || !trade.opened_at)
+        return false;
+    const openedTime = toUnixTime(trade.opened_at);
+    const firstTime = toUnixTime(candles[0].time);
+    const lastTime = toUnixTime(candles[candles.length - 1].time);
+    if (openedTime < firstTime || openedTime > lastTime)
+        return false;
+    const priceRange = chart.priceScale("right").getVisibleRange();
+    const currentRange = chart.timeScale().getVisibleLogicalRange();
+    const visibleBars = currentRange ? Math.max(currentRange.to - currentRange.from, 24) : Math.min(Math.max(candles.length, 80), 180);
+    const focusIndex = nearestCandleIndex(candles, openedTime);
+    const rightPaddingBars = Math.min(Math.max(visibleBars * 0.45, 16), 60);
+    const from = Math.max(focusIndex - visibleBars + rightPaddingBars, -RIGHT_OFFSET_BARS);
+    const to = from + visibleBars;
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+    if (priceRange) {
+        chart.priceScale("right").setVisibleRange(priceRange);
+        requestAnimationFrame(() => {
+            chart.priceScale("right").setVisibleRange(priceRange);
+            scheduleOverlayRecalc();
+        });
+    }
+    else {
+        requestAnimationFrame(scheduleOverlayRecalc);
+    }
+    return true;
 }
 function zoneFocusTime(zone) {
     const candidates = [zone.detected_at, zone.valid_from, zone.visual_start, zone.visual_end].flatMap((value) => {

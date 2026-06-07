@@ -12,6 +12,7 @@ export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 
 export type PlaybookKey =
   | "trend_pullback"
+  | "zone_reaction_v2"
   | "ob_mitigation_continuation"
   | "fvg_fill_go"
   | "breakout_retest"
@@ -107,6 +108,30 @@ export type TradeOrder = {
   pnl_r: number | null;
   source: string;
   metadata: Record<string, unknown>;
+  chart_index?: number | null;
+  review?: TradeReview | null;
+};
+
+export type TradeReview = {
+  id: string | null;
+  trade_order_id: string;
+  grade: "A" | "B" | "C" | "D" | null;
+  verdict: string;
+  mistake_tags: string[];
+  should_trade_again: string;
+  comment: string;
+  reviewer: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type TradeHistoryResponse = {
+  symbol: string;
+  timeframe: Timeframe;
+  limit: number;
+  offset: number;
+  total: number;
+  trades: TradeOrder[];
 };
 
 export type SetupCandidate = {
@@ -180,4 +205,9 @@ export type SelectedEntity =
 export type ZoneFocusRequest = {
   id: number;
   zone: PriceZone;
+};
+
+export type TradeFocusRequest = {
+  id: number;
+  trade: TradeOrder;
 };

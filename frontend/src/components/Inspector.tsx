@@ -1,21 +1,36 @@
-import { Layers, MousePointer2, RotateCcw, Save, Target, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { deleteManualZone, updateZoneOverride } from "../api/chart";
+import { useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { History, Layers, MousePointer2, RotateCcw, Save, Target, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { deleteManualZone, fetchTradeHistory, updateTradeReview, updateZoneOverride } from "../api/chart";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { ChartPayload, PriceZone, SetupCandidate, TradeOrder, ZoneTypeVisibility } from "../types";
+import type { ChartPayload, PriceZone, SetupCandidate, TradeOrder, TradeReview, ZoneTypeVisibility } from "../types";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
   onZoneUpdated: () => void;
 };
 
-type InspectorTab = "zones" | "setups";
+type InspectorTab = "zones" | "setups" | "trades";
+type ToastMessage = {
+  id: number;
+  kind: "success" | "error";
+  text: string;
+};
+
+const TRADE_FILTER_STORAGE_KEY = "semi-bot-trade-history-filters";
 
 export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const selected = useChartStore((state) => state.selected);
   const setSelected = useChartStore((state) => state.setSelected);
   const focusZone = useChartStore((state) => state.focusZone);
+  const focusTrade = useChartStore((state) => state.focusTrade);
+  const setStartIndex = useChartStore((state) => state.setStartIndex);
+  const symbol = useChartStore((state) => state.symbol);
+  const timeframe = useChartStore((state) => state.timeframe);
+  const limit = useChartStore((state) => state.limit);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const showZones = useChartStore((state) => state.showZones);
@@ -30,11 +45,23 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
       ? filterImportantZoneList(layerFilteredZones, lastCandle.close, lastCandle.time, maxVisibleZones, selectedZoneId)
       : layerFilteredZones.slice().sort((a, b) => b.weight - a.weight);
   const [activeTab, setActiveTab] = useState<InspectorTab>("zones");
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  const showToast = useCallback((kind: ToastMessage["kind"], text: string) => {
+    setToast({ id: Date.now(), kind, text });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeoutId = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
 
   return (
-    <aside className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900">
+    <aside className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900">
+      {toast ? <Toast toast={toast} onClose={() => setToast(null)} /> : null}
       <div className="border-b border-ink-700 p-3">
-        <div className="grid grid-cols-2 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1">
+        <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1">
           <button
             className={`inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${
               activeTab === "zones" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"
@@ -57,6 +84,16 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
             Setups
             <span className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400">{setupCandidates.length}</span>
           </button>
+          <button
+            className={`inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${
+              activeTab === "trades" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"
+            }`}
+            type="button"
+            onClick={() => setActiveTab("trades")}
+          >
+            <History size={16} />
+            Trades
+          </button>
         </div>
       </div>
 
@@ -67,13 +104,270 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
           selected={selected}
           setSelected={setSelected}
           focusZone={focusZone}
+          showToast={showToast}
           visibleZones={visibleZones}
           totalZones={zones.length}
         />
-      ) : (
+      ) : activeTab === "setups" ? (
         <SetupsPanel candidates={setupCandidates} zones={zones} />
+      ) : (
+        <TradesTab
+          focusTrade={focusTrade}
+          limit={limit}
+          selected={selected}
+          selectedPlaybooks={selectedPlaybooks}
+          setSelected={setSelected}
+          setStartIndex={setStartIndex}
+          symbol={symbol}
+          timeframe={timeframe}
+        />
       )}
     </aside>
+  );
+}
+
+function Toast({ toast, onClose }: { toast: ToastMessage; onClose: () => void }) {
+  return (
+    <div className="pointer-events-none absolute right-4 top-4 z-[80]">
+      <div
+        className={`pointer-events-auto flex max-w-[320px] items-start gap-3 rounded-md border px-3 py-2 text-sm shadow-2xl shadow-black/40 ${
+          toast.kind === "success"
+            ? "border-emerald-300/50 bg-emerald-950/95 text-emerald-50"
+            : "border-rose-300/50 bg-rose-950/95 text-rose-50"
+        }`}
+      >
+        <span className="min-w-0 leading-relaxed">{toast.text}</span>
+        <button className="text-slate-400 hover:text-slate-100" type="button" onClick={onClose}>
+          x
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TradesTab({
+  symbol,
+  timeframe,
+  limit,
+  selectedPlaybooks,
+  selected,
+  setSelected,
+  setStartIndex,
+  focusTrade,
+}: {
+  symbol: string;
+  timeframe: ChartPayload["timeframe"];
+  limit: number;
+  selectedPlaybooks: ReturnType<typeof useChartStore.getState>["selectedPlaybooks"];
+  selected: ReturnType<typeof useChartStore.getState>["selected"];
+  setSelected: (selected: ReturnType<typeof useChartStore.getState>["selected"]) => void;
+  setStartIndex: (startIndex: number | null) => void;
+  focusTrade: (trade: TradeOrder) => void;
+}) {
+  const storedFilters = useMemo(() => readTradeHistoryFilters(), []);
+  const [status, setStatus] = useState(storedFilters.status);
+  const [side, setSide] = useState(storedFilters.side);
+  const [outcome, setOutcome] = useState(storedFilters.outcome);
+  const [sort, setSort] = useState(storedFilters.sort);
+  const [page, setPage] = useState(storedFilters.page);
+  const pageSize = 120;
+  const offset = page * pageSize;
+  const query = useQuery({
+    queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, sort, offset],
+    queryFn: () =>
+      fetchTradeHistory({
+        symbol,
+        timeframe,
+        limit: pageSize,
+        offset,
+        selectedPlaybooks,
+        status: status || undefined,
+        side: side || undefined,
+        outcome,
+        backtest: true,
+        sort,
+      }),
+    staleTime: 10_000,
+  });
+  const trades = query.data?.trades ?? [];
+  const total = query.data?.total ?? 0;
+  const selectedTradeId = selected?.kind === "trade" ? selected.entity.id : null;
+  const summary = useMemo(() => {
+    const totalR = trades.reduce((sum, trade) => sum + (trade.pnl_r ?? 0), 0);
+    const wins = trades.filter((trade) => (trade.pnl_r ?? 0) > 0).length;
+    return { totalR, wins };
+  }, [trades]);
+
+  useEffect(() => {
+    writeTradeHistoryFilters({ status, side, outcome, sort, page });
+  }, [outcome, page, side, sort, status]);
+
+  useEffect(() => {
+    setPage((current) => (current === 0 ? current : 0));
+  }, [outcome, side, sort, status, selectedPlaybooks]);
+
+  const selectTrade = (trade: TradeOrder) => {
+    setSelected({ kind: "trade", entity: trade });
+    if (typeof trade.chart_index === "number") {
+      const nextStart = Math.max(0, trade.chart_index - Math.floor(limit * 0.55));
+      setStartIndex(nextStart);
+    }
+    focusTrade(trade);
+  };
+
+  return (
+    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
+      <div className="mb-3 grid gap-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+          <History size={14} />
+          Trade History
+          <span className="ml-auto normal-case tracking-normal text-slate-600">{total}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <TradeSelect value={status} onChange={setStatus} options={[["", "All status"], ["target_hit", "Target"], ["stopped", "Stopped"], ["time_exit", "Time exit"]]} />
+          <TradeSelect value={outcome} onChange={setOutcome} options={[["all", "All PnL"], ["win", "Wins"], ["loss", "Losses"]]} />
+          <TradeSelect value={side} onChange={setSide} options={[["", "Both side"], ["buy", "Buy"], ["sell", "Sell"]]} />
+          <TradeSelect value={sort} onChange={setSort} options={[["opened_at_desc", "Newest"], ["opened_at_asc", "Oldest"], ["pnl_r_desc", "Best R"], ["pnl_r_asc", "Worst R"]]} />
+        </div>
+        <div className="flex items-center justify-between rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-xs text-slate-400">
+          <span>{trades.length} shown · {summary.wins} wins</span>
+          <span className={summary.totalR >= 0 ? "text-emerald-300" : "text-rose-300"}>{summary.totalR.toFixed(2)}R</span>
+        </div>
+      </div>
+
+      <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
+        {query.isLoading ? (
+          <div className="rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500">Loading trades...</div>
+        ) : query.isError ? (
+          <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-100">
+            {query.error instanceof Error ? query.error.message : "Could not load trades."}
+          </div>
+        ) : trades.length === 0 ? (
+          <div className="rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500">No trades match current filters</div>
+        ) : (
+          <div className="grid gap-2">
+            {trades.map((trade) => (
+              <button
+                key={trade.id}
+                className={`rounded-md border p-3 text-left transition ${
+                  selectedTradeId === trade.id ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850 hover:border-slate-600"
+                }`}
+                type="button"
+                onClick={() => selectTrade(trade)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-semibold text-slate-100">{playbookLabel(trade.playbook)}</span>
+                  <span className={trade.side === "buy" ? "text-xs text-emerald-300" : "text-xs text-rose-300"}>{trade.side}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>{compactTime(trade.opened_at)}</span>
+                  <span className={trade.status === "target_hit" ? "text-emerald-300" : trade.status === "stopped" ? "text-rose-300" : "text-yellow-200"}>
+                    {trade.status}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                  <span>Entry {price(trade.entry_price)}</span>
+                  <span>SL {price(trade.stop_loss)}</span>
+                  <span className={(trade.pnl_r ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>{formatR(trade.pnl_r)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          className="rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40"
+          disabled={page === 0}
+          type="button"
+          onClick={() => setPage((current) => Math.max(0, current - 1))}
+        >
+          Prev
+        </button>
+        <button
+          className="rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40"
+          disabled={offset + pageSize >= total}
+          type="button"
+          onClick={() => setPage((current) => current + 1)}
+        >
+          Next
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function TradeSelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<[string, string]>;
+}) {
+  return (
+    <select
+      className="h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+      value={value}
+      onChange={(event) => {
+        onChange(event.target.value);
+      }}
+    >
+      {options.map(([optionValue, label]) => (
+        <option key={optionValue} value={optionValue}>
+          {label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+type TradeHistoryFilters = {
+  status: string;
+  side: string;
+  outcome: string;
+  sort: string;
+  page: number;
+};
+
+function readTradeHistoryFilters(): TradeHistoryFilters {
+  const defaults = {
+    status: "",
+    side: "",
+    outcome: "all",
+    sort: "opened_at_desc",
+    page: 0,
+  };
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = window.localStorage.getItem(TRADE_FILTER_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<TradeHistoryFilters>;
+    return {
+      status: typeof parsed.status === "string" ? parsed.status : defaults.status,
+      side: typeof parsed.side === "string" ? parsed.side : defaults.side,
+      outcome: typeof parsed.outcome === "string" ? parsed.outcome : defaults.outcome,
+      sort: typeof parsed.sort === "string" ? parsed.sort : defaults.sort,
+      page: Number.isFinite(parsed.page) ? Math.max(0, Math.floor(Number(parsed.page))) : defaults.page,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function writeTradeHistoryFilters(filters: TradeHistoryFilters): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    TRADE_FILTER_STORAGE_KEY,
+    JSON.stringify({
+      status: filters.status,
+      side: filters.side,
+      outcome: filters.outcome,
+      sort: filters.sort,
+      page: Math.max(0, Math.floor(filters.page)),
+    }),
   );
 }
 
@@ -85,6 +379,7 @@ function ZonesTab({
   onZoneUpdated,
   setSelected,
   focusZone,
+  showToast,
 }: {
   selected: ReturnType<typeof useChartStore.getState>["selected"];
   visibleZones: PriceZone[];
@@ -93,6 +388,7 @@ function ZonesTab({
   onZoneUpdated: () => void;
   setSelected: (selected: ReturnType<typeof useChartStore.getState>["selected"]) => void;
   focusZone: (zone: PriceZone) => void;
+  showToast: (kind: ToastMessage["kind"], text: string) => void;
 }) {
   return (
     <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -104,7 +400,7 @@ function ZonesTab({
         {!selected ? (
           <div className="rounded-md border border-dashed border-ink-700 p-4 text-sm text-slate-500">Click a zone or marker</div>
         ) : selected.kind === "zone" ? (
-          <ZoneEditor zone={selected.entity} onZoneUpdated={onZoneUpdated} />
+          <ZoneEditor zone={selected.entity} onZoneUpdated={onZoneUpdated} showToast={showToast} />
         ) : selected.kind === "structure" ? (
           <div className="grid gap-2 text-sm">
             <Detail label="Type" value={selected.entity.type} />
@@ -114,7 +410,7 @@ function ZonesTab({
             <Detail label="Direction" value={selected.entity.direction ?? "--"} />
           </div>
         ) : (
-          <TradeDetails trade={selected.entity} />
+          <TradeDetails trade={selected.entity} showToast={showToast} />
         )}
       </section>
 
@@ -237,6 +533,7 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
                       <div className="mt-1 truncate text-[11px] text-slate-500">
                         {(candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--")}
                       </div>
+                      <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
                       <div className="mt-2 flex flex-wrap gap-1">
                         <SetupAction
                           label={watchedIds.has(candidate.id) ? "Watching" : "Watch"}
@@ -300,9 +597,11 @@ function TradeMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TradeDetails({ trade }: { trade: TradeOrder }) {
+function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kind: ToastMessage["kind"], text: string) => void }) {
+  const setSelected = useChartStore((state) => state.setSelected);
   const metadata = trade.metadata ?? {};
   const candidateMetadata = readObject(metadata.candidate_metadata);
+  const stateMachine = readStateMachine(candidateMetadata.state_machine);
   const reasons = readStringList(metadata.reason);
   const blockedReasons = readStringList(metadata.blocked_reason);
   const triggerTypes = readStringList(candidateMetadata.trigger_types);
@@ -340,6 +639,8 @@ function TradeDetails({ trade }: { trade: TradeOrder }) {
         <Detail label="Trigger" value={triggerTypes.length > 0 ? triggerTypes.join(" + ") : "--"} />
       </div>
 
+      <StateMachine steps={stateMachine} />
+
       <div className="grid gap-1">
         <div className="text-xs text-slate-500">Reason</div>
         <div className="rounded-md border border-cyan-400/25 bg-cyan-400/[0.06] p-2 text-xs leading-relaxed text-cyan-50">
@@ -367,11 +668,219 @@ function TradeDetails({ trade }: { trade: TradeOrder }) {
           </div>
         </div>
       ) : null}
+
+      <TradeReviewEditor
+        trade={trade}
+        showToast={showToast}
+        onSaved={(review) => {
+          setSelected({ kind: "trade", entity: { ...trade, review } });
+        }}
+      />
     </div>
   );
 }
 
-function ZoneEditor({ zone, onZoneUpdated }: { zone: PriceZone; onZoneUpdated: () => void }) {
+const REVIEW_TAGS = [
+  ["wrong_bias", "Wrong bias"],
+  ["wrong_regime", "Wrong regime"],
+  ["weak_zone", "Weak zone"],
+  ["zone_already_broken", "Zone broken"],
+  ["weak_reaction", "Weak reaction"],
+  ["weak_breakout", "Weak breakout"],
+  ["bad_entry", "Bad entry"],
+  ["sl_too_tight", "SL too tight"],
+  ["tp_unrealistic", "TP unrealistic"],
+  ["against_momentum", "Against momentum"],
+  ["news_risk", "News risk"],
+  ["good_context", "Good context"],
+] as const;
+
+function TradeReviewEditor({
+  trade,
+  onSaved,
+  showToast,
+}: {
+  trade: TradeOrder;
+  onSaved: (review: TradeReview) => void;
+  showToast: (kind: ToastMessage["kind"], text: string) => void;
+}) {
+  const review = trade.review;
+  const [grade, setGrade] = useState(review?.grade ?? "");
+  const [verdict, setVerdict] = useState(review?.verdict ?? "unreviewed");
+  const [shouldTradeAgain, setShouldTradeAgain] = useState(review?.should_trade_again ?? "unknown");
+  const [mistakeTags, setMistakeTags] = useState<Set<string>>(new Set(review?.mistake_tags ?? []));
+  const [comment, setComment] = useState(review?.comment ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () =>
+      updateTradeReview(trade.id, {
+        grade: grade || null,
+        verdict,
+        mistake_tags: Array.from(mistakeTags),
+        should_trade_again: shouldTradeAgain,
+        comment,
+        reviewer: "human",
+      }),
+    onSuccess: (savedReview) => {
+      setError(null);
+      onSaved(savedReview);
+      showToast("success", "Trade review saved.");
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Could not save trade review.";
+      setError(message);
+      showToast("error", message);
+    },
+  });
+  const saveReview = useCallback(() => {
+    mutation.mutate();
+  }, [mutation]);
+
+  useEffect(() => {
+    setGrade(review?.grade ?? "");
+    setVerdict(review?.verdict ?? "unreviewed");
+    setShouldTradeAgain(review?.should_trade_again ?? "unknown");
+    setMistakeTags(new Set(review?.mistake_tags ?? []));
+    setComment(review?.comment ?? "");
+    setError(null);
+  }, [review, trade.id]);
+
+  const toggleTag = (tag: string) => {
+    setMistakeTags((current) => toggleSetValue(current, tag));
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      if (event.key.toLowerCase() !== "s") return;
+      event.preventDefault();
+      saveReview();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [saveReview]);
+
+  return (
+    <div className="grid gap-3 rounded-md border border-ink-700 bg-ink-950/60 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Human Review</div>
+        <div className="flex items-center gap-2">
+          {review?.updated_at ? <span className="hidden text-[10px] text-slate-600 sm:inline">{compactTime(review.updated_at)}</span> : null}
+          <button
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-cyan-400/60 bg-cyan-400/15 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={mutation.isPending}
+            title="Save review (S)"
+            type="button"
+            onClick={saveReview}
+          >
+            <Save size={13} />
+            {mutation.isPending ? "Saving" : "Save"}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <ReviewSelect value={grade} onChange={setGrade} options={[["", "No grade"], ["A", "A"], ["B", "B"], ["C", "C"], ["D", "D"]]} />
+        <ReviewSelect
+          value={verdict}
+          onChange={setVerdict}
+          options={[
+            ["unreviewed", "Unreviewed"],
+            ["good_trade", "Good trade"],
+            ["bad_trade", "Bad trade"],
+            ["should_skip", "Should skip"],
+            ["missed_context", "Missed context"],
+          ]}
+        />
+      </div>
+
+      <ReviewSelect
+        value={shouldTradeAgain}
+        onChange={setShouldTradeAgain}
+        options={[
+          ["unknown", "Trade again?"],
+          ["yes", "Yes"],
+          ["no", "No"],
+          ["conditional", "Conditional"],
+        ]}
+      />
+
+      <div className="flex flex-wrap gap-1.5">
+        {REVIEW_TAGS.map(([tag, label]) => (
+          <button
+            key={tag}
+            className={`rounded border px-2 py-1 text-[11px] transition ${
+              mistakeTags.has(tag)
+                ? "border-cyan-300/70 bg-cyan-300/15 text-cyan-100"
+                : "border-ink-700 bg-ink-850 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+            }`}
+            type="button"
+            onClick={() => toggleTag(tag)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <label className="grid gap-1 text-xs text-slate-500">
+        Comment
+        <textarea
+          className="min-h-24 resize-y rounded-md border border-ink-700 bg-ink-850 px-2 py-2 text-sm leading-relaxed text-slate-100 outline-none focus:border-cyan-400"
+          placeholder="Ví dụ: Breakout quá yếu, zone đã bị xuyên trước đó, nên bỏ qua lệnh này..."
+          value={comment}
+          onChange={(event) => setComment(event.target.value)}
+        />
+      </label>
+
+      {error ? <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-100">{error}</div> : null}
+
+      <button
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-400/60 bg-cyan-400/15 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={mutation.isPending}
+        title="Save review (S)"
+        type="button"
+        onClick={saveReview}
+      >
+        <Save size={14} />
+        {mutation.isPending ? "Saving review" : "Save review (S)"}
+      </button>
+    </div>
+  );
+}
+
+function ReviewSelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<[string, string]>;
+}) {
+  return (
+    <select
+      className="h-9 min-w-0 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {options.map(([optionValue, label]) => (
+        <option key={optionValue} value={optionValue}>
+          {label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function ZoneEditor({
+  zone,
+  onZoneUpdated,
+  showToast,
+}: {
+  zone: PriceZone;
+  onZoneUpdated: () => void;
+  showToast: (kind: ToastMessage["kind"], text: string) => void;
+}) {
   const setSelected = useChartStore((state) => state.setSelected);
   const [priceLow, setPriceLow] = useState(String(zone.price_low));
   const [priceHigh, setPriceHigh] = useState(String(zone.price_high));
@@ -439,12 +948,15 @@ function ZoneEditor({ zone, onZoneUpdated }: { zone: PriceZone; onZoneUpdated: (
       });
       setSelected({ kind: "zone", entity: updated });
       onZoneUpdated();
+      showToast("success", "Zone override saved.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save zone override.");
+      const message = err instanceof Error ? err.message : "Could not save zone override.";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsSaving(false);
     }
-  }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, status, weight, zone]);
+  }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, weight, zone]);
 
   const deleteZone = useCallback(async () => {
     if (isSaving) return;
@@ -456,12 +968,15 @@ function ZoneEditor({ zone, onZoneUpdated }: { zone: PriceZone; onZoneUpdated: (
       await deleteManualZone(zone.id, reason.trim() || "hotkey/manual delete");
       setSelected(null);
       onZoneUpdated();
+      showToast("success", "Zone deleted from chart.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete zone.");
+      const message = err instanceof Error ? err.message : "Could not delete zone.";
+      setError(message);
+      showToast("error", message);
     } finally {
       setIsSaving(false);
     }
-  }, [isSaving, onZoneUpdated, reason, setSelected, zone.id]);
+  }, [isSaving, onZoneUpdated, reason, setSelected, showToast, zone.id]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -717,6 +1232,63 @@ function addSetValue(current: Set<string>, value: string): Set<string> {
   return next;
 }
 
+type StateMachineStep = {
+  key: string;
+  label: string;
+  status: string;
+};
+
+function StateMachine({ steps, compact = false }: { steps: StateMachineStep[]; compact?: boolean }) {
+  if (steps.length === 0) return null;
+  return (
+    <div className={compact ? "mt-2 flex flex-wrap gap-1" : "grid gap-1"}>
+      {!compact ? <div className="text-xs text-slate-500">State machine</div> : null}
+      <div className="flex flex-wrap gap-1">
+        {steps.map((step) => (
+          <span
+            key={step.key}
+            className={`rounded border px-1.5 py-0.5 text-[10px] ${
+              step.status === "active"
+                ? "border-cyan-300/70 bg-cyan-300/15 text-cyan-100"
+                : step.status === "done"
+                  ? "border-emerald-300/30 bg-emerald-300/[0.06] text-emerald-200"
+                  : "border-ink-700 bg-ink-950 text-slate-500"
+            }`}
+            title={step.label}
+          >
+            {compact ? shortStateLabel(step.key) : step.key}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function shortStateLabel(value: string): string {
+  const labels: Record<string, string> = {
+    IDLE: "IDLE",
+    ZONE_TOUCHED: "TOUCH",
+    REACTING_IN_ZONE: "REACT",
+    WAIT_FOR_BOS: "BOS",
+    WAITING_RETEST: "RETEST",
+    BIAS_WARNING: "WARN",
+    PREPARE_ENTRY: "ENTRY",
+  };
+  return labels[value] ?? value;
+}
+
+function readStateMachine(value: unknown): StateMachineStep[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null))
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map((item) => ({
+      key: typeof item.key === "string" ? item.key : "--",
+      label: typeof item.label === "string" ? item.label : "--",
+      status: typeof item.status === "string" ? item.status : "pending",
+    }));
+}
+
 function readObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -735,6 +1307,11 @@ function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null 
 
 function formatUnknownNumber(value: unknown): string {
   return typeof value === "number" ? value.toFixed(2) : "--";
+}
+
+function formatR(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "--";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`;
 }
 
 function tradeStatusNote(status: string): string | null {

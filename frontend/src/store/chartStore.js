@@ -11,6 +11,7 @@ export const defaultZoneTypeVisibility = {
 export const defaultSelectedPlaybooks = ["trend_pullback"];
 export const playbookLayerRequirements = {
     trend_pullback: { zones: ["support", "resistance", "order_block", "fvg"], structure: true },
+    zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
     ob_mitigation_continuation: { zones: ["order_block"], structure: true },
     fvg_fill_go: { zones: ["fvg"], structure: true },
     breakout_retest: { zones: ["consolidation"], structure: true },
@@ -34,6 +35,7 @@ export const useChartStore = create()(persist((set) => ({
     addEntityKind: null,
     selected: null,
     zoneFocusRequest: null,
+    tradeFocusRequest: null,
     setTimeframe: (timeframe) => set({ timeframe, selected: null }),
     setLimit: (limit) => set({ limit: Math.min(Math.max(limit, 1), 15000) }),
     setStartIndex: (startIndex) => set({ startIndex: startIndex === null ? null : Math.max(0, Math.floor(startIndex)), selected: null }),
@@ -87,6 +89,12 @@ export const useChartStore = create()(persist((set) => ({
             zone,
         },
     })),
+    focusTrade: (trade) => set((state) => ({
+        tradeFocusRequest: {
+            id: (state.tradeFocusRequest?.id ?? 0) + 1,
+            trade,
+        },
+    })),
 }), {
     name: "semi-bot-chart-layer-settings",
     partialize: (state) => ({
@@ -117,6 +125,7 @@ export const useChartStore = create()(persist((set) => ({
             selected: null,
             addEntityKind: null,
             zoneFocusRequest: null,
+            tradeFocusRequest: null,
         };
         return {
             ...merged,
