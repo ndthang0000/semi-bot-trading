@@ -168,12 +168,16 @@ function TradesTab({
   const [status, setStatus] = useState(storedFilters.status);
   const [side, setSide] = useState(storedFilters.side);
   const [outcome, setOutcome] = useState(storedFilters.outcome);
+  const [zoneType, setZoneType] = useState(storedFilters.zoneType);
+  const [reaction, setReaction] = useState(storedFilters.reaction);
+  const [tradeId, setTradeId] = useState(storedFilters.tradeId);
   const [sort, setSort] = useState(storedFilters.sort);
   const [page, setPage] = useState(storedFilters.page);
   const pageSize = 120;
   const offset = page * pageSize;
+  const trimmedTradeId = tradeId.trim();
   const query = useQuery({
-    queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, sort, offset],
+    queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, zoneType, reaction, trimmedTradeId, sort, offset],
     queryFn: () =>
       fetchTradeHistory({
         symbol,
@@ -184,6 +188,9 @@ function TradesTab({
         status: status || undefined,
         side: side || undefined,
         outcome,
+        zoneType: zoneType || undefined,
+        reaction: reaction || undefined,
+        tradeId: trimmedTradeId || undefined,
         backtest: true,
         sort,
       }),
@@ -199,12 +206,12 @@ function TradesTab({
   }, [trades]);
 
   useEffect(() => {
-    writeTradeHistoryFilters({ status, side, outcome, sort, page });
-  }, [outcome, page, side, sort, status]);
+    writeTradeHistoryFilters({ status, side, outcome, zoneType, reaction, tradeId, sort, page });
+  }, [outcome, page, reaction, side, sort, status, tradeId, zoneType]);
 
   useEffect(() => {
     setPage((current) => (current === 0 ? current : 0));
-  }, [outcome, side, sort, status, selectedPlaybooks]);
+  }, [outcome, reaction, side, sort, status, selectedPlaybooks, trimmedTradeId, zoneType]);
 
   const selectTrade = (trade: TradeOrder) => {
     setSelected({ kind: "trade", entity: trade });
@@ -224,10 +231,53 @@ function TradesTab({
           <span className="ml-auto normal-case tracking-normal text-slate-600">{total}</span>
         </div>
         <div className="grid grid-cols-2 gap-2">
+          <input
+            className="col-span-2 h-9 rounded-md border border-ink-700 bg-ink-850 px-3 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+            placeholder="Search trade ID, e.g. 00060"
+            value={tradeId}
+            onChange={(event) => setTradeId(event.target.value)}
+          />
           <TradeSelect value={status} onChange={setStatus} options={[["", "All status"], ["target_hit", "Target"], ["stopped", "Stopped"], ["time_exit", "Time exit"]]} />
           <TradeSelect value={outcome} onChange={setOutcome} options={[["all", "All PnL"], ["win", "Wins"], ["loss", "Losses"]]} />
           <TradeSelect value={side} onChange={setSide} options={[["", "Both side"], ["buy", "Buy"], ["sell", "Sell"]]} />
-          <TradeSelect value={sort} onChange={setSort} options={[["opened_at_desc", "Newest"], ["opened_at_asc", "Oldest"], ["pnl_r_desc", "Best R"], ["pnl_r_asc", "Worst R"]]} />
+          <TradeSelect
+            value={zoneType}
+            onChange={setZoneType}
+            options={[
+              ["", "All zones"],
+              ["support", "Support"],
+              ["resistance", "Resistance"],
+              ["fvg", "FVG"],
+              ["order_block", "Order Block"],
+              ["liquidity_pool", "Liquidity"],
+              ["consolidation", "Consolidation"],
+            ]}
+          />
+          <TradeSelect
+            value={reaction}
+            onChange={setReaction}
+            options={[
+              ["", "All reactions"],
+              ["reject", "Reject"],
+              ["fakeout", "Fakeout"],
+              ["waiting_bos", "Waiting BOS"],
+              ["retest_reject", "Retest reject"],
+              ["slow_reaction", "Slow reaction"],
+              ["clean_breakout", "Clean breakout"],
+            ]}
+          />
+          <TradeSelect
+            value={sort}
+            onChange={setSort}
+            options={[
+              ["opened_at_desc", "Newest"],
+              ["opened_at_asc", "Oldest"],
+              ["pnl_r_desc", "Best R"],
+              ["pnl_r_asc", "Worst R"],
+              ["sl_size_desc", "Largest SL"],
+              ["sl_size_asc", "Smallest SL"],
+            ]}
+          />
         </div>
         <div className="flex items-center justify-between rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-xs text-slate-400">
           <span>{trades.length} shown · {summary.wins} wins</span>
@@ -246,7 +296,11 @@ function TradesTab({
           <div className="rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500">No trades match current filters</div>
         ) : (
           <div className="grid gap-2">
-            {trades.map((trade) => (
+            {trades.map((trade) => {
+              const tradeZoneType = tradeZoneTypeLabel(trade);
+              const tradeReaction = tradeReactionLabel(trade);
+              const slSize = stopLossSize(trade);
+              return (
               <button
                 key={trade.id}
                 className={`rounded-md border p-3 text-left transition ${
@@ -268,10 +322,14 @@ function TradesTab({
                 <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
                   <span>Entry {price(trade.entry_price)}</span>
                   <span>SL {price(trade.stop_loss)}</span>
+                  <span>SL size {slSize === null ? "--" : slSize.toFixed(2)}</span>
+                  <span>{tradeZoneType}</span>
+                  <span>{tradeReaction}</span>
                   <span className={(trade.pnl_r ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>{formatR(trade.pnl_r)}</span>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -328,6 +386,9 @@ type TradeHistoryFilters = {
   status: string;
   side: string;
   outcome: string;
+  zoneType: string;
+  reaction: string;
+  tradeId: string;
   sort: string;
   page: number;
 };
@@ -337,6 +398,9 @@ function readTradeHistoryFilters(): TradeHistoryFilters {
     status: "",
     side: "",
     outcome: "all",
+    zoneType: "",
+    reaction: "",
+    tradeId: "",
     sort: "opened_at_desc",
     page: 0,
   };
@@ -349,6 +413,9 @@ function readTradeHistoryFilters(): TradeHistoryFilters {
       status: typeof parsed.status === "string" ? parsed.status : defaults.status,
       side: typeof parsed.side === "string" ? parsed.side : defaults.side,
       outcome: typeof parsed.outcome === "string" ? parsed.outcome : defaults.outcome,
+      zoneType: typeof parsed.zoneType === "string" ? parsed.zoneType : defaults.zoneType,
+      reaction: typeof parsed.reaction === "string" ? parsed.reaction : defaults.reaction,
+      tradeId: typeof parsed.tradeId === "string" ? parsed.tradeId : defaults.tradeId,
       sort: typeof parsed.sort === "string" ? parsed.sort : defaults.sort,
       page: Number.isFinite(parsed.page) ? Math.max(0, Math.floor(Number(parsed.page))) : defaults.page,
     };
@@ -365,6 +432,9 @@ function writeTradeHistoryFilters(filters: TradeHistoryFilters): void {
       status: filters.status,
       side: filters.side,
       outcome: filters.outcome,
+      zoneType: filters.zoneType,
+      reaction: filters.reaction,
+      tradeId: filters.tradeId,
       sort: filters.sort,
       page: Math.max(0, Math.floor(filters.page)),
     }),
@@ -1303,6 +1373,23 @@ function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null 
   if (typeof first === "number") return first;
   if (first && typeof first.price === "number") return first.price;
   return null;
+}
+
+function stopLossSize(trade: TradeOrder): number | null {
+  if (typeof trade.entry_price !== "number" || typeof trade.stop_loss !== "number") return null;
+  return Math.abs(trade.entry_price - trade.stop_loss);
+}
+
+function tradeZoneTypeLabel(trade: TradeOrder): string {
+  const metadata = readObject(trade.metadata);
+  const candidateMetadata = readObject(metadata.candidate_metadata);
+  return String(candidateMetadata.zone_type ?? metadata.zone_type ?? "--");
+}
+
+function tradeReactionLabel(trade: TradeOrder): string {
+  const metadata = readObject(trade.metadata);
+  const candidateMetadata = readObject(metadata.candidate_metadata);
+  return String(metadata.zone_reaction_state ?? candidateMetadata.zone_reaction_state ?? "--");
 }
 
 function formatUnknownNumber(value: unknown): string {

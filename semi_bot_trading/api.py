@@ -14,6 +14,7 @@ from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
 from .db import connect, init_db
 from .replay_chart import build_realtime_replay_payload
+from .strategy import PLAYBOOK_ZONE_TYPES
 
 
 MAX_CHART_LIMIT = 15_000
@@ -216,6 +217,9 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         status: str | None = None,
         side: str | None = None,
         outcome: str | None = Query(default=None),
+        zone_type: str | None = Query(default=None),
+        reaction: str | None = Query(default=None),
+        trade_id: str | None = Query(default=None),
         backtest: bool | None = Query(default=None),
         sort: str = Query(default="opened_at_desc"),
     ) -> dict[str, Any]:
@@ -252,6 +256,33 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 where.append("trade_orders.pnl_r <= 0")
             elif outcome != "all":
                 raise HTTPException(status_code=422, detail="outcome must be all, win, or loss")
+        if zone_type:
+            allowed_zone_types = {"support", "resistance", "fvg", "order_block", "liquidity_pool", "consolidation"}
+            if zone_type not in allowed_zone_types:
+                raise HTTPException(status_code=422, detail=f"zone_type must be one of: {', '.join(sorted(allowed_zone_types))}")
+            where.append(
+                "COALESCE("
+                "json_extract(trade_orders.metadata_json, '$.candidate_metadata.zone_type'), "
+                "json_extract(trade_orders.metadata_json, '$.zone_type')"
+                ") = ?"
+            )
+            params.append(zone_type)
+        if reaction:
+            allowed_reactions = {"reject", "fakeout", "waiting_bos", "retest_reject", "slow_reaction", "clean_breakout"}
+            if reaction not in allowed_reactions:
+                raise HTTPException(status_code=422, detail=f"reaction must be one of: {', '.join(sorted(allowed_reactions))}")
+            where.append(
+                "COALESCE("
+                "json_extract(trade_orders.metadata_json, '$.zone_reaction_state'), "
+                "json_extract(trade_orders.metadata_json, '$.candidate_metadata.zone_reaction_state')"
+                ") = ?"
+            )
+            params.append(reaction)
+        if trade_id:
+            trade_id_search = trade_id.strip()
+            if trade_id_search:
+                where.append("(trade_orders.id LIKE ? OR trade_orders.trade_idea_id LIKE ?)")
+                params.extend([f"%{trade_id_search}%", f"%{trade_id_search}%"])
         if backtest is not None:
             where.append("json_extract(trade_orders.metadata_json, '$.backtest') = ?")
             params.append(1 if backtest else 0)
@@ -261,9 +292,14 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             "opened_at_asc": "trade_orders.opened_at ASC",
             "pnl_r_desc": "trade_orders.pnl_r DESC, trade_orders.opened_at DESC",
             "pnl_r_asc": "trade_orders.pnl_r ASC, trade_orders.opened_at DESC",
+            "sl_size_desc": "CASE WHEN trade_orders.entry_price IS NULL OR trade_orders.stop_loss IS NULL THEN 1 ELSE 0 END, ABS(trade_orders.entry_price - trade_orders.stop_loss) DESC, trade_orders.opened_at DESC",
+            "sl_size_asc": "CASE WHEN trade_orders.entry_price IS NULL OR trade_orders.stop_loss IS NULL THEN 1 ELSE 0 END, ABS(trade_orders.entry_price - trade_orders.stop_loss) ASC, trade_orders.opened_at DESC",
         }.get(sort)
         if order_by is None:
-            raise HTTPException(status_code=422, detail="sort must be opened_at_desc, opened_at_asc, pnl_r_desc, or pnl_r_asc")
+            raise HTTPException(
+                status_code=422,
+                detail="sort must be opened_at_desc, opened_at_asc, pnl_r_desc, pnl_r_asc, sl_size_desc, or sl_size_asc",
+            )
 
         where_sql = " AND ".join(where)
         with connect(config.database) as conn:
@@ -875,6 +911,12 @@ def parse_playbooks(value: str | None) -> set[str] | None:
     if value is None:
         return None
     playbooks = {item.strip() for item in value.split(",") if item.strip()}
+    if playbooks == {"__none__"}:
+        return set()
+    unknown = sorted(playbooks - set(PLAYBOOK_ZONE_TYPES))
+    if unknown:
+        known = ", ".join(sorted(PLAYBOOK_ZONE_TYPES))
+        raise HTTPException(status_code=422, detail=f"Unknown playbook(s): {', '.join(unknown)}. Known playbooks: {known}")
     return playbooks
 
 

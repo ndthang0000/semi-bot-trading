@@ -1,7 +1,7 @@
 export type Timeframe = "M15" | "H1";
 export type ZoneVisibilityKey = "support" | "resistance" | "order_block" | "fvg" | "liquidity_pool" | "consolidation";
 export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
-export type PlaybookKey = "trend_pullback" | "zone_reaction_v2" | "ob_mitigation_continuation" | "fvg_fill_go" | "breakout_retest" | "momentum_expansion_continuation" | "range_boundary_reversal" | "liquidity_sweep_reversal" | "failed_breakout_trap";
+export type PlaybookKey = "zone_reaction_v2";
 export type AddEntityKind = "support" | "resistance" | "demand_order_block" | "supply_order_block" | "bullish_fvg" | "bearish_fvg" | "consolidation" | "buy_side_liquidity" | "sell_side_liquidity";
 export type ChartCandle = {
     time: string;

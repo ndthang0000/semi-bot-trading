@@ -5,6 +5,7 @@ import unittest
 from semi_bot_trading.zones import (
     CandleSlice,
     SwingPoint,
+    apply_lifecycle_to_zones,
     apply_lifecycle_to_zone,
     detect_support_resistance_zones,
 )
@@ -204,6 +205,51 @@ class ZoneDetectorTest(unittest.TestCase):
         self.assertEqual(updated.status, "invalidated")
         self.assertEqual(updated.end_time, "2026-01-01T05:00:00+00:00")
         self.assertLess(updated.effective_weight, zone.effective_weight)
+
+    def test_false_break_refines_support_and_disables_parent_for_trade(self) -> None:
+        swings = [
+            SwingPoint("l1", "HL", 100, "2026-01-01T01:00:00+00:00", "low"),
+            SwingPoint("l2", "HL", 101, "2026-01-01T04:00:00+00:00", "low"),
+        ]
+        zone = detect_support_resistance_zones(
+            swings,
+            symbol="XAUUSD",
+            timeframe="H1",
+            tolerance_pct=0.001,
+            min_zone_width=1.0,
+            min_touches=2,
+            max_zones=10,
+            atr_value=4.0,
+            atr_width_multiplier=0.25,
+        )[0]
+        candles = [
+            CandleSlice("2026-01-01T04:00:00+00:00", open=103, high=104, low=101, close=103),
+            CandleSlice("2026-01-01T05:00:00+00:00", open=102, high=105, low=97, close=103),
+            CandleSlice("2026-01-01T06:00:00+00:00", open=103, high=106, low=102, close=105),
+        ]
+
+        updated = apply_lifecycle_to_zones(
+            [zone],
+            candles,
+            close_break_buffer=0.0,
+            recent_touch_lookback_candles=10,
+            age_decay_per_100_candles=0.08,
+            freshness_bonus=0.15,
+            invalidation_weight_multiplier=0.15,
+            false_break_refine_enabled=True,
+            false_break_refine_max_width_atr_multiplier=0.8,
+            false_break_parent_weight_multiplier=0.35,
+        )
+
+        parent = next(item for item in updated if item.id == zone.id)
+        children = [item for item in updated if item.metadata.get("parent_zone_id") == zone.id]
+        self.assertTrue(parent.metadata["trade_disabled_after_sweep"])
+        self.assertEqual(parent.metadata["false_break_count"], 1)
+        self.assertEqual(len(children), 1)
+        self.assertEqual(children[0].zone_type, "support")
+        self.assertEqual(children[0].metadata["refined_from_false_break"], True)
+        self.assertEqual(children[0].price_low, 97)
+        self.assertLess(children[0].price_high, zone.price_high)
 
 
 if __name__ == "__main__":

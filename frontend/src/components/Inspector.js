@@ -52,12 +52,16 @@ function TradesTab({ symbol, timeframe, limit, selectedPlaybooks, selected, setS
     const [status, setStatus] = useState(storedFilters.status);
     const [side, setSide] = useState(storedFilters.side);
     const [outcome, setOutcome] = useState(storedFilters.outcome);
+    const [zoneType, setZoneType] = useState(storedFilters.zoneType);
+    const [reaction, setReaction] = useState(storedFilters.reaction);
+    const [tradeId, setTradeId] = useState(storedFilters.tradeId);
     const [sort, setSort] = useState(storedFilters.sort);
     const [page, setPage] = useState(storedFilters.page);
     const pageSize = 120;
     const offset = page * pageSize;
+    const trimmedTradeId = tradeId.trim();
     const query = useQuery({
-        queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, sort, offset],
+        queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, zoneType, reaction, trimmedTradeId, sort, offset],
         queryFn: () => fetchTradeHistory({
             symbol,
             timeframe,
@@ -67,6 +71,9 @@ function TradesTab({ symbol, timeframe, limit, selectedPlaybooks, selected, setS
             status: status || undefined,
             side: side || undefined,
             outcome,
+            zoneType: zoneType || undefined,
+            reaction: reaction || undefined,
+            tradeId: trimmedTradeId || undefined,
             backtest: true,
             sort,
         }),
@@ -81,11 +88,11 @@ function TradesTab({ symbol, timeframe, limit, selectedPlaybooks, selected, setS
         return { totalR, wins };
     }, [trades]);
     useEffect(() => {
-        writeTradeHistoryFilters({ status, side, outcome, sort, page });
-    }, [outcome, page, side, sort, status]);
+        writeTradeHistoryFilters({ status, side, outcome, zoneType, reaction, tradeId, sort, page });
+    }, [outcome, page, reaction, side, sort, status, tradeId, zoneType]);
     useEffect(() => {
         setPage((current) => (current === 0 ? current : 0));
-    }, [outcome, side, sort, status, selectedPlaybooks]);
+    }, [outcome, reaction, side, sort, status, selectedPlaybooks, trimmedTradeId, zoneType]);
     const selectTrade = (trade) => {
         setSelected({ kind: "trade", entity: trade });
         if (typeof trade.chart_index === "number") {
@@ -94,7 +101,35 @@ function TradesTab({ symbol, timeframe, limit, selectedPlaybooks, selected, setS
         }
         focusTrade(trade);
     };
-    return (_jsxs("section", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4", children: [_jsxs("div", { className: "mb-3 grid gap-3", children: [_jsxs("div", { className: "flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(History, { size: 14 }), "Trade History", _jsx("span", { className: "ml-auto normal-case tracking-normal text-slate-600", children: total })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx(TradeSelect, { value: status, onChange: setStatus, options: [["", "All status"], ["target_hit", "Target"], ["stopped", "Stopped"], ["time_exit", "Time exit"]] }), _jsx(TradeSelect, { value: outcome, onChange: setOutcome, options: [["all", "All PnL"], ["win", "Wins"], ["loss", "Losses"]] }), _jsx(TradeSelect, { value: side, onChange: setSide, options: [["", "Both side"], ["buy", "Buy"], ["sell", "Sell"]] }), _jsx(TradeSelect, { value: sort, onChange: setSort, options: [["opened_at_desc", "Newest"], ["opened_at_asc", "Oldest"], ["pnl_r_desc", "Best R"], ["pnl_r_asc", "Worst R"]] })] }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-xs text-slate-400", children: [_jsxs("span", { children: [trades.length, " shown \u00B7 ", summary.wins, " wins"] }), _jsxs("span", { className: summary.totalR >= 0 ? "text-emerald-300" : "text-rose-300", children: [summary.totalR.toFixed(2), "R"] })] })] }), _jsx("div", { className: "min-h-0 overflow-y-auto overscroll-contain pr-1", children: query.isLoading ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500", children: "Loading trades..." })) : query.isError ? (_jsx("div", { className: "rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-100", children: query.error instanceof Error ? query.error.message : "Could not load trades." })) : trades.length === 0 ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500", children: "No trades match current filters" })) : (_jsx("div", { className: "grid gap-2", children: trades.map((trade) => (_jsxs("button", { className: `rounded-md border p-3 text-left transition ${selectedTradeId === trade.id ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850 hover:border-slate-600"}`, type: "button", onClick: () => selectTrade(trade), children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "truncate text-sm font-semibold text-slate-100", children: playbookLabel(trade.playbook) }), _jsx("span", { className: trade.side === "buy" ? "text-xs text-emerald-300" : "text-xs text-rose-300", children: trade.side })] }), _jsxs("div", { className: "mt-1 flex items-center justify-between gap-2 text-xs text-slate-400", children: [_jsx("span", { children: compactTime(trade.opened_at) }), _jsx("span", { className: trade.status === "target_hit" ? "text-emerald-300" : trade.status === "stopped" ? "text-rose-300" : "text-yellow-200", children: trade.status })] }), _jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500", children: [_jsxs("span", { children: ["Entry ", price(trade.entry_price)] }), _jsxs("span", { children: ["SL ", price(trade.stop_loss)] }), _jsx("span", { className: (trade.pnl_r ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300", children: formatR(trade.pnl_r) })] })] }, trade.id))) })) }), _jsxs("div", { className: "mt-3 grid grid-cols-2 gap-2", children: [_jsx("button", { className: "rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40", disabled: page === 0, type: "button", onClick: () => setPage((current) => Math.max(0, current - 1)), children: "Prev" }), _jsx("button", { className: "rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40", disabled: offset + pageSize >= total, type: "button", onClick: () => setPage((current) => current + 1), children: "Next" })] })] }));
+    return (_jsxs("section", { className: "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4", children: [_jsxs("div", { className: "mb-3 grid gap-3", children: [_jsxs("div", { className: "flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: [_jsx(History, { size: 14 }), "Trade History", _jsx("span", { className: "ml-auto normal-case tracking-normal text-slate-600", children: total })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx("input", { className: "col-span-2 h-9 rounded-md border border-ink-700 bg-ink-850 px-3 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400", placeholder: "Search trade ID, e.g. 00060", value: tradeId, onChange: (event) => setTradeId(event.target.value) }), _jsx(TradeSelect, { value: status, onChange: setStatus, options: [["", "All status"], ["target_hit", "Target"], ["stopped", "Stopped"], ["time_exit", "Time exit"]] }), _jsx(TradeSelect, { value: outcome, onChange: setOutcome, options: [["all", "All PnL"], ["win", "Wins"], ["loss", "Losses"]] }), _jsx(TradeSelect, { value: side, onChange: setSide, options: [["", "Both side"], ["buy", "Buy"], ["sell", "Sell"]] }), _jsx(TradeSelect, { value: zoneType, onChange: setZoneType, options: [
+                                    ["", "All zones"],
+                                    ["support", "Support"],
+                                    ["resistance", "Resistance"],
+                                    ["fvg", "FVG"],
+                                    ["order_block", "Order Block"],
+                                    ["liquidity_pool", "Liquidity"],
+                                    ["consolidation", "Consolidation"],
+                                ] }), _jsx(TradeSelect, { value: reaction, onChange: setReaction, options: [
+                                    ["", "All reactions"],
+                                    ["reject", "Reject"],
+                                    ["fakeout", "Fakeout"],
+                                    ["waiting_bos", "Waiting BOS"],
+                                    ["retest_reject", "Retest reject"],
+                                    ["slow_reaction", "Slow reaction"],
+                                    ["clean_breakout", "Clean breakout"],
+                                ] }), _jsx(TradeSelect, { value: sort, onChange: setSort, options: [
+                                    ["opened_at_desc", "Newest"],
+                                    ["opened_at_asc", "Oldest"],
+                                    ["pnl_r_desc", "Best R"],
+                                    ["pnl_r_asc", "Worst R"],
+                                    ["sl_size_desc", "Largest SL"],
+                                    ["sl_size_asc", "Smallest SL"],
+                                ] })] }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-xs text-slate-400", children: [_jsxs("span", { children: [trades.length, " shown \u00B7 ", summary.wins, " wins"] }), _jsxs("span", { className: summary.totalR >= 0 ? "text-emerald-300" : "text-rose-300", children: [summary.totalR.toFixed(2), "R"] })] })] }), _jsx("div", { className: "min-h-0 overflow-y-auto overscroll-contain pr-1", children: query.isLoading ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500", children: "Loading trades..." })) : query.isError ? (_jsx("div", { className: "rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-100", children: query.error instanceof Error ? query.error.message : "Could not load trades." })) : trades.length === 0 ? (_jsx("div", { className: "rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500", children: "No trades match current filters" })) : (_jsx("div", { className: "grid gap-2", children: trades.map((trade) => {
+                        const tradeZoneType = tradeZoneTypeLabel(trade);
+                        const tradeReaction = tradeReactionLabel(trade);
+                        const slSize = stopLossSize(trade);
+                        return (_jsxs("button", { className: `rounded-md border p-3 text-left transition ${selectedTradeId === trade.id ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850 hover:border-slate-600"}`, type: "button", onClick: () => selectTrade(trade), children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "truncate text-sm font-semibold text-slate-100", children: playbookLabel(trade.playbook) }), _jsx("span", { className: trade.side === "buy" ? "text-xs text-emerald-300" : "text-xs text-rose-300", children: trade.side })] }), _jsxs("div", { className: "mt-1 flex items-center justify-between gap-2 text-xs text-slate-400", children: [_jsx("span", { children: compactTime(trade.opened_at) }), _jsx("span", { className: trade.status === "target_hit" ? "text-emerald-300" : trade.status === "stopped" ? "text-rose-300" : "text-yellow-200", children: trade.status })] }), _jsxs("div", { className: "mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500", children: [_jsxs("span", { children: ["Entry ", price(trade.entry_price)] }), _jsxs("span", { children: ["SL ", price(trade.stop_loss)] }), _jsxs("span", { children: ["SL size ", slSize === null ? "--" : slSize.toFixed(2)] }), _jsx("span", { children: tradeZoneType }), _jsx("span", { children: tradeReaction }), _jsx("span", { className: (trade.pnl_r ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300", children: formatR(trade.pnl_r) })] })] }, trade.id));
+                    }) })) }), _jsxs("div", { className: "mt-3 grid grid-cols-2 gap-2", children: [_jsx("button", { className: "rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40", disabled: page === 0, type: "button", onClick: () => setPage((current) => Math.max(0, current - 1)), children: "Prev" }), _jsx("button", { className: "rounded-md border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-slate-300 disabled:opacity-40", disabled: offset + pageSize >= total, type: "button", onClick: () => setPage((current) => current + 1), children: "Next" })] })] }));
 }
 function TradeSelect({ value, onChange, options, }) {
     return (_jsx("select", { className: "h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400", value: value, onChange: (event) => {
@@ -106,6 +141,9 @@ function readTradeHistoryFilters() {
         status: "",
         side: "",
         outcome: "all",
+        zoneType: "",
+        reaction: "",
+        tradeId: "",
         sort: "opened_at_desc",
         page: 0,
     };
@@ -120,6 +158,9 @@ function readTradeHistoryFilters() {
             status: typeof parsed.status === "string" ? parsed.status : defaults.status,
             side: typeof parsed.side === "string" ? parsed.side : defaults.side,
             outcome: typeof parsed.outcome === "string" ? parsed.outcome : defaults.outcome,
+            zoneType: typeof parsed.zoneType === "string" ? parsed.zoneType : defaults.zoneType,
+            reaction: typeof parsed.reaction === "string" ? parsed.reaction : defaults.reaction,
+            tradeId: typeof parsed.tradeId === "string" ? parsed.tradeId : defaults.tradeId,
             sort: typeof parsed.sort === "string" ? parsed.sort : defaults.sort,
             page: Number.isFinite(parsed.page) ? Math.max(0, Math.floor(Number(parsed.page))) : defaults.page,
         };
@@ -135,6 +176,9 @@ function writeTradeHistoryFilters(filters) {
         status: filters.status,
         side: filters.side,
         outcome: filters.outcome,
+        zoneType: filters.zoneType,
+        reaction: filters.reaction,
+        tradeId: filters.tradeId,
         sort: filters.sort,
         page: Math.max(0, Math.floor(filters.page)),
     }));
@@ -591,6 +635,21 @@ function firstTakeProfitPrice(values) {
     if (first && typeof first.price === "number")
         return first.price;
     return null;
+}
+function stopLossSize(trade) {
+    if (typeof trade.entry_price !== "number" || typeof trade.stop_loss !== "number")
+        return null;
+    return Math.abs(trade.entry_price - trade.stop_loss);
+}
+function tradeZoneTypeLabel(trade) {
+    const metadata = readObject(trade.metadata);
+    const candidateMetadata = readObject(metadata.candidate_metadata);
+    return String(candidateMetadata.zone_type ?? metadata.zone_type ?? "--");
+}
+function tradeReactionLabel(trade) {
+    const metadata = readObject(trade.metadata);
+    const candidateMetadata = readObject(metadata.candidate_metadata);
+    return String(metadata.zone_reaction_state ?? candidateMetadata.zone_reaction_state ?? "--");
 }
 function formatUnknownNumber(value) {
     return typeof value === "number" ? value.toFixed(2) : "--";

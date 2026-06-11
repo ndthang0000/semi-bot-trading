@@ -262,33 +262,31 @@ python -m semi_bot_trading.cli export-chart-json --timeframe H1 --limit 500 --ac
 
 ## 7. Backtest
 
-Backtest strategy engine incremental:
+Backtest strategy engine incremental cho playbook runtime hien tai:
 
 ```bash
-python -m semi_bot_trading.cli backtest-strategies --limit 30000 --engine incremental
+python -m semi_bot_trading.cli backtest-strategies \
+  --limit 60000 \
+  --engine incremental \
+  --playbook zone_reaction_v2
 ```
 
 Backtest report đầy đủ breakdown:
 
 ```bash
-python -m semi_bot_trading.cli backtest-report --limit 30000 --engine incremental
-```
-
-Backtest riêng Trend Following Pullback, chỉ chạy playbook và entity liên quan:
-
-```bash
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
-  --playbook trend_pullback
+  --playbook zone_reaction_v2
 ```
 
 Backtest với spread/slippage custom:
 
 ```bash
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
+  --playbook zone_reaction_v2 \
   --spread 0.30 \
   --slippage 0.10
 ```
@@ -297,8 +295,9 @@ Backtest giới hạn thời gian giữ lệnh:
 
 ```bash
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
+  --playbook zone_reaction_v2 \
   --max-hold-candles 96
 ```
 
@@ -306,8 +305,9 @@ Backtest không auto-accept eligible setup:
 
 ```bash
 python -m semi_bot_trading.cli backtest-strategies \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
+  --playbook zone_reaction_v2 \
   --no-auto-accept
 ```
 
@@ -315,8 +315,9 @@ Backtest có include human zones:
 
 ```bash
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
+  --playbook zone_reaction_v2 \
   --include-human-zones
 ```
 
@@ -324,67 +325,45 @@ Persist backtest trades để vẽ lên chart UI:
 
 ```bash
 python -m semi_bot_trading.cli backtest-strategies \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
+  --playbook zone_reaction_v2 \
   --persist \
   --clear-backtest-trades
 ```
 
-Persist riêng Trend Following Pullback để review lệnh trên chart:
+Persist Zone Reaction V2 để review lệnh trên chart:
 
 ```bash
 python -m semi_bot_trading.cli backtest-strategies \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
-  --playbook trend_pullback \
+  --playbook zone_reaction_v2 \
   --persist \
   --clear-backtest-trades
-```
-
-Hoặc:
-
-```bash
-PERSIST=1 ./scripts/backtest_trend_pullback.sh
 ```
 
 Backtest nhanh ít nến để smoke test:
 
 ```bash
-python -m semi_bot_trading.cli backtest-report --limit 3000 --engine incremental --max-rows 10
-```
-
-Smoke test riêng Trend Following Pullback:
-
-```bash
 python -m semi_bot_trading.cli backtest-report \
   --limit 3000 \
   --engine incremental \
-  --playbook trend_pullback \
+  --playbook zone_reaction_v2 \
   --max-rows 10
-```
-
-Chạy bằng script riêng:
-
-```bash
-LIMIT=3000 MAX_ROWS=10 ./scripts/backtest_trend_pullback.sh
-./scripts/backtest_trend_pullback.sh
 ```
 
 Xuất HTML report dễ đọc:
 
 ```bash
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
-  --playbook trend_pullback \
-  --html-output var/reports/trend_pullback.html
+  --playbook zone_reaction_v2 \
+  --html-output var/reports/zone_reaction_v2.html
 ```
 
-Hoặc dùng script:
-
-```bash
-HTML_OUTPUT=var/reports/trend_pullback.html ./scripts/backtest_trend_pullback.sh
-```
+Legacy playbooks nhu `trend_pullback`, `ob_mitigation_continuation`, `fvg_fill_go`, `breakout_retest`, `momentum_expansion_continuation`, `range_boundary_reversal`, `liquidity_sweep_reversal`, va `failed_breakout_trap` da ngung runtime. CLI/API se bao loi neu truyen playbook cu.
 
 ## 8. Research / edge discovery
 
@@ -392,30 +371,22 @@ Sinh dataset setup-level để thống kê edge trước khi viết strategy:
 
 ```bash
 python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
+  --limit 60000 \
+  --playbook zone_reaction_v2 \
   --output var/research_events.csv
-```
-
-Chạy riêng một playbook, ví dụ Trend Pullback:
-
-```bash
-python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
-  --playbook trend_pullback \
-  --output var/research_trend_pullback.csv
 ```
 
 Chạy riêng Zone Reaction V2:
 
 ```bash
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
   --playbook zone_reaction_v2 \
   --html-output var/reports/zone_reaction_v2.html
 
 python -m semi_bot_trading.cli backtest-report \
-  --limit 30000 \
+  --limit 60000 \
   --engine incremental \
   --playbook zone_reaction_v2 \
   --persist \
@@ -423,7 +394,7 @@ python -m semi_bot_trading.cli backtest-report \
   --html-output var/reports/zone_reaction_v2.html
 
 python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
+  --limit 60000 \
   --playbook zone_reaction_v2 \
   --output var/research_zone_reaction_v2.csv
 
@@ -436,7 +407,8 @@ Mặc định chỉ sample `eligible,waiting_confirmation`. Nếu muốn xem c�
 
 ```bash
 python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
+  --limit 60000 \
+  --playbook zone_reaction_v2 \
   --statuses eligible,waiting_confirmation,blocked \
   --output var/research_with_blocked.csv
 ```
@@ -501,7 +473,7 @@ curl -s http://127.0.0.1:8000/api/health | python -m json.tool
 Chart payload H1:
 
 ```bash
-curl -s 'http://127.0.0.1:8000/api/chart?symbol=XAUUSD&timeframe=H1&limit=1000&playbooks=trend_pullback' \
+curl -s 'http://127.0.0.1:8000/api/chart?symbol=XAUUSD&timeframe=H1&limit=1000&playbooks=zone_reaction_v2' \
   | python -m json.tool \
   | sed -n '1,80p'
 ```
@@ -517,7 +489,7 @@ curl -s 'http://127.0.0.1:8000/api/replay/timeline?symbol=XAUUSD&timeframe=H1&li
 Replay chart payload:
 
 ```bash
-curl -s 'http://127.0.0.1:8000/api/chart?symbol=XAUUSD&timeframe=H1&limit=1000&replay_start=2026-01-18T23:00:00%2B00:00&replay_at=2026-01-22T20:00:00%2B00:00&playbooks=trend_pullback' \
+curl -s 'http://127.0.0.1:8000/api/chart?symbol=XAUUSD&timeframe=H1&limit=1000&replay_start=2026-01-18T23:00:00%2B00:00&replay_at=2026-01-22T20:00:00%2B00:00&playbooks=zone_reaction_v2' \
   | python -m json.tool \
   | sed -n '1,120p'
 ```

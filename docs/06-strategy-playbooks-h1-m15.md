@@ -1,5 +1,9 @@
 # 06 - Strategy Playbooks H1 + M15
 
+> Legacy note: file nay la tai lieu lich su ve bo multi-playbook ban dau.
+> Runtime hien tai chi chay `zone_reaction_v2`; xem `docs/19-zone-reaction-v2.md`
+> de doc strategy source of truth trong phase hien tai.
+
 ## Mục tiêu
 
 File này mô tả khung chiến lược, chưa phải rule vào lệnh cuối cùng. Strategy Engine phải đọc effective context đã qua human override, không đọc bot raw context.

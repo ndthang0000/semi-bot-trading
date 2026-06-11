@@ -4,7 +4,16 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from semi_bot_trading.backtest import BacktestResult, persist_backtest_result, exit_on_candle, load_backtest_candles, simulate_trade
+from semi_bot_trading.backtest import (
+    BacktestResult,
+    BacktestTrade,
+    apply_zone_loss_cooldown,
+    candidates_after_zone_loss_cooldown,
+    exit_on_candle,
+    load_backtest_candles,
+    persist_backtest_result,
+    simulate_trade,
+)
 from semi_bot_trading.chart import build_chart_payload
 from semi_bot_trading.db import connect, init_db
 
@@ -36,7 +45,7 @@ def db_candle(open_time: str, close_time: str, open_: float, high: float, low: f
 def candidate(direction: str = "long") -> dict[str, object]:
     return {
         "id": "setup-1",
-        "playbook": "trend_pullback",
+        "playbook": "zone_reaction_v2",
         "direction": direction,
         "score": 0.9,
         "zone_reaction_state": "rejected",
@@ -105,6 +114,27 @@ class BacktestTest(unittest.TestCase):
 
         self.assertEqual(("stopped", 95.0), hit)
 
+    def test_zone_loss_cooldown_blocks_same_zone_for_configured_bars(self) -> None:
+        cooldown: dict[str, int] = {}
+        trade = backtest_trade(primary_zone_id="zone-a", pnl_r=-1.0)
+
+        apply_zone_loss_cooldown(cooldown, trade, exit_index=10, cooldown_candles=12)
+
+        self.assertEqual(23, cooldown["zone-a"])
+        blocked = candidates_after_zone_loss_cooldown([{"primary_zone_id": "zone-a"}], cooldown, signal_index=22)
+        allowed = candidates_after_zone_loss_cooldown([{"primary_zone_id": "zone-a"}], cooldown, signal_index=23)
+        other_zone = candidates_after_zone_loss_cooldown([{"primary_zone_id": "zone-b"}], cooldown, signal_index=11)
+        self.assertEqual([], blocked)
+        self.assertEqual([{"primary_zone_id": "zone-a"}], allowed)
+        self.assertEqual([{"primary_zone_id": "zone-b"}], other_zone)
+
+    def test_zone_loss_cooldown_ignores_winning_trades(self) -> None:
+        cooldown: dict[str, int] = {}
+
+        apply_zone_loss_cooldown(cooldown, backtest_trade(primary_zone_id="zone-a", pnl_r=2.0), exit_index=10, cooldown_candles=12)
+
+        self.assertEqual({}, cooldown)
+
     def test_persisted_backtest_trade_is_visible_in_chart_payload(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
@@ -137,7 +167,60 @@ class BacktestTest(unittest.TestCase):
         self.assertEqual(1, run_count)
         self.assertEqual(1, len(payload["layers"]["trades"]))
         self.assertEqual("backtest", payload["layers"]["trades"][0]["source"])
-        self.assertEqual("trend_pullback", payload["layers"]["trades"][0]["playbook"])
+        self.assertEqual("zone_reaction_v2", payload["layers"]["trades"][0]["playbook"])
+
+    def test_clear_previous_backtest_trades_removes_reviews_first(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                seed_candles(conn)
+                trade = simulate_trade(
+                    candidate("long"),
+                    [candle("00:00", 100, 102, 98, 101), candle("00:15", 102, 111, 99, 110)],
+                    0,
+                    0.4,
+                    0.1,
+                    4,
+                )
+                self.assertIsNotNone(trade)
+                assert trade is not None
+                result = BacktestResult(
+                    trades=[trade],
+                    timeline_count=2,
+                    evaluated_candles=1,
+                    lookahead_guard="test guard",
+                    spread=0.4,
+                    slippage=0.1,
+                    auto_accept=True,
+                    max_hold_candles=4,
+                    warmup_candles=0,
+                    symbol="XAUUSD",
+                    strategy_timeframe="M15",
+                    context_timeframe="H1",
+                    engine="incremental",
+                )
+                persist_backtest_result(conn, result, candle_limit=2)
+                old_order_id = conn.execute("SELECT id FROM trade_orders WHERE source = 'backtest'").fetchone()["id"]
+                conn.execute(
+                    """
+                    INSERT INTO trade_reviews (
+                        id, trade_order_id, grade, verdict, mistake_tags_json,
+                        should_trade_again, comment, reviewer
+                    )
+                    VALUES ('review-1', ?, 'bad', 'rejected', '[]', 'no', 'old run', 'human')
+                    """,
+                    (old_order_id,),
+                )
+                conn.commit()
+
+                persist_backtest_result(conn, result, candle_limit=2, clear_previous=True)
+
+                review_count = conn.execute("SELECT COUNT(*) AS count FROM trade_reviews").fetchone()["count"]
+                order_count = conn.execute("SELECT COUNT(*) AS count FROM trade_orders WHERE source = 'backtest'").fetchone()["count"]
+
+        self.assertEqual(0, review_count)
+        self.assertEqual(1, order_count)
 
     def test_load_backtest_candles_exposes_close_time_as_decision_time(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -150,6 +233,31 @@ class BacktestTest(unittest.TestCase):
         self.assertEqual("2026-01-01T00:15:00+00:00", candles[0]["time"])
         self.assertEqual("2026-01-01T00:00:00+00:00", candles[0]["open_time"])
         self.assertEqual("2026-01-01T00:15:00+00:00", candles[0]["close_time"])
+
+
+def backtest_trade(primary_zone_id: str | None, pnl_r: float) -> BacktestTrade:
+    return BacktestTrade(
+        playbook="zone_reaction_v2",
+        direction="long",
+        status="stopped" if pnl_r < 0 else "target_hit",
+        signal_time="2026-01-01T00:00:00+00:00",
+        entry_time="2026-01-01T00:15:00+00:00",
+        exit_time="2026-01-01T00:30:00+00:00",
+        entry_price=100,
+        stop_loss=95,
+        take_profit=110,
+        exit_price=95 if pnl_r < 0 else 110,
+        pnl_r=pnl_r,
+        setup_id="setup-1",
+        score=0.5,
+        risk_reward=2.0,
+        primary_zone_id=primary_zone_id,
+        related_zone_ids=[primary_zone_id] if primary_zone_id else [],
+        trigger_point_ids=[],
+        reason=[],
+        metadata={},
+    )
+
 
 def seed_candles(conn) -> None:
     conn.executemany(

@@ -1,5 +1,9 @@
 # Edge Discovery Research Workflow
 
+> Current runtime note: trong phase hien tai research/backtest mac dinh chi nen
+> chay `zone_reaction_v2`. Cac playbook cu nhu `trend_pullback` la lich su va
+> khong con duoc strategy engine tao candidate moi.
+
 Muc tieu cua workflow nay la tam dung viec viet strategy theo cam tinh, chuyen sang thong ke event-level de tim edge truoc.
 
 ## 1. Tu duy chinh
@@ -43,21 +47,22 @@ Cach dung:
 
 ## 3. Generate research CSV
 
-Tat ca playbook:
+Research runtime strategy hien tai:
 
 ```bash
 python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
+  --limit 60000 \
+  --playbook zone_reaction_v2 \
   --output var/research_events.csv
 ```
 
-Rieng Trend Pullback:
+Research file rieng cho Zone Reaction V2:
 
 ```bash
 python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
-  --playbook trend_pullback \
-  --output var/research_trend_pullback.csv
+  --limit 60000 \
+  --playbook zone_reaction_v2 \
+  --output var/research_zone_reaction_v2.csv
 ```
 
 Mac dinh chi sample:
@@ -70,7 +75,8 @@ Neu muon xem ca setup bi block:
 
 ```bash
 python -m semi_bot_trading.cli research-events \
-  --limit 30000 \
+  --limit 60000 \
+  --playbook zone_reaction_v2 \
   --statuses eligible,waiting_confirmation,blocked \
   --output var/research_with_blocked.csv
 ```
@@ -85,12 +91,12 @@ python -m semi_bot_trading.cli research-report \
   --html-output var/reports/research_events.html
 ```
 
-Rieng Trend Pullback:
+Rieng Zone Reaction V2:
 
 ```bash
 python -m semi_bot_trading.cli research-report \
-  --input var/research_trend_pullback.csv \
-  --html-output var/reports/research_trend_pullback.html
+  --input var/research_zone_reaction_v2.csv \
+  --html-output var/reports/research_zone_reaction_v2.html
 ```
 
 ## 5. CSV Columns

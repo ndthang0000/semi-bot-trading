@@ -161,6 +161,7 @@ def run_strategy_backtest_replay(
     effective_max_hold = config.backtest.max_hold_candles if max_hold_candles is None else max_hold_candles
     effective_warmup = config.backtest.warmup_candles if warmup_candles is None else warmup_candles
     effective_auto_accept = config.backtest.auto_accept if auto_accept is None else auto_accept
+    zone_loss_cooldown_candles = config.backtest.zone_loss_cooldown_candles
 
     candles = load_backtest_candles(conn, symbol, config.strategy.timeframe, limit)
     if len(candles) < effective_warmup + 2:
@@ -182,6 +183,7 @@ def run_strategy_backtest_replay(
 
     replay_start = candle_decision_time(candles[0])
     next_available_index: dict[str, int] = {}
+    zone_loss_cooldown_until: dict[str, int] = {}
     trades: list[BacktestTrade] = []
     for signal_index in range(effective_warmup, len(candles) - 1):
         signal_time = candle_decision_time(candles[signal_index])
@@ -204,6 +206,7 @@ def run_strategy_backtest_replay(
                 for candidate in payload["layers"].get("setup_candidates", [])
                 if candidate["status"] == "eligible"
             ]
+        candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, signal_index)
         best_by_playbook = best_candidates_by_playbook(candidates)
         for candidate in best_by_playbook:
             playbook = str(candidate["playbook"])
@@ -222,6 +225,7 @@ def run_strategy_backtest_replay(
             trades.append(trade)
             exit_index = candle_index_by_time(candles, trade.exit_time)
             next_available_index[playbook] = max(exit_index + 1, signal_index + 1)
+            apply_zone_loss_cooldown(zone_loss_cooldown_until, trade, exit_index, zone_loss_cooldown_candles)
 
     return BacktestResult(
         trades=trades,
@@ -258,6 +262,7 @@ def run_strategy_backtest_incremental(
     effective_max_hold = config.backtest.max_hold_candles if max_hold_candles is None else max_hold_candles
     effective_warmup = config.backtest.warmup_candles if warmup_candles is None else warmup_candles
     effective_auto_accept = config.backtest.auto_accept if auto_accept is None else auto_accept
+    zone_loss_cooldown_candles = config.backtest.zone_loss_cooldown_candles
 
     candles = load_backtest_candles(conn, symbol, config.strategy.timeframe, limit)
     if len(candles) < effective_warmup + 2:
@@ -312,6 +317,7 @@ def run_strategy_backtest_incremental(
 
     timeline = build_incremental_timeline(conn, config, symbol, candles, include_human_zones=include_human_zones, allowed_playbooks=allowed_playbooks)
     next_available_index: dict[str, int] = {}
+    zone_loss_cooldown_until: dict[str, int] = {}
     trades: list[BacktestTrade] = []
     for signal_index in range(effective_warmup, len(candles) - 1):
         signal_time = candle_decision_time(candles[signal_index])
@@ -321,6 +327,7 @@ def run_strategy_backtest_incremental(
         last_close = float(candles[signal_index]["close"])
         candidate_zones = rank_active_zones(timeline.zones_at(signal_time), last_close)
         candidates = [candidate for candidate in timeline.setup_candidates_at(signal_time, signal_index, candidate_zones) if candidate["status"] == "eligible"]
+        candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, signal_index)
         best_by_playbook = best_candidates_by_playbook(candidates)
         for candidate in best_by_playbook:
             playbook = str(candidate["playbook"])
@@ -339,6 +346,7 @@ def run_strategy_backtest_incremental(
             trades.append(trade)
             exit_index = candle_index_by_time(candles, trade.exit_time)
             next_available_index[playbook] = max(exit_index + 1, signal_index + 1)
+            apply_zone_loss_cooldown(zone_loss_cooldown_until, trade, exit_index, zone_loss_cooldown_candles)
 
     return BacktestResult(
         trades=trades,
@@ -375,6 +383,8 @@ def run_incremental_backtest_chunks(
 ) -> list[BacktestTrade]:
     trades: list[BacktestTrade] = []
     next_available_index: dict[str, int] = {}
+    zone_loss_cooldown_until: dict[str, int] = {}
+    zone_loss_cooldown_candles = config.backtest.zone_loss_cooldown_candles
     segment_start = warmup_candles
     while segment_start < len(candles) - 1:
         segment_end = min(len(candles) - 1, segment_start + INCREMENTAL_CHUNK_SIZE)
@@ -407,6 +417,7 @@ def run_incremental_backtest_chunks(
                 for candidate in timeline.setup_candidates_at(signal_time, local_signal_index, candidate_zones)
                 if candidate["status"] == "eligible"
             ]
+            candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, global_signal_index)
             for candidate in best_candidates_by_playbook(candidates):
                 playbook = str(candidate["playbook"])
                 if global_signal_index < next_available_index.get(playbook, 0):
@@ -417,8 +428,42 @@ def run_incremental_backtest_chunks(
                 trades.append(trade)
                 local_exit_index = candle_index_by_time(chunk_candles, trade.exit_time)
                 next_available_index[playbook] = max(chunk_start + local_exit_index + 1, global_signal_index + 1)
+                apply_zone_loss_cooldown(
+                    zone_loss_cooldown_until,
+                    trade,
+                    chunk_start + local_exit_index,
+                    zone_loss_cooldown_candles,
+                )
         segment_start = segment_end
     return trades
+
+
+def candidates_after_zone_loss_cooldown(
+    candidates: list[dict[str, Any]],
+    zone_loss_cooldown_until: dict[str, int],
+    signal_index: int,
+) -> list[dict[str, Any]]:
+    if not zone_loss_cooldown_until:
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if signal_index >= zone_loss_cooldown_until.get(str(candidate.get("primary_zone_id") or ""), 0)
+    ]
+
+
+def apply_zone_loss_cooldown(
+    zone_loss_cooldown_until: dict[str, int],
+    trade: BacktestTrade,
+    exit_index: int,
+    cooldown_candles: int,
+) -> None:
+    if cooldown_candles <= 0 or trade.pnl_r >= 0 or not trade.primary_zone_id:
+        return
+    zone_loss_cooldown_until[trade.primary_zone_id] = max(
+        zone_loss_cooldown_until.get(trade.primary_zone_id, 0),
+        exit_index + 1 + cooldown_candles,
+    )
 
 
 @dataclass
@@ -492,6 +537,9 @@ class IncrementalBacktestTimeline:
             self.zone_snapshot_cache[snapshot_key] = []
             return []
 
+        # Incremental backtest recomputes point-in-time zones from closed candles
+        # only. Realtime chart can read persisted DB zones so human edits survive,
+        # but backtest must avoid hindsight from zones generated later.
         use_sr = zone_type_allowed(self.allowed_zone_types, "support") or zone_type_allowed(self.allowed_zone_types, "resistance")
         sr_zones: list[PriceZone] = []
         if use_sr:
@@ -525,6 +573,9 @@ class IncrementalBacktestTimeline:
                 self.config.zone_decay.weak_touch_penalty,
                 self.config.zone_decay.too_many_touches_penalty,
                 self.config.zone_decay.linger_penalty,
+                self.config.zone_lifecycle.false_break_refine_enabled,
+                self.config.zone_lifecycle.false_break_refine_max_width_atr_multiplier,
+                self.config.zone_lifecycle.false_break_parent_weight_multiplier,
             )
         smc_detected = detect_smc_zones(
             available_slices,
@@ -893,6 +944,7 @@ def clear_backtest_trades(conn: Connection, symbol: str) -> None:
     ]
     idea_ids.extend(orphan_idea_ids)
     if order_ids:
+        conn.executemany("DELETE FROM trade_reviews WHERE trade_order_id = ?", [(order_id,) for order_id in order_ids])
         conn.executemany("DELETE FROM trade_fills WHERE trade_order_id = ?", [(order_id,) for order_id in order_ids])
         conn.executemany("DELETE FROM trade_orders WHERE id = ?", [(order_id,) for order_id in order_ids])
     if idea_ids:

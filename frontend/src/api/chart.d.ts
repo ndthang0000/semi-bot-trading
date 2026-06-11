@@ -20,6 +20,9 @@ export type TradeHistoryQuery = {
     status?: string;
     side?: string;
     outcome?: string;
+    zoneType?: string;
+    reaction?: string;
+    tradeId?: string;
     backtest?: boolean | null;
     sort: string;
 };

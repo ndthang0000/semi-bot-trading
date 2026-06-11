@@ -8,17 +8,9 @@ export const defaultZoneTypeVisibility = {
     liquidity_pool: true,
     consolidation: true,
 };
-export const defaultSelectedPlaybooks = ["trend_pullback"];
+export const defaultSelectedPlaybooks = ["zone_reaction_v2"];
 export const playbookLayerRequirements = {
-    trend_pullback: { zones: ["support", "resistance", "order_block", "fvg"], structure: true },
     zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
-    ob_mitigation_continuation: { zones: ["order_block"], structure: true },
-    fvg_fill_go: { zones: ["fvg"], structure: true },
-    breakout_retest: { zones: ["consolidation"], structure: true },
-    momentum_expansion_continuation: { zones: ["support", "resistance", "order_block", "fvg"], structure: true },
-    range_boundary_reversal: { zones: ["consolidation", "support", "resistance"], structure: true },
-    liquidity_sweep_reversal: { zones: ["liquidity_pool", "support", "resistance"], structure: true },
-    failed_breakout_trap: { zones: ["consolidation"], structure: true },
 };
 export const useChartStore = create()(persist((set) => ({
     symbol: "XAUUSD",
@@ -153,7 +145,8 @@ function applyPlaybookLayerRequirements(state) {
     };
 }
 function uniquePlaybooks(playbooks) {
-    return Array.from(new Set(playbooks)).filter((playbook) => playbook in playbookLayerRequirements);
+    const filtered = Array.from(new Set(playbooks)).filter((playbook) => playbook in playbookLayerRequirements);
+    return filtered.length > 0 ? filtered : defaultSelectedPlaybooks;
 }
 function requiredZoneTypesForPlaybooks(playbooks) {
     const requiredZoneTypes = new Set();

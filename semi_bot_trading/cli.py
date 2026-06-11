@@ -320,6 +320,9 @@ def cmd_detect_zones(args: argparse.Namespace) -> None:
             weak_touch_penalty=decay_config.weak_touch_penalty,
             too_many_touches_penalty=decay_config.too_many_touches_penalty,
             linger_penalty=decay_config.linger_penalty,
+            false_break_refine_enabled=lifecycle_config.false_break_refine_enabled,
+            false_break_refine_max_width_atr_multiplier=lifecycle_config.false_break_refine_max_width_atr_multiplier,
+            false_break_parent_weight_multiplier=lifecycle_config.false_break_parent_weight_multiplier,
         )
     print(f"Stored {count} support/resistance zones for {symbol} {timeframe}")
 
@@ -460,6 +463,9 @@ def cmd_apply_zone_lifecycle(args: argparse.Namespace) -> None:
             weak_touch_penalty=decay_config.weak_touch_penalty,
             too_many_touches_penalty=decay_config.too_many_touches_penalty,
             linger_penalty=decay_config.linger_penalty,
+            false_break_refine_enabled=lifecycle_config.false_break_refine_enabled,
+            false_break_refine_max_width_atr_multiplier=lifecycle_config.false_break_refine_max_width_atr_multiplier,
+            false_break_parent_weight_multiplier=lifecycle_config.false_break_parent_weight_multiplier,
         )
     print(f"Applied lifecycle/scoring to {count} zones for {symbol} {timeframe}")
 
@@ -914,7 +920,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument(
         "--playbook",
         action="append",
-        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook trend_pullback.",
+        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook zone_reaction_v2.",
     )
     backtest_parser.add_argument(
         "--include-human-zones",
@@ -952,7 +958,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument(
         "--playbook",
         action="append",
-        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook trend_pullback.",
+        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook zone_reaction_v2.",
     )
     report_parser.add_argument(
         "--include-human-zones",
@@ -989,7 +995,7 @@ def build_parser() -> argparse.ArgumentParser:
     research_events_parser.add_argument(
         "--playbook",
         action="append",
-        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook trend_pullback.",
+        help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook zone_reaction_v2.",
     )
     research_events_parser.add_argument(
         "--statuses",

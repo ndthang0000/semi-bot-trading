@@ -316,6 +316,87 @@ def invalidates_zone(candle: CandleSlice, zone: PriceZone, close_break_buffer: f
     return False
 
 
+def false_breaks_zone(candle: CandleSlice, zone: PriceZone) -> bool:
+    if zone.zone_type == "support":
+        return candle.low < zone.price_low and candle.close > zone.price_high
+    if zone.zone_type == "resistance":
+        return candle.high > zone.price_high and candle.close < zone.price_low
+    return False
+
+
+def false_break_price(candle: CandleSlice, zone: PriceZone) -> float:
+    return candle.low if zone.zone_type == "support" else candle.high
+
+
+def refined_zone_from_false_break(
+    zone: PriceZone,
+    candle: CandleSlice,
+    atr_value: float,
+    max_width_atr_multiplier: float,
+) -> PriceZone | None:
+    if zone.zone_type not in {"support", "resistance"}:
+        return None
+    if zone.metadata.get("refined_from_false_break"):
+        return None
+
+    zone_width = max(zone.price_high - zone.price_low, 0.00001)
+    max_width = max(atr_value * max_width_atr_multiplier, zone_width * 0.50, 0.00001)
+
+    if zone.zone_type == "support":
+        price_low = candle.low
+        price_high = min(zone.price_low, candle.low + max_width)
+        if price_high <= price_low:
+            price_high = min(zone.price_high, price_low + max_width)
+    else:
+        price_high = candle.high
+        price_low = max(zone.price_high, candle.high - max_width)
+        if price_low >= price_high:
+            price_low = max(zone.price_low, price_high - max_width)
+
+    if price_high <= price_low:
+        return None
+
+    metadata = {
+        "touch_count": 1,
+        "touch_prices": [round(false_break_price(candle, zone), 5)],
+        "refined_from_false_break": True,
+        "parent_zone_id": zone.id,
+        "parent_zone_low": round(zone.price_low, 5),
+        "parent_zone_high": round(zone.price_high, 5),
+        "parent_zone_weight": zone.effective_weight,
+        "parent_zone_confidence": zone.effective_confidence,
+        "false_break_time": candle.open_time,
+        "false_break_price": round(false_break_price(candle, zone), 5),
+        "false_break_close": round(candle.close, 5),
+        "false_break_atr": round(atr_value, 6),
+        "refined_width": round(price_high - price_low, 6),
+        "refined_width_atr": round((price_high - price_low) / max(atr_value, 0.00001), 6),
+    }
+    return PriceZone(
+        symbol=zone.symbol,
+        timeframe=zone.timeframe,
+        detector=zone.detector,
+        zone_type=zone.zone_type,
+        direction=zone.direction,
+        price_low=round(price_low, 5),
+        price_high=round(price_high, 5),
+        start_time=candle.open_time,
+        end_time=None,
+        valid_from=candle.open_time,
+        valid_until=zone.valid_until,
+        invalidated_at=None,
+        invalidated_by_structure_point_id=None,
+        detected_at=candle.open_time,
+        bot_confidence=round(max(min(zone.effective_confidence * 0.90, 1.0), 0.05), 4),
+        bot_weight=round(max(min(zone.effective_weight * 0.85, 1.0), 0.05), 4),
+        effective_confidence=round(max(min(zone.effective_confidence * 0.90, 1.0), 0.05), 4),
+        effective_weight=round(max(min(zone.effective_weight * 0.85, 1.0), 0.05), 4),
+        status="active",
+        source=zone.source,
+        metadata=metadata,
+    )
+
+
 def invalidated_before_detection(
     zone: PriceZone,
     candles: list[CandleSlice] | None,
@@ -524,6 +605,7 @@ def apply_lifecycle_to_zone(
     has_clean_rejection = False
     has_wick_absorption = False
     touch_events: list[TouchEvent] = []
+    false_break_events: list[dict[str, object]] = []
 
     def finalize_touch(end_index: int) -> None:
         nonlocal touch_start_index, touch_types, max_touch_penetration, has_clean_rejection, has_wick_absorption, last_touch_time
@@ -580,6 +662,16 @@ def apply_lifecycle_to_zone(
             invalidated_at = candle.open_time
             invalidated_index = index
             break
+
+        if false_breaks_zone(candle, zone):
+            false_break_events.append(
+                {
+                    "time": candle.open_time,
+                    "price": round(false_break_price(candle, zone), 5),
+                    "close": round(candle.close, 5),
+                    "atr": round(atr_value, 6),
+                }
+            )
 
         overlaps = candle_overlaps_zone(candle, zone)
         if overlaps:
@@ -645,6 +737,9 @@ def apply_lifecycle_to_zone(
     if latest_reaction_score < 0:
         overtest_penalty += weak_touch_penalty
     mitigation_penalty = 0.12 if max_penetration_ratio > 0.70 else 0.06 if max_penetration_ratio > 0.50 else 0.0
+    false_break_penalty = 0.0
+    if false_break_events:
+        false_break_penalty = min(0.20 + (len(false_break_events) - 1) * 0.06, 0.40)
     invalidation_penalty = 0.70 if invalidated_at is not None else 0.0
 
     weight = (
@@ -656,6 +751,7 @@ def apply_lifecycle_to_zone(
         - age_penalty
         - overtest_penalty
         - mitigation_penalty
+        - false_break_penalty
         - invalidation_penalty
     )
     if invalidated_at is not None:
@@ -678,6 +774,7 @@ def apply_lifecycle_to_zone(
         "age_penalty": round(age_penalty, 6),
         "overtest_penalty": round(overtest_penalty, 6),
         "mitigation_penalty": round(mitigation_penalty, 6),
+        "false_break_penalty": round(false_break_penalty, 6),
         "invalidation_penalty": round(invalidation_penalty, 6),
     }
 
@@ -700,8 +797,12 @@ def apply_lifecycle_to_zone(
             "age_penalty": round(age_penalty, 6),
             "overtest_penalty": round(overtest_penalty, 6),
             "mitigation_penalty": round(mitigation_penalty, 6),
+            "false_break_penalty": round(false_break_penalty, 6),
             "confluence_score": round(confluence_score, 6),
             "weight_components": weight_components,
+            "false_break_count": len(false_break_events),
+            "false_break_events": false_break_events[-10:],
+            "trade_disabled_after_sweep": bool(false_break_events),
             "touch_events": [
                 {
                     "start_time": event.start_time,
@@ -758,8 +859,11 @@ def apply_lifecycle_to_zones(
     weak_touch_penalty: float = 0.08,
     too_many_touches_penalty: float = 0.06,
     linger_penalty: float = 0.10,
+    false_break_refine_enabled: bool = True,
+    false_break_refine_max_width_atr_multiplier: float = 0.8,
+    false_break_parent_weight_multiplier: float = 0.35,
 ) -> list[PriceZone]:
-    return [
+    updated = [
         apply_lifecycle_to_zone(
             zone,
             candles,
@@ -780,6 +884,95 @@ def apply_lifecycle_to_zones(
         )
         for zone in zones
     ]
+    if not false_break_refine_enabled:
+        return updated
+
+    refined_children: list[PriceZone] = []
+    child_parent_ids = {
+        str(zone.metadata.get("parent_zone_id"))
+        for zone in updated
+        if zone.metadata.get("refined_from_false_break") and zone.metadata.get("parent_zone_id")
+    }
+    for zone in updated:
+        if zone.id in child_parent_ids:
+            continue
+        if zone.zone_type not in {"support", "resistance"}:
+            continue
+        if zone.metadata.get("refined_from_false_break"):
+            continue
+        false_break_events = zone.metadata.get("false_break_events")
+        if not isinstance(false_break_events, list) or not false_break_events:
+            continue
+        event_times = {str(event.get("time")) for event in false_break_events if isinstance(event, dict)}
+        for candle in candles:
+            if candle.open_time not in event_times:
+                continue
+            atr_value = latest_atr(candles, end_time=candle.open_time) or latest_atr(candles) or max(zone.price_high - zone.price_low, 1.0)
+            child = refined_zone_from_false_break(
+                zone,
+                candle,
+                atr_value,
+                false_break_refine_max_width_atr_multiplier,
+            )
+            if child is None:
+                continue
+            child = apply_lifecycle_to_zone(
+                child,
+                candles,
+                close_break_buffer,
+                recent_touch_lookback_candles,
+                age_decay_per_100_candles,
+                freshness_bonus,
+                invalidation_weight_multiplier,
+                close_break_buffer_atr_multiplier,
+                reaction_window_candles,
+                min_reaction_atr,
+                strong_reaction_atr,
+                recent_reaction_count,
+                max_healthy_touches,
+                weak_touch_penalty,
+                too_many_touches_penalty,
+                linger_penalty,
+            )
+            refined_children.append(child)
+
+    if not refined_children:
+        return updated
+
+    parent_ids = {str(child.metadata.get("parent_zone_id")) for child in refined_children}
+    adjusted_parents: list[PriceZone] = []
+    child_ids_by_parent: dict[str, list[str]] = {}
+    for child in refined_children:
+        parent_id = str(child.metadata.get("parent_zone_id"))
+        child_ids_by_parent.setdefault(parent_id, []).append(child.id)
+    for zone in updated:
+        if zone.id not in parent_ids:
+            adjusted_parents.append(zone)
+            continue
+        metadata = dict(zone.metadata)
+        metadata["refined_child_zone_ids"] = child_ids_by_parent.get(zone.id, [])
+        # After a false break, the old parent SR is kept for visual context but
+        # disabled for trading; the refined child around the new sweep low/high
+        # is the only zone eligible for fresh reactions.
+        metadata["trade_disabled_after_sweep"] = True
+        metadata["false_break_parent_weight_multiplier"] = false_break_parent_weight_multiplier
+        weight = clamp(zone.effective_weight * false_break_parent_weight_multiplier, 0.05, 1.0)
+        confidence = clamp(zone.effective_confidence * max(false_break_parent_weight_multiplier, 0.05), 0.05, 1.0)
+        adjusted_parents.append(
+            replace(
+                zone,
+                bot_weight=round(weight, 4),
+                effective_weight=round(weight, 4),
+                bot_confidence=round(confidence, 4),
+                effective_confidence=round(confidence, 4),
+                metadata=metadata,
+            )
+        )
+
+    deduped: dict[str, PriceZone] = {}
+    for zone in [*adjusted_parents, *refined_children]:
+        deduped[zone.id] = zone
+    return list(deduped.values())
 
 
 def detect_support_resistance_zones(
@@ -921,6 +1114,9 @@ def detect_and_store_support_resistance_zones(
     weak_touch_penalty: float = 0.08,
     too_many_touches_penalty: float = 0.06,
     linger_penalty: float = 0.10,
+    false_break_refine_enabled: bool = True,
+    false_break_refine_max_width_atr_multiplier: float = 0.8,
+    false_break_parent_weight_multiplier: float = 0.35,
 ) -> int:
     swings = load_recent_swings(conn, symbol, timeframe, lookback_swings)
     candles = load_candle_slices(conn, symbol, timeframe)
@@ -954,6 +1150,9 @@ def detect_and_store_support_resistance_zones(
         weak_touch_penalty,
         too_many_touches_penalty,
         linger_penalty,
+        false_break_refine_enabled,
+        false_break_refine_max_width_atr_multiplier,
+        false_break_parent_weight_multiplier,
     )
     return replace_price_zones(conn, symbol, timeframe, SR_DETECTOR, zones)
 
@@ -1016,6 +1215,9 @@ def apply_and_store_zone_lifecycle(
     weak_touch_penalty: float = 0.08,
     too_many_touches_penalty: float = 0.06,
     linger_penalty: float = 0.10,
+    false_break_refine_enabled: bool = True,
+    false_break_refine_max_width_atr_multiplier: float = 0.8,
+    false_break_parent_weight_multiplier: float = 0.35,
 ) -> int:
     zones = load_price_zones(conn, symbol, timeframe, SR_DETECTOR)
     candles = load_candle_slices(conn, symbol, timeframe)
@@ -1036,6 +1238,9 @@ def apply_and_store_zone_lifecycle(
         weak_touch_penalty,
         too_many_touches_penalty,
         linger_penalty,
+        false_break_refine_enabled,
+        false_break_refine_max_width_atr_multiplier,
+        false_break_parent_weight_multiplier,
     )
     return replace_price_zones(conn, symbol, timeframe, SR_DETECTOR, updated)
 

@@ -1,5 +1,9 @@
 # Trend Following Pullback Playbook
 
+> Legacy note: playbook nay da ngung runtime trong phase refactor hien tai.
+> No duoc giu lai lam tai lieu nghien cuu lich su. Strategy dang duoc phat
+> trien/backtest la `zone_reaction_v2`; xem `docs/19-zone-reaction-v2.md`.
+
 ## Mục tiêu
 
 Trend Following Pullback là chiến lược ưu tiên trade thuận xu hướng H1. H1 dùng để xác định bias, regime và vùng giá quan trọng. M15 dùng để quan sát phản ứng giá tại vùng và tìm trigger vào lệnh.

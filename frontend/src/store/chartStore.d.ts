@@ -50,7 +50,7 @@ export declare const useChartStore: import("zustand").UseBoundStore<Omit<import(
             showStructure: boolean;
             importantZonesOnly: boolean;
             maxVisibleZones: number;
-            selectedPlaybooks: PlaybookKey[];
+            selectedPlaybooks: "zone_reaction_v2"[];
             startIndex: number | null;
         }, unknown>>) => void;
         clearStorage: () => void;
@@ -65,7 +65,7 @@ export declare const useChartStore: import("zustand").UseBoundStore<Omit<import(
             showStructure: boolean;
             importantZonesOnly: boolean;
             maxVisibleZones: number;
-            selectedPlaybooks: PlaybookKey[];
+            selectedPlaybooks: "zone_reaction_v2"[];
             startIndex: number | null;
         }, unknown>>;
     };

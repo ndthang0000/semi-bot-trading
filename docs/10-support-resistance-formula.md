@@ -724,7 +724,60 @@ valid_until = invalidated_at
 metadata.invalidation_reason = "close_beyond_zone"
 ```
 
-### 13.1. Pre-Detection Integrity Check
+### 13.1. False Break Refinement
+
+False break không invalidate zone nếu nến chỉ wick xuyên vùng rồi đóng ngược lại ngoài zone.
+
+Support false break:
+
+```text
+candle.low < zone.price_low
+AND candle.close > zone.price_high
+```
+
+Resistance false break:
+
+```text
+candle.high > zone.price_high
+AND candle.close < zone.price_low
+```
+
+Quy tắc xử lý:
+
+- Không dịch chuyển parent zone.
+- Parent zone được giữ để audit/debug nhưng bị gắn `metadata.trade_disabled_after_sweep = true`.
+- Parent zone bị giảm weight/confidence bằng `false_break_parent_weight_multiplier`.
+- Bot tạo một refined zone mới quanh sweep low/high.
+- Strategy không được dùng parent zone đã bị sweep để vào lệnh mới.
+
+Refined support:
+
+```text
+price_low  = false_break_candle.low
+price_high = min(parent.price_low, price_low + ATR * false_break_refine_max_width_atr_multiplier)
+```
+
+Refined resistance:
+
+```text
+price_high = false_break_candle.high
+price_low  = max(parent.price_high, price_high - ATR * false_break_refine_max_width_atr_multiplier)
+```
+
+Metadata refined zone:
+
+```text
+refined_from_false_break = true
+parent_zone_id
+false_break_time
+false_break_price
+false_break_atr
+refined_width_atr
+```
+
+Lý do: sau một false break, thị trường đã tạo swing/sweep high-low mới. Nếu bot tiếp tục trade parent zone cũ thì dễ vào lệnh ở vị trí stale; refined zone giúp bot ưu tiên vùng phản ứng mới hơn.
+
+### 13.2. Pre-Detection Integrity Check
 
 Trước khi chấp nhận một SR cluster, bot phải kiểm tra đoạn từ swing đầu tiên đến lúc zone đủ `min_touches`.
 

@@ -10,16 +10,7 @@ export type ZoneVisibilityKey =
 
 export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 
-export type PlaybookKey =
-  | "trend_pullback"
-  | "zone_reaction_v2"
-  | "ob_mitigation_continuation"
-  | "fvg_fill_go"
-  | "breakout_retest"
-  | "momentum_expansion_continuation"
-  | "range_boundary_reversal"
-  | "liquidity_sweep_reversal"
-  | "failed_breakout_trap";
+export type PlaybookKey = "zone_reaction_v2";
 
 export type AddEntityKind =
   | "support"

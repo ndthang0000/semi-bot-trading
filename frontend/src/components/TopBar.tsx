@@ -228,8 +228,6 @@ function PlaybookMenu() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
-  const toggleSelectedPlaybook = useChartStore((state) => state.toggleSelectedPlaybook);
-  const setSelectedPlaybooks = useChartStore((state) => state.setSelectedPlaybooks);
 
   useEffect(() => {
     if (!open) return;
@@ -241,8 +239,6 @@ function PlaybookMenu() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
-
-  const selectedSet = new Set(selectedPlaybooks);
 
   return (
     <div ref={menuRef} className="relative">
@@ -264,26 +260,20 @@ function PlaybookMenu() {
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2 font-semibold text-slate-100">
               <Target size={15} className="text-cyan-300" />
-              Running playbooks
+              Running playbook
             </div>
-            <button
-              className="text-xs text-cyan-200 hover:text-cyan-100"
-              type="button"
-              onClick={() => setSelectedPlaybooks(["trend_pullback"])}
-            >
-              Focus Trend Pullback
-            </button>
+            <span className="text-xs text-cyan-200">Runtime only</span>
           </div>
 
           <div className="grid gap-1">
             {PLAYBOOK_ITEMS.map((item) => (
-              <label key={item.key} className="grid cursor-pointer gap-0.5 rounded px-1.5 py-1.5 hover:bg-ink-800">
+              <label key={item.key} className="grid cursor-default gap-0.5 rounded px-1.5 py-1.5 bg-ink-800/50">
                 <span className="flex items-center gap-2">
                   <input
-                    checked={selectedSet.has(item.key)}
+                    checked
                     className="accent-cyan-400"
+                    disabled
                     type="checkbox"
-                    onChange={(event) => toggleSelectedPlaybook(item.key, event.target.checked)}
                   />
                   <span className="font-medium text-slate-100">{item.label}</span>
                 </span>
@@ -442,15 +432,7 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 ];
 
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
-  { key: "trend_pullback", label: "Trend Pullback" },
   { key: "zone_reaction_v2", label: "Zone Reaction V2" },
-  { key: "ob_mitigation_continuation", label: "OB Mitigation" },
-  { key: "fvg_fill_go", label: "FVG Fill And Go" },
-  { key: "breakout_retest", label: "Breakout Retest" },
-  { key: "momentum_expansion_continuation", label: "Momentum Expansion" },
-  { key: "range_boundary_reversal", label: "Range Boundary" },
-  { key: "liquidity_sweep_reversal", label: "Liquidity Sweep" },
-  { key: "failed_breakout_trap", label: "Failed Breakout Trap" },
 ];
 
 function playbookRequirementLabel(playbook: PlaybookKey): string {

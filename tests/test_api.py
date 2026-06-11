@@ -144,6 +144,52 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(trade["review"]["verdict"], "should_skip")
         self.assertEqual(trade["review"]["comment"], "Breakout qua zone qua yeu.")
 
+    def test_trade_history_supports_zone_reaction_and_sl_size_filters(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade_filter_data(db_path)
+
+            client = TestClient(create_app(config_path))
+            filtered_response = client.get(
+                "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=true"
+                "&zone_type=support&reaction=reject&sort=sl_size_desc"
+            )
+            fvg_response = client.get(
+                "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=true&zone_type=fvg"
+            )
+
+        self.assertEqual(filtered_response.status_code, 200)
+        filtered = filtered_response.json()["trades"]
+        self.assertEqual([trade["id"] for trade in filtered], ["order-wide", "order-narrow"])
+        self.assertEqual([abs(trade["entry_price"] - trade["stop_loss"]) for trade in filtered], [10, 2])
+
+        self.assertEqual(fvg_response.status_code, 200)
+        fvg = fvg_response.json()["trades"]
+        self.assertEqual([trade["id"] for trade in fvg], ["order-fvg"])
+
+    def test_trade_history_supports_trade_id_search(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade_filter_data(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.get(
+                "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=true&trade_id=narrow"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual([trade["id"] for trade in payload["trades"]], ["order-narrow"])
+
     def test_chart_replay_recomputes_from_replay_start(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -460,6 +506,89 @@ def seed_trade(db_path: Path) -> None:
                     '2026-01-01T01:00:00+00:00', 2013, 2.0, 2.0, 'backtest',
                     '{"backtest": true}', '2026-01-01T00:15:00+00:00')
             """
+        )
+        conn.commit()
+
+
+def seed_trade_filter_data(db_path: Path) -> None:
+    with connect(db_path) as conn:
+        init_db(conn)
+        conn.executemany(
+            """
+            INSERT INTO trade_ideas (
+                id, symbol, direction, playbook, status, entry_zone_id, related_zone_ids_json,
+                context_snapshot_json, suggested_entry, suggested_stop_loss,
+                suggested_take_profit_json, risk_reward, created_at, expires_at
+            )
+            VALUES (?, 'XAUUSD', ?, 'zone_reaction_v2', 'filled', NULL, '[]',
+                    '{}', ?, ?, ?, 2.0, ?, NULL)
+            """,
+            [
+                ("idea-wide", "long", 2000, 1990, "[2020]", "2026-01-01T00:00:00+00:00"),
+                ("idea-narrow", "long", 2000, 1998, "[2004]", "2026-01-01T00:15:00+00:00"),
+                ("idea-fvg", "short", 2000, 2004, "[1992]", "2026-01-01T00:30:00+00:00"),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO trade_orders (
+                id, trade_idea_id, symbol, side, order_type, status, entry_price, stop_loss,
+                take_profit_json, quantity, opened_at, closed_at, close_price,
+                pnl, pnl_r, source, metadata_json, created_at
+            )
+            VALUES (?, ?, 'XAUUSD', ?, 'market', ?, ?, ?, ?, 1, ?, ?, ?,
+                    ?, ?, 'backtest', ?, ?)
+            """,
+            [
+                (
+                    "order-wide",
+                    "idea-wide",
+                    "buy",
+                    "target_hit",
+                    2000,
+                    1990,
+                    "[2020]",
+                    "2026-01-01T00:15:00+00:00",
+                    "2026-01-01T01:00:00+00:00",
+                    2020,
+                    2.0,
+                    2.0,
+                    '{"backtest": true, "zone_reaction_state": "reject", "candidate_metadata": {"zone_type": "support"}}',
+                    "2026-01-01T00:15:00+00:00",
+                ),
+                (
+                    "order-narrow",
+                    "idea-narrow",
+                    "buy",
+                    "stopped",
+                    2000,
+                    1998,
+                    "[2004]",
+                    "2026-01-01T00:30:00+00:00",
+                    "2026-01-01T01:15:00+00:00",
+                    1998,
+                    -1.0,
+                    -1.0,
+                    '{"backtest": true, "zone_reaction_state": "reject", "candidate_metadata": {"zone_type": "support"}}',
+                    "2026-01-01T00:30:00+00:00",
+                ),
+                (
+                    "order-fvg",
+                    "idea-fvg",
+                    "sell",
+                    "target_hit",
+                    2000,
+                    2004,
+                    "[1992]",
+                    "2026-01-01T00:45:00+00:00",
+                    "2026-01-01T01:30:00+00:00",
+                    1992,
+                    2.0,
+                    2.0,
+                    '{"backtest": true, "zone_reaction_state": "fakeout", "candidate_metadata": {"zone_type": "fvg"}}',
+                    "2026-01-01T00:45:00+00:00",
+                ),
+            ],
         )
         conn.commit()
 

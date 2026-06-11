@@ -91,6 +91,9 @@ def build_realtime_replay_payload(
         config.zone_decay.weak_touch_penalty,
         config.zone_decay.too_many_touches_penalty,
         config.zone_decay.linger_penalty,
+        config.zone_lifecycle.false_break_refine_enabled,
+        config.zone_lifecycle.false_break_refine_max_width_atr_multiplier,
+        config.zone_lifecycle.false_break_parent_weight_multiplier,
     )
     smc_detected = detect_smc_zones(
         candle_slices,

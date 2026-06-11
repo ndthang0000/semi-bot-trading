@@ -22,18 +22,10 @@ export const defaultZoneTypeVisibility: ZoneTypeVisibility = {
   consolidation: true,
 };
 
-export const defaultSelectedPlaybooks: PlaybookKey[] = ["trend_pullback"];
+export const defaultSelectedPlaybooks: PlaybookKey[] = ["zone_reaction_v2"];
 
 export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibilityKey[]; structure: boolean }> = {
-  trend_pullback: { zones: ["support", "resistance", "order_block", "fvg"], structure: true },
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
-  ob_mitigation_continuation: { zones: ["order_block"], structure: true },
-  fvg_fill_go: { zones: ["fvg"], structure: true },
-  breakout_retest: { zones: ["consolidation"], structure: true },
-  momentum_expansion_continuation: { zones: ["support", "resistance", "order_block", "fvg"], structure: true },
-  range_boundary_reversal: { zones: ["consolidation", "support", "resistance"], structure: true },
-  liquidity_sweep_reversal: { zones: ["liquidity_pool", "support", "resistance"], structure: true },
-  failed_breakout_trap: { zones: ["consolidation"], structure: true },
 };
 
 type ChartState = {
@@ -221,7 +213,8 @@ function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> 
 }
 
 function uniquePlaybooks(playbooks: PlaybookKey[]): PlaybookKey[] {
-  return Array.from(new Set(playbooks)).filter((playbook): playbook is PlaybookKey => playbook in playbookLayerRequirements);
+  const filtered = Array.from(new Set(playbooks)).filter((playbook): playbook is PlaybookKey => playbook in playbookLayerRequirements);
+  return filtered.length > 0 ? filtered : defaultSelectedPlaybooks;
 }
 
 function requiredZoneTypesForPlaybooks(playbooks: PlaybookKey[]): Set<ZoneVisibilityKey> {

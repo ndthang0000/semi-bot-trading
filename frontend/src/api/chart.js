@@ -55,6 +55,12 @@ export async function fetchTradeHistory(query) {
         params.set("side", query.side);
     if (query.outcome && query.outcome !== "all")
         params.set("outcome", query.outcome);
+    if (query.zoneType)
+        params.set("zone_type", query.zoneType);
+    if (query.reaction)
+        params.set("reaction", query.reaction);
+    if (query.tradeId)
+        params.set("trade_id", query.tradeId);
     if (query.backtest !== null && query.backtest !== undefined)
         params.set("backtest", String(query.backtest));
     const response = await fetch(`/api/trades?${params.toString()}`);

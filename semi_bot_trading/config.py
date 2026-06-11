@@ -59,6 +59,9 @@ class ZoneLifecycleConfig:
     age_decay_per_100_candles: float
     freshness_bonus: float
     invalidation_weight_multiplier: float
+    false_break_refine_enabled: bool
+    false_break_refine_max_width_atr_multiplier: float
+    false_break_parent_weight_multiplier: float
 
 
 @dataclass(frozen=True)
@@ -143,9 +146,8 @@ class StrategyConfig:
     min_risk_reward: float
     max_eligible: int
     max_waiting: int
-    trend_pullback_fvg_min_width_atr: float
-    trend_pullback_fvg_max_width_atr: float
     zone_reaction_v2_enabled: bool
+    zone_reaction_v2_allowed_reactions: tuple[str, ...]
     zone_reaction_v2_fakeout_max_atr: float
     zone_reaction_v2_reject_body_min_ratio: float
     zone_reaction_v2_reject_avg_body_period: int
@@ -157,6 +159,12 @@ class StrategyConfig:
     zone_reaction_v2_consolidation_breakout_body_atr: float
     zone_reaction_v2_retest_max_bars: int
     zone_reaction_v2_rr_minimum: float
+    zone_reaction_v2_stop_buffer_atr: float
+    zone_reaction_v2_min_stop_price: float
+    zone_reaction_v2_min_stop_atr: float
+    zone_reaction_v2_max_stop_distance: float
+    zone_reaction_v2_require_trigger_for_fakeout: bool
+    zone_reaction_v2_fakeout_max_reaction_depth_atr: float
     zone_reaction_v2_allow_neutral_range_trade: bool
     zone_reaction_v2_block_news_or_risk_off: bool
     zone_reaction_v2_confluence_score_bonus: float
@@ -170,6 +178,7 @@ class BacktestConfig:
     warmup_candles: int
     auto_accept: bool
     zone_snapshot_candles: int
+    zone_loss_cooldown_candles: int
 
 
 @dataclass(frozen=True)
@@ -212,7 +221,6 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
     price_action = raw.get("price_action", {})
     strategy = raw.get("strategy", {})
     strategy_playbooks = strategy.get("playbooks", {})
-    trend_pullback = strategy_playbooks.get("trend_pullback", {}) if isinstance(strategy_playbooks, dict) else {}
     zone_reaction_v2 = strategy_playbooks.get("zone_reaction_v2", {}) if isinstance(strategy_playbooks, dict) else {}
     backtest = raw.get("backtest", {})
     swing = structure.get("swing", {})
@@ -266,6 +274,11 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             age_decay_per_100_candles=float(zone_lifecycle.get("age_decay_per_100_candles", 0.08)),
             freshness_bonus=float(zone_lifecycle.get("freshness_bonus", 0.15)),
             invalidation_weight_multiplier=float(zone_lifecycle.get("invalidation_weight_multiplier", 0.15)),
+            false_break_refine_enabled=bool(zone_lifecycle.get("false_break_refine_enabled", True)),
+            false_break_refine_max_width_atr_multiplier=float(
+                zone_lifecycle.get("false_break_refine_max_width_atr_multiplier", 0.8)
+            ),
+            false_break_parent_weight_multiplier=float(zone_lifecycle.get("false_break_parent_weight_multiplier", 0.35)),
         ),
         zone_reaction=ZoneReactionConfig(
             reaction_window_candles=int(zone_reaction.get("reaction_window_candles", 5)),
@@ -330,9 +343,14 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             min_risk_reward=float(strategy.get("min_risk_reward", 2.0)),
             max_eligible=int(strategy.get("max_eligible", 3)),
             max_waiting=int(strategy.get("max_waiting", 5)),
-            trend_pullback_fvg_min_width_atr=float(trend_pullback.get("fvg_min_width_atr", 1.5)),
-            trend_pullback_fvg_max_width_atr=float(trend_pullback.get("fvg_max_width_atr", 4.0)),
             zone_reaction_v2_enabled=bool(zone_reaction_v2.get("enabled", True)),
+            zone_reaction_v2_allowed_reactions=tuple(
+                str(item)
+                for item in zone_reaction_v2.get(
+                    "allowed_reactions",
+                    ["reject"],
+                )
+            ),
             zone_reaction_v2_fakeout_max_atr=float(zone_reaction_v2.get("fakeout_max_atr", 0.5)),
             zone_reaction_v2_reject_body_min_ratio=float(zone_reaction_v2.get("reject_body_min_ratio", 1.5)),
             zone_reaction_v2_reject_avg_body_period=int(zone_reaction_v2.get("reject_avg_body_period", 20)),
@@ -348,6 +366,14 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             ),
             zone_reaction_v2_retest_max_bars=int(zone_reaction_v2.get("retest_max_bars", 8)),
             zone_reaction_v2_rr_minimum=float(zone_reaction_v2.get("rr_minimum", 2.0)),
+            zone_reaction_v2_stop_buffer_atr=float(zone_reaction_v2.get("stop_buffer_atr", 0.2)),
+            zone_reaction_v2_min_stop_price=float(zone_reaction_v2.get("min_stop_price", 4.0)),
+            zone_reaction_v2_min_stop_atr=float(zone_reaction_v2.get("min_stop_atr", 1.2)),
+            zone_reaction_v2_max_stop_distance=float(zone_reaction_v2.get("max_stop_distance", 30.0)),
+            zone_reaction_v2_require_trigger_for_fakeout=bool(zone_reaction_v2.get("require_trigger_for_fakeout", True)),
+            zone_reaction_v2_fakeout_max_reaction_depth_atr=float(
+                zone_reaction_v2.get("fakeout_max_reaction_depth_atr", 1.5)
+            ),
             zone_reaction_v2_allow_neutral_range_trade=bool(zone_reaction_v2.get("allow_neutral_range_trade", True)),
             zone_reaction_v2_block_news_or_risk_off=bool(zone_reaction_v2.get("block_news_or_risk_off", True)),
             zone_reaction_v2_confluence_score_bonus=float(zone_reaction_v2.get("confluence_score_bonus", 0.08)),
@@ -359,6 +385,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             warmup_candles=int(backtest.get("warmup_candles", 80)),
             auto_accept=bool(backtest.get("auto_accept", True)),
             zone_snapshot_candles=int(backtest.get("zone_snapshot_candles", 600)),
+            zone_loss_cooldown_candles=int(backtest.get("zone_loss_cooldown_candles", 12)),
         ),
     )
 
