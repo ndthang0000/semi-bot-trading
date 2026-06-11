@@ -29,6 +29,16 @@ from .zones import (
     detect_and_store_support_resistance_zones,
     zone_summary,
 )
+from .zone_materializer import materialize_incremental_zones
+
+
+INCREMENTAL_ZONE_DETECTOR_ALIASES = {
+    "sr": "sr_v2",
+    "sr_v2": "sr_v2",
+    "support_resistance": "sr_v2",
+    "fvg": "fvg_v1",
+    "fvg_v1": "fvg_v1",
+}
 
 
 def add_common_db_arg(parser: argparse.ArgumentParser) -> None:
@@ -56,6 +66,26 @@ def resolve_db_path(args: argparse.Namespace) -> Path:
         return load_config(args.config).database
     except FileNotFoundError:
         return DEFAULT_DB_PATH
+
+
+def parse_incremental_zone_detectors(raw_value: str | None) -> set[str]:
+    if not raw_value:
+        return {"sr_v2", "fvg_v1"}
+    detectors: set[str] = set()
+    invalid: list[str] = []
+    for item in raw_value.split(","):
+        key = item.strip().lower()
+        if not key:
+            continue
+        detector = INCREMENTAL_ZONE_DETECTOR_ALIASES.get(key)
+        if detector is None:
+            invalid.append(item.strip())
+            continue
+        detectors.add(detector)
+    if invalid or not detectors:
+        valid = ", ".join(sorted(INCREMENTAL_ZONE_DETECTOR_ALIASES))
+        raise SystemExit(f"Invalid detector(s): {', '.join(invalid)}. Valid values: {valid}")
+    return detectors
 
 
 def cmd_init_db(args: argparse.Namespace) -> None:
@@ -349,6 +379,9 @@ def cmd_detect_smc_zones(args: argparse.Namespace) -> None:
             fvg_min_width_atr_ratio=args.fvg_min_width_atr_ratio
             if args.fvg_min_width_atr_ratio is not None
             else smc_config.fvg_min_width_atr_ratio,
+            fvg_max_width_atr_ratio=args.fvg_max_width_atr_ratio
+            if args.fvg_max_width_atr_ratio is not None
+            else smc_config.fvg_max_width_atr_ratio,
             fvg_third_candle_follow_through_required=not args.fvg_allow_no_third_candle_follow_through
             if args.fvg_allow_no_third_candle_follow_through
             else smc_config.fvg_third_candle_follow_through_required,
@@ -388,6 +421,28 @@ def cmd_detect_smc_zones(args: argparse.Namespace) -> None:
         )
     summary = ", ".join(f"{detector}={count}" for detector, count in counts.items())
     print(f"Stored SMC zones for {symbol} {timeframe}: {summary}")
+
+
+def cmd_materialize_zones(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    timeframe = args.timeframe
+    detectors = parse_incremental_zone_detectors(args.detectors)
+    db_path = args.db or config.database
+
+    with connect(db_path) as conn:
+        init_db(conn)
+        counts = materialize_incremental_zones(
+            conn,
+            config,
+            symbol=symbol,
+            timeframe=timeframe,
+            limit=args.limit,
+            detectors=detectors,
+            progress_every=args.progress_every,
+        )
+    summary = ", ".join(f"{detector}={counts.get(detector, 0)}" for detector in sorted(detectors))
+    print(f"Materialized incremental zones for {symbol} {timeframe}: {summary}")
 
 
 def cmd_detect_price_action(args: argparse.Namespace) -> None:
@@ -829,6 +884,7 @@ def build_parser() -> argparse.ArgumentParser:
     smc_zones_parser.add_argument("--fvg-middle-candle-atr-multiplier", type=float)
     smc_zones_parser.add_argument("--fvg-gap-atr-ratio", type=float)
     smc_zones_parser.add_argument("--fvg-min-width-atr-ratio", type=float)
+    smc_zones_parser.add_argument("--fvg-max-width-atr-ratio", type=float)
     smc_zones_parser.add_argument("--fvg-allow-no-third-candle-follow-through", action="store_true")
     smc_zones_parser.add_argument("--fvg-third-candle-min-body-ratio", type=float)
     smc_zones_parser.add_argument("--ob-displacement-atr-multiplier", type=float)
@@ -842,6 +898,32 @@ def build_parser() -> argparse.ArgumentParser:
     smc_zones_parser.add_argument("--max-liquidity-zones", type=int)
     smc_zones_parser.add_argument("--max-consolidation-zones", type=int)
     smc_zones_parser.set_defaults(func=cmd_detect_smc_zones)
+
+    materialize_zones_parser = subparsers.add_parser(
+        "materialize-zones",
+        help="Persist replay/backtest-style incremental SR/FVG zone snapshots into price_zones.",
+    )
+    add_common_config_arg(materialize_zones_parser)
+    add_common_db_arg(materialize_zones_parser)
+    materialize_zones_parser.add_argument("--symbol")
+    materialize_zones_parser.add_argument("--timeframe", default="H1")
+    materialize_zones_parser.add_argument(
+        "--detectors",
+        default="sr,fvg",
+        help="Comma-separated detector aliases: sr, fvg. Default: sr,fvg.",
+    )
+    materialize_zones_parser.add_argument(
+        "--limit",
+        type=int,
+        help="Use the latest N candles. Omit to walk the full timeframe history.",
+    )
+    materialize_zones_parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1000,
+        help="Print progress every N candles. Use 0 to disable.",
+    )
+    materialize_zones_parser.set_defaults(func=cmd_materialize_zones)
 
     price_action_parser = subparsers.add_parser(
         "detect-price-action",

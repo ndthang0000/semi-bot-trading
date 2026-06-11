@@ -40,9 +40,47 @@ class SmcZoneTest(unittest.TestCase):
         self.assertEqual("fvg", zones[0].zone_type)
         self.assertEqual("bullish", zones[0].direction)
         self.assertEqual(102, zones[0].price_low)
-        self.assertEqual(112, zones[0].price_high)
+        self.assertLess(zones[0].price_high, 112)
+        self.assertTrue(zones[0].metadata["shrunk_for_entry"])
+        self.assertEqual(102, zones[0].metadata["original_gap_low"])
+        self.assertEqual(112, zones[0].metadata["original_gap_high"])
         self.assertGreaterEqual(zones[0].metadata["middle_range_atr"], 2.0)
         self.assertGreaterEqual(zones[0].metadata["gap_atr_ratio"], 0.25)
+
+    def test_can_keep_full_fvg_width_when_max_width_disabled(self) -> None:
+        candles = [
+            candle("00:00", 100, 101, 99, 100),
+            candle("01:00", 100, 101, 99, 100),
+            candle("02:00", 100, 101, 99, 100),
+            candle("03:00", 100, 102, 99, 101),
+            candle("04:00", 101, 111, 100, 110),
+            candle("05:00", 112, 115, 112, 114),
+        ]
+
+        zones = detect_fvg_zones(candles, "XAUUSD", "H1", max_width_atr_ratio=0)
+
+        self.assertEqual(1, len(zones))
+        self.assertEqual(102, zones[0].price_low)
+        self.assertEqual(112, zones[0].price_high)
+        self.assertFalse(zones[0].metadata["shrunk_for_entry"])
+
+    def test_bearish_fvg_shrinks_from_lower_edge(self) -> None:
+        candles = [
+            candle("00:00", 100, 101, 99, 100),
+            candle("01:00", 100, 101, 99, 100),
+            candle("02:00", 100, 101, 99, 100),
+            candle("03:00", 100, 102, 99, 101),
+            candle("04:00", 101, 102, 90, 91),
+            candle("05:00", 89, 89, 85, 86),
+        ]
+
+        zones = detect_fvg_zones(candles, "XAUUSD", "H1", max_width_atr_ratio=0.5)
+
+        self.assertEqual(1, len(zones))
+        self.assertEqual("bearish", zones[0].direction)
+        self.assertGreater(zones[0].price_low, 89)
+        self.assertEqual(99, zones[0].price_high)
+        self.assertTrue(zones[0].metadata["shrunk_for_entry"])
 
     def test_fvg_fill_reduces_weight(self) -> None:
         candles = [
@@ -55,7 +93,7 @@ class SmcZoneTest(unittest.TestCase):
             candle("06:00", 114, 115, 103, 104),
         ]
 
-        zones = detect_fvg_zones(candles, "XAUUSD", "H1")
+        zones = detect_fvg_zones(candles, "XAUUSD", "H1", max_width_atr_ratio=0)
 
         self.assertEqual("mitigated", zones[0].status)
         self.assertLess(zones[0].effective_weight, zones[0].bot_weight)

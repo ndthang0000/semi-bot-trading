@@ -159,6 +159,18 @@ python -m semi_bot_trading.cli detect-smc-zones --timeframe H1
 python -m semi_bot_trading.cli detect-smc-zones --timeframe M15
 ```
 
+Materialize SR/FVG giống replay/backtest vào DB cho realtime dashboard:
+
+```bash
+python -m semi_bot_trading.cli materialize-zones \
+  --timeframe H1 \
+  --detectors sr,fvg \
+  --limit 15000 \
+  --progress-every 1000
+```
+
+Lệnh này đi từng snapshot nến đã đóng, tính lại SR/FVG theo logic incremental giống backtest/replay rồi lưu vào bảng `price_zones`. Dùng nó khi realtime mode không thấy đủ zone lịch sử, hoặc sau khi thay đổi logic SR/FVG mà muốn dashboard đọc lại từ DB.
+
 Detect M15 price action:
 
 ```bash
@@ -219,6 +231,7 @@ Test FVG filter khác:
 python -m semi_bot_trading.cli detect-smc-zones --timeframe H1 \
   --fvg-middle-candle-atr-multiplier 2.0 \
   --fvg-gap-atr-ratio 0.25 \
+  --fvg-max-width-atr-ratio 1.5 \
   --fvg-third-candle-min-body-ratio 0.20
 ```
 

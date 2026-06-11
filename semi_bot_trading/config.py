@@ -88,6 +88,7 @@ class SmcZoneConfig:
     fvg_middle_candle_atr_multiplier: float
     fvg_gap_atr_ratio: float
     fvg_min_width_atr_ratio: float
+    fvg_max_width_atr_ratio: float
     fvg_third_candle_follow_through_required: bool
     fvg_third_candle_min_body_ratio: float
     fvg_h1_max_active_days: float
@@ -299,6 +300,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             fvg_middle_candle_atr_multiplier=float(smc_zones.get("fvg_middle_candle_atr_multiplier", 2.0)),
             fvg_gap_atr_ratio=float(smc_zones.get("fvg_gap_atr_ratio", 0.25)),
             fvg_min_width_atr_ratio=float(smc_zones.get("fvg_min_width_atr_ratio", 1.0)),
+            fvg_max_width_atr_ratio=float(smc_zones.get("fvg_max_width_atr_ratio", 1.5)),
             fvg_third_candle_follow_through_required=bool(
                 smc_zones.get("fvg_third_candle_follow_through_required", True)
             ),

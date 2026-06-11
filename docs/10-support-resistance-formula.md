@@ -167,6 +167,38 @@ if cluster.swing_type == "low":
     direction = "bullish"
 ```
 
+### 4.1. Dedupe Khi Materialize Realtime
+
+Khi chạy `materialize-zones`, hệ thống đi từng snapshot nến đã đóng để lưu zone lịch sử vào DB cho realtime dashboard. Cùng một cụm swing có thể sinh ra biên zone lệch nhẹ giữa các snapshot do ATR/window/lifecycle thay đổi. Vì `PriceZone.id` có chứa `price_low` và `price_high`, các biến thể gần giống nhau này có thể trở thành nhiều row khác nhau trong DB.
+
+Để tránh chart vẽ chồng nhiều vùng SR gần như cùng một level, materializer có bước dedupe riêng cho `sr_v2` trước khi ghi DB:
+
+```text
+same symbol + timeframe + detector + zone_type + direction
+AND (
+  swing cluster giống nhau
+  OR overlap_ratio >= 0.70
+  OR center_distance <= max(zone_width) * 0.65
+)
+```
+
+Khi merge, bot giữ zone có rank tốt nhất:
+
+```text
+active trước invalidated
+effective_weight cao hơn
+materialized_seen_count cao hơn
+zone width hẹp hơn
+```
+
+Bot không mở rộng biên zone khi merge để tránh làm SR rộng thêm. Metadata của zone giữ lại sẽ có:
+
+```text
+deduped_materialized_zone_count
+deduped_materialized_zone_ids
+materialized_seen_count
+```
+
 ---
 
 ## 5. Touch Detection

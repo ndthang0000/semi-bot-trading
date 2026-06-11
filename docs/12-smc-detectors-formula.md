@@ -126,6 +126,7 @@ Default:
 ```text
 fvg_gap_atr_ratio = 0.25
 fvg_min_width_atr_ratio = 1.0
+fvg_max_width_atr_ratio = 2.0
 ```
 
 Vùng được tạo:
@@ -137,6 +138,20 @@ price_high = candle3.low
 start_time = candle3.open_time
 detected_at = candle3.open_time
 ```
+
+Nếu FVG quá rộng so với ATR, detector sẽ thu nhỏ vùng theo phía có lợi cho entry:
+
+```text
+max_width = fvg_max_width_atr_ratio * atr_value
+
+Bullish FVG quá rộng:
+    price_high = price_low + max_width
+
+Bearish FVG quá rộng:
+    price_low = price_high - max_width
+```
+
+Lý do: full H1 FVG đôi khi quá lớn, làm stop loss và target 2R bị kéo rất xa so với nhịp M15. Metadata vẫn lưu `original_gap_low`, `original_gap_high`, `original_gap_size`, `max_width_atr_ratio`, và `shrunk_for_entry` để debug hoặc revert về full-width sau này.
 
 ### 2.5. Bearish FVG
 
@@ -1038,6 +1053,7 @@ lookback_swings = 300
 fvg_middle_candle_atr_multiplier = 2.0
 fvg_gap_atr_ratio = 0.25
 fvg_min_width_atr_ratio = 1.0
+fvg_max_width_atr_ratio = 2.0
 fvg_third_candle_follow_through_required = true
 fvg_third_candle_min_body_ratio = 0.20
 ob_displacement_atr_multiplier = 1.5
@@ -1059,6 +1075,7 @@ max_consolidation_zones = 30
 - `fvg_middle_candle_atr_multiplier`: cây middle candle của FVG phải có range lớn hơn ATR bao nhiêu lần.
 - `fvg_gap_atr_ratio`: gap value của FVG phải lớn hơn ATR bao nhiêu lần.
 - `fvg_min_width_atr_ratio`: FVG quá mỏng so với ATR sẽ không được tạo zone. Default `1.0`, nghĩa là gap phải rộng ít nhất 1 ATR.
+- `fvg_max_width_atr_ratio`: FVG quá rộng sẽ được thu nhỏ về tối đa ngưỡng này theo phía có lợi cho entry. Default `1.5`. Set `0` để giữ full-width FVG.
 - `fvg_third_candle_follow_through_required`: yêu cầu candle 3 đóng cùng hướng FVG để tránh gap hồi ngược ngay.
 - `fvg_third_candle_min_body_ratio`: body tối thiểu của candle 3 khi follow-through được bật.
 - `ob_displacement_atr_multiplier`: displacement candle của OB phải lớn hơn ATR bao nhiêu lần.

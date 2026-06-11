@@ -585,6 +585,7 @@ class IncrementalBacktestTimeline:
             fvg_middle_candle_atr_multiplier=self.config.smc_zones.fvg_middle_candle_atr_multiplier,
             fvg_gap_atr_ratio=self.config.smc_zones.fvg_gap_atr_ratio,
             fvg_min_width_atr_ratio=self.config.smc_zones.fvg_min_width_atr_ratio,
+            fvg_max_width_atr_ratio=self.config.smc_zones.fvg_max_width_atr_ratio,
             fvg_third_candle_follow_through_required=self.config.smc_zones.fvg_third_candle_follow_through_required,
             fvg_third_candle_min_body_ratio=self.config.smc_zones.fvg_third_candle_min_body_ratio,
             fvg_max_active_days=self.config.smc_zones.fvg_max_active_days_for(self.config.bias.timeframe),

@@ -103,6 +103,7 @@ def build_realtime_replay_payload(
         fvg_middle_candle_atr_multiplier=config.smc_zones.fvg_middle_candle_atr_multiplier,
         fvg_gap_atr_ratio=config.smc_zones.fvg_gap_atr_ratio,
         fvg_min_width_atr_ratio=config.smc_zones.fvg_min_width_atr_ratio,
+        fvg_max_width_atr_ratio=config.smc_zones.fvg_max_width_atr_ratio,
         fvg_third_candle_follow_through_required=config.smc_zones.fvg_third_candle_follow_through_required,
         fvg_third_candle_min_body_ratio=config.smc_zones.fvg_third_candle_min_body_ratio,
         fvg_max_active_days=config.smc_zones.fvg_max_active_days_for(timeframe),

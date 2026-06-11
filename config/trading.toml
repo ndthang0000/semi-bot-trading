@@ -75,6 +75,7 @@ lookback_swings = 300
 fvg_middle_candle_atr_multiplier = 2.0
 fvg_gap_atr_ratio = 0.25
 fvg_min_width_atr_ratio = 1.0
+fvg_max_width_atr_ratio = 2
 fvg_third_candle_follow_through_required = true
 fvg_third_candle_min_body_ratio = 0.20
 fvg_h1_max_active_days = 2.0
