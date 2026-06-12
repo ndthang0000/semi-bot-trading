@@ -37,6 +37,7 @@ function PlaybookMenu() {
     const [open, setOpen] = useState(false);
     const menuRef = useRef(null);
     const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+    const toggleSelectedPlaybook = useChartStore((state) => state.toggleSelectedPlaybook);
     useEffect(() => {
         if (!open)
             return;
@@ -48,7 +49,7 @@ function PlaybookMenu() {
         window.addEventListener("pointerdown", onPointerDown);
         return () => window.removeEventListener("pointerdown", onPointerDown);
     }, [open]);
-    return (_jsxs("div", { ref: menuRef, className: "relative", children: [_jsxs("button", { className: `inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition ${open ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-100" : "border-ink-700 bg-ink-800 text-slate-100 hover:border-cyan-500"}`, type: "button", onClick: () => setOpen((value) => !value), children: [_jsx(Target, { size: 15 }), "Playbooks", _jsx("span", { className: "rounded bg-ink-950 px-1.5 py-0.5 text-[11px] text-slate-400", children: selectedPlaybooks.length }), _jsx(ChevronDown, { className: open ? "rotate-180 transition" : "transition", size: 14 })] }), open ? (_jsxs("div", { className: "absolute right-0 top-11 z-50 w-80 rounded-md border border-ink-700 bg-ink-900 p-3 text-sm text-slate-200 shadow-2xl shadow-black/40", children: [_jsxs("div", { className: "mb-2 flex items-center justify-between", children: [_jsxs("div", { className: "flex items-center gap-2 font-semibold text-slate-100", children: [_jsx(Target, { size: 15, className: "text-cyan-300" }), "Running playbook"] }), _jsx("span", { className: "text-xs text-cyan-200", children: "Runtime only" })] }), _jsx("div", { className: "grid gap-1", children: PLAYBOOK_ITEMS.map((item) => (_jsxs("label", { className: "grid cursor-default gap-0.5 rounded px-1.5 py-1.5 bg-ink-800/50", children: [_jsxs("span", { className: "flex items-center gap-2", children: [_jsx("input", { checked: true, className: "accent-cyan-400", disabled: true, type: "checkbox" }), _jsx("span", { className: "font-medium text-slate-100", children: item.label })] }), _jsx("span", { className: "pl-6 text-[11px] text-slate-500", children: playbookRequirementLabel(item.key) })] }, item.key))) })] })) : null] }));
+    return (_jsxs("div", { ref: menuRef, className: "relative", children: [_jsxs("button", { className: `inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition ${open ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-100" : "border-ink-700 bg-ink-800 text-slate-100 hover:border-cyan-500"}`, type: "button", onClick: () => setOpen((value) => !value), children: [_jsx(Target, { size: 15 }), "Playbooks", _jsx("span", { className: "rounded bg-ink-950 px-1.5 py-0.5 text-[11px] text-slate-400", children: selectedPlaybooks.length }), _jsx(ChevronDown, { className: open ? "rotate-180 transition" : "transition", size: 14 })] }), open ? (_jsxs("div", { className: "absolute right-0 top-11 z-50 w-80 rounded-md border border-ink-700 bg-ink-900 p-3 text-sm text-slate-200 shadow-2xl shadow-black/40", children: [_jsxs("div", { className: "mb-2 flex items-center justify-between", children: [_jsxs("div", { className: "flex items-center gap-2 font-semibold text-slate-100", children: [_jsx(Target, { size: 15, className: "text-cyan-300" }), "Running playbooks"] }), _jsx("span", { className: "text-xs text-cyan-200", children: "Auto layers" })] }), _jsx("div", { className: "grid gap-1", children: PLAYBOOK_ITEMS.map((item) => (_jsxs("label", { className: "grid cursor-pointer gap-0.5 rounded px-1.5 py-1.5 hover:bg-ink-800/70", children: [_jsxs("span", { className: "flex items-center gap-2", children: [_jsx("input", { checked: selectedPlaybooks.includes(item.key), className: "accent-cyan-400", onChange: (event) => toggleSelectedPlaybook(item.key, event.target.checked), type: "checkbox" }), _jsx("span", { className: "font-medium text-slate-100", children: item.label })] }), _jsx("span", { className: "pl-6 text-[11px] text-slate-500", children: playbookRequirementLabel(item.key) })] }, item.key))) })] })) : null] }));
 }
 function LayerMenu() {
     const [open, setOpen] = useState(false);
@@ -95,6 +96,7 @@ const LAYER_ITEMS = [
 ];
 const PLAYBOOK_ITEMS = [
     { key: "zone_reaction_v2", label: "Zone Reaction V2" },
+    { key: "sr_breakout_v1", label: "SR Breakout V1" },
 ];
 function playbookRequirementLabel(playbook) {
     const labels = {

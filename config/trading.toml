@@ -23,6 +23,15 @@ timeframe = "H1"
 recent_swings = 6
 recent_breaks = 3
 
+[context.macro_trend]
+detector = "macro_trend_v1"
+timeframe = "H1"
+# ~30 days of H1 candles. Momentum = close now vs close lookback_candles ago.
+lookback_candles = 720
+# |momentum| in ATR units must exceed this to call up/down; otherwise flat.
+flat_threshold_atr = 0.0
+atr_period = 14
+
 [context.regime]
 detector = "regime_v1"
 timeframe = "H1"
@@ -122,7 +131,7 @@ max_waiting = 5
 
 [strategy.playbooks.zone_reaction_v2]
 enabled = true
-allowed_reactions = ["reject"]
+allowed_reactions = ["reject", "internal_reject"]
 fakeout_max_atr = 0.5
 reject_body_min_ratio = 1.5
 reject_avg_body_period = 20
@@ -133,16 +142,50 @@ breakout_min_body_atr = 0.8
 breakout_min_close_outside_atr = 0.5
 consolidation_breakout_body_atr = 1.2
 retest_max_bars = 8
-rr_minimum = 2.0
+# "zone": classic stop beyond the whole zone. If zone-stop exceeds max_stop_distance,
+# classic reject falls back to reaction_wick. "reaction_wick" always uses the wick.
+reject_stop_mode = "zone"
+rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.2
 max_stop_distance = 30.0
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
+internal_reject_enabled = true
+internal_reject_requires_structure = false
+# SR zones keep the stricter BOS/CHOCH requirement; PA-only inside SR backtested badly.
+internal_reject_sr_requires_structure = true
+internal_reject_requires_price_action = true
+internal_reject_watch_after_fvg_fill_bars = 8
+internal_reject_min_fvg_fill_ratio = 0.4
+internal_reject_deep_fvg_fill_ratio = 0.8
+internal_reject_min_sr_penetration_atr = 0.3
 allow_neutral_range_trade = true
 block_news_or_risk_off = true
+# Block shorts when macro trend is up and longs when macro trend is down.
+macro_gate_enabled = true
 confluence_score_bonus = 0.08
+
+[strategy.playbooks.sr_breakout_v1]
+enabled = true
+# breakout_close (market entry at the breakout candle) backtested -5.24R/45 trades.
+# Remove it from this list to go retest-only.
+allowed_entries = ["breakout_close", "retest_breakout"]
+# Bot SR breakout is off by default; human can opt a zone into breakout via trade_modes.
+allow_bot_sr_breakout = true
+breakout_buffer_atr = 0.15
+market_entry_max_distance_atr = 0.5
+retest_max_bars = 8
+# Breakout candle body must be at least this many H1 ATR, otherwise wait for retest.
+min_body_atr = 0.5
+# "atr": flat sl_atr stop. "zone_edge": structural stop behind the broken edge.
+sl_mode = "zone_edge"
+sl_zone_buffer_atr = 0.2
+sl_min_atr = 0.6
+sl_atr = 1.2
+rr = 2.5
+max_stop_distance = 60.0
 
 [backtest]
 auto_accept = true

@@ -28,12 +28,13 @@ export function ContextStrip({ payload, onContextUpdated }) {
     const h1 = payload?.layers.contexts.H1;
     const biasContext = h1?.bias;
     const regimeContext = h1?.regime;
+    const macroContext = h1?.macro_trend;
     const bias = biasContext?.effective_value ?? "--";
     const regime = regimeContext?.effective_value ?? "--";
     const overlays = readOverlays(regimeContext?.metadata.overlays);
     const structureTimeframe = payload?.layers.structure_timeframe ?? "--";
     const priceChange = readCurrentPriceChange(payload);
-    return (_jsxs("section", { className: "grid grid-cols-[210px_220px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3", children: [_jsx(BiasCard, { bias: bias, context: biasContext, priceChange: priceChange, onEdit: () => setEditing("bias") }), _jsx(ContextCard, { label: "H1 Regime", value: overlays.length ? `${regime} + ${overlays.join(" + ")}` : regime, context: regimeContext, onEdit: () => setEditing("regime") }), _jsx(ContextCard, { label: "Structure", value: structureTimeframe }), _jsx(ContextCard, { label: "Range", value: payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--" }), editing && h1?.[editing] ? (_jsx(ContextOverrideEditor, { context: h1[editing], contextType: editing, onCancel: () => setEditing(null), onSaved: () => {
+    return (_jsxs("section", { className: "grid grid-cols-[210px_220px_170px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3", children: [_jsx(BiasCard, { bias: bias, context: biasContext, priceChange: priceChange, onEdit: () => setEditing("bias") }), _jsx(ContextCard, { label: "H1 Regime", value: overlays.length ? `${regime} + ${overlays.join(" + ")}` : regime, context: regimeContext, onEdit: () => setEditing("regime") }), _jsx(MacroTrendCard, { context: macroContext }), _jsx(ContextCard, { label: "Structure", value: structureTimeframe }), _jsx(ContextCard, { label: "Range", value: payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--" }), editing && h1?.[editing] ? (_jsx(ContextOverrideEditor, { context: h1[editing], contextType: editing, onCancel: () => setEditing(null), onSaved: () => {
                     setEditing(null);
                     onContextUpdated();
                 } })) : null] }));
@@ -44,6 +45,15 @@ function BiasCard({ bias, context, priceChange, onEdit, }) {
     const changeToneClass = priceChange && priceChange.changePercent >= 0 ? "text-emerald-300" : priceChange ? "text-rose-300" : "text-slate-500";
     const changePrefix = priceChange && priceChange.changePercent > 0 ? "+" : "";
     return (_jsxs("div", { className: "min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2", children: [_jsxs("div", { className: "flex items-center justify-between gap-2 text-xs text-slate-500", children: [_jsx("span", { children: "H1 Bias" }), _jsx(ContextSourceBadge, { context: context })] }), _jsxs("div", { className: "mt-1 flex items-end justify-between gap-3", children: [_jsx("div", { className: `text-sm font-semibold leading-tight ${toneClass}`, children: bias }), _jsxs("div", { className: "flex items-end gap-2", children: [_jsxs("div", { className: "text-right", children: [_jsx("div", { className: "text-sm font-semibold leading-tight text-slate-100", children: priceChange ? priceChange.currentPrice.toFixed(2) : "--" }), _jsx("div", { className: `text-[11px] font-semibold leading-tight ${changeToneClass}`, children: priceChange ? `${changePrefix}${priceChange.changePercent.toFixed(2)}%` : "--" })] }), _jsx(IconButton, { title: "Edit H1 Bias", onClick: onEdit, children: _jsx(Pencil, { size: 13 }) })] })] })] }));
+}
+function MacroTrendCard({ context }) {
+    const value = context?.effective_value ?? "--";
+    const toneClass = value === "up" ? "text-emerald-300" : value === "down" ? "text-rose-300" : "text-slate-100";
+    const momentumAtr = typeof context?.metadata.momentum_atr === "number" ? context.metadata.momentum_atr : null;
+    const lookback = typeof context?.metadata.lookback_candles === "number" ? context.metadata.lookback_candles : null;
+    const lookbackDays = lookback ? Math.round(lookback / 24) : null;
+    const momentumLabel = momentumAtr !== null ? `${momentumAtr > 0 ? "+" : ""}${momentumAtr.toFixed(1)} ATR${lookbackDays ? ` / ${lookbackDays}d` : ""}` : null;
+    return (_jsxs("div", { className: "min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2", title: "Slow H1 momentum gate: up blocks shorts, down blocks longs", children: [_jsxs("div", { className: "flex items-center justify-between gap-2 text-xs text-slate-500", children: [_jsxs("span", { children: ["Macro Trend", lookbackDays ? ` (${lookbackDays}d)` : ""] }), _jsx(ContextSourceBadge, { context: context })] }), _jsxs("div", { className: "mt-1 flex items-end justify-between gap-2", children: [_jsx("div", { className: `text-sm font-semibold leading-tight ${toneClass}`, children: value }), momentumLabel ? _jsx("div", { className: "text-[11px] font-semibold leading-tight text-slate-400", children: momentumLabel }) : null] })] }));
 }
 function ContextCard({ label, value, context, onEdit, tone = "neutral", }) {
     const toneClass = tone === "bullish" ? "text-emerald-300" : tone === "bearish" ? "text-rose-300" : "text-slate-100";

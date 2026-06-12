@@ -4,9 +4,14 @@ Zone Reaction V2 la playbook research-first tap trung vao phan ung M15 tai tung 
 
 ## Runtime Scope
 
-`zone_reaction_v2` la playbook runtime/research/backtest duy nhat trong phase hien tai.
+`zone_reaction_v2` la playbook runtime/research/backtest chinh cho reject/internal reject. Playbook breakout SR duoc tach rieng thanh `sr_breakout_v1` de tranh tron logic reject va breakout trong cung mot state machine.
 
 Legacy playbooks nhu `trend_pullback`, `ob_mitigation_continuation`, `fvg_fill_go`, `breakout_retest`, `momentum_expansion_continuation`, `range_boundary_reversal`, `liquidity_sweep_reversal`, va `failed_breakout_trap` da duoc ngung khoi strategy runtime. Trade cu trong database van co the hien thi playbook string cu de review lich su, nhung backend/UI/CLI khong con cho chay them cac playbook do.
+
+Playbook runtime hien tai:
+
+- `zone_reaction_v2`: reject/internal reject tai `support`, `resistance`, `fvg`.
+- `sr_breakout_v1`: breakout/retest qua `support`, `resistance`. Xem `docs/21-sr-breakout-v1.md`.
 
 ## Entity Scope
 
@@ -21,6 +26,7 @@ Primary zone hop le:
 ## Reaction V2 States
 
 - `reject`: gia cham zone va dong nen bat nguoc manh.
+- `internal_reject`: gia da vao trong zone, sau do co BOS/CHOCH + price action M15 cung huong entry. State nay xu ly FVG/SR rong, khi gia fill sau trong zone nhung chua dong cua ra khoi toan bo zone.
 - `fakeout`: gia pha nhe qua zone duoi nguong ATR roi dong quay lai.
 - `slow_reaction`: gia nam trong/cham zone nhieu nen M15 than nho, chua co huong ro.
 - `clean_breakout`: gia dong cua vuot zone voi body du lon.
@@ -35,7 +41,7 @@ Primary zone hop le:
 ```toml
 [strategy.playbooks.zone_reaction_v2]
 enabled = true
-allowed_reactions = ["reject"]
+allowed_reactions = ["reject", "internal_reject"]
 fakeout_max_atr = 0.5
 reject_body_min_ratio = 1.5
 reject_avg_body_period = 20
@@ -46,13 +52,21 @@ breakout_min_body_atr = 0.8
 breakout_min_close_outside_atr = 0.5
 consolidation_breakout_body_atr = 1.2
 retest_max_bars = 8
-rr_minimum = 2.0
+rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.2
-max_stop_distance = 30.0
+max_stop_distance = 35.0
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
+internal_reject_enabled = true
+internal_reject_requires_structure = false
+internal_reject_sr_requires_structure = true
+internal_reject_requires_price_action = true
+internal_reject_watch_after_fvg_fill_bars = 8
+internal_reject_min_fvg_fill_ratio = 0.4
+internal_reject_deep_fvg_fill_ratio = 0.8
+internal_reject_min_sr_penetration_atr = 0.3
 allow_neutral_range_trade = true
 block_news_or_risk_off = true
 confluence_score_bonus = 0.08
@@ -62,6 +76,15 @@ zone_loss_cooldown_candles = 12
 ```
 
 `slow_max_bars = 8` nghia la slow reaction chi cho BOS/CHOCH toi da 8 nen M15.
+
+## Trade Modes
+
+Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
+
+- Default theo zone type: `support`/`resistance` = `["reject"]`, `fvg` = `["reject", "internal_reject"]`.
+- Human co the set explicit `trade_modes` cho zone tren UI. List explicit vua gioi han family duoc trade, vua **bypass toan bo context gate** (bias/regime/news/macro trend) cho family do — thesis cua human thang bot context. Cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR, stop limit) van ap dung.
+- He qua: bot SR zone khong con trade `internal_reject` theo default; muon internal reject tren SR zone cu the thi human set `trade_modes = ["reject", "internal_reject"]`.
+- Metadata candidate ghi `context_bypass` va `trade_modes` de debug.
 
 ## Context Rules
 
@@ -88,9 +111,98 @@ Slow reaction khong vao ngay. Bot chuyen sang `waiting_bos`; neu BOS/CHOCH M15 x
 
 ## Entry And Stop Rules
 
-Phase hien tai la reject-only. Chi `reject` duoc phep tao trade setup `eligible`.
+Phase hien tai la reject-family. Chi `reject` va `internal_reject` duoc phep tao trade setup `eligible`.
 
-`fakeout`, `waiting_bos`, `retest_reject`, `clean_breakout` va cac reaction khac van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong `zone_reaction_v2` khi `allowed_reactions = ["reject"]`.
+`fakeout`, `waiting_bos`, `retest_reject`, `clean_breakout` va cac reaction khac van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong `zone_reaction_v2` khi chung khong nam trong `allowed_reactions`.
+
+### Macro Trend Gate
+
+Backtest 2023-2026 cho thay counter-macro trade co edge am ro rang: short tai resistance trong gold uptrend thua `-22.7R` tren 83 trades, trong khi long tai support thang `+20.8R`. MA200 H1 khong tach duoc edge, nhung momentum ~30 ngay thi co.
+
+Detector `macro_trend_v1` (`semi_bot_trading/context.py`) tinh:
+
+```text
+momentum = close_now - close_{lookback_candles truoc}
+momentum_atr = momentum / ATR_H1
+```
+
+Classification:
+
+```text
+momentum_atr >  flat_threshold_atr  => up
+momentum_atr < -flat_threshold_atr  => down
+con lai                             => flat
+khong du lich su (< lookback)       => unknown
+```
+
+Config:
+
+```toml
+[context.macro_trend]
+detector = "macro_trend_v1"
+timeframe = "H1"
+lookback_candles = 720
+flat_threshold_atr = 0.0
+atr_period = 14
+
+[strategy.playbooks.zone_reaction_v2]
+macro_gate_enabled = true
+```
+
+Gate rule khi `macro_gate_enabled = true`:
+
+- `macro_trend = up`: block moi short setup (`Macro trend up blocks Zone Reaction V2 short.`).
+- `macro_trend = down`: block moi long setup.
+- `flat` hoac `unknown`: cho phep hai chieu (gate degrade gracefully khi thieu lich su).
+
+Macro trend la context type `macro_trend` trong `market_contexts`, nen human co the override `effective_value` nhu bias/regime. Backtest incremental tinh point-in-time tu H1 candles co san tai signal candle, khong dung gia tri persisted de tranh look-ahead.
+
+CLI cho runtime/dashboard:
+
+```bash
+python -m semi_bot_trading.cli detect-macro-trend
+```
+
+Metadata trade ghi them `macro_trend` de research/debug.
+
+Luu y: data 2023-2026 toan bull market. Gate nay chua duoc kiem chung trong bear/sideway market dai han; khi co data bear, can re-validate truoc khi tin short side.
+
+### Internal Reject For Wide/Deep Zones
+
+Classic `reject` yeu cau gia dong cua ra khoi toan bo zone:
+
+- Long tai support/bullish FVG: close tren `zone_high`.
+- Short tai resistance/bearish FVG: close duoi `zone_low`.
+
+Rule nay tot voi zone hep, nhung co the bo lo FVG/SR rong. Voi zone rong, gia co the fill sau vao trong zone, tao BOS/CHOCH + price action dao chieu ngay ben trong zone, roi moi bat di. Cho nen `internal_reject` cho phep vao lenh khi close van nam trong zone.
+
+Dieu kien `internal_reject`:
+
+- Zone type: `support`, `resistance`, hoac `fvg`.
+- Candle M15 da touch/di vao zone va close van nam trong zone.
+- Structure trigger (`BOS`/`CHOCH` cung huong entry) la bat buoc cho SR zone (`internal_reject_sr_requires_structure = true`) nhung khong bat buoc cho FVG (`internal_reject_requires_structure = false`). Backtest 60k nen cho thay PA-only ben trong SR la knife-catching (support long -5.5R/23 trades), trong khi FVG fill + PA dao chieu hoat dong on.
+- Co price action trigger cung huong entry: `engulfing`, `pinbar`, `marubozu`, `morning/evening star`, hoac `displacement`.
+- Structure trigger va price action duoc phep nam trong cung reaction window `internal_reject_watch_after_fvg_fill_bars`, khong bat buoc cung mot nen M15. Tuy nhien it nhat mot trigger phai xuat hien o nen signal hien tai de tranh reuse tin hieu cu.
+- FVG phai fill it nhat `internal_reject_min_fvg_fill_ratio = 0.4`.
+- FVG da `mitigated` van duoc quan sat them `internal_reject_watch_after_fvg_fill_bars = 8` nen M15 sau fill neu chua expired.
+
+Direction:
+
+- `support` hoac bullish `fvg`: chi long.
+- `resistance` hoac bearish `fvg`: chi short.
+- Context van ap dung nhu cu: bullish chi long, bearish chi short, neutral+ranging cho phep hai chieu, news/risk_off bi block.
+
+Metadata trade ghi them:
+
+- `reaction_v2 = internal_reject`
+- `internal_reject_reason`
+- `fill_ratio`
+- `zone_width_atr`
+- `inside_zone_close_position`
+- `structure_trigger_types`
+- `price_action_trigger_types`
+
+Khac voi `fakeout`: `internal_reject` khong yeu cau gia phai wick xuyen qua bien zone roi close reclaim. No chi can phan ung dao chieu co BOS/CHOCH + PA ben trong zone.
 
 Fakeout co penetration nho qua zone nhung ca cay nen quet qua sau cung khong vao ngay. Bot do:
 
@@ -118,16 +230,18 @@ Voi XAUUSD H1/M15, rule nay tranh cac lenh co SL qua chat nhu 0.6-3 gia, la nhom
 Sau khi tinh stop, bot chan setup neu stop distance qua lon:
 
 ```text
-max_stop_distance = 30.0 gia
+max_stop_distance = 35.0 gia
 ```
 
-Neu `abs(entry - stop_loss) > 30.0`, setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`. Rule nay tranh cac lenh co SL qua rong lam target 2R qua xa va kho danh gia edge.
+Neu `abs(entry - stop_loss) > 40.0`, setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`. Rule nay tranh cac lenh co SL qua rong lam target 2R qua xa va kho danh gia edge.
 
-Rieng `retest_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen retest:
+Rieng `retest_reject` va `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 
 ```text
 long retest_reject:  stop = reaction_low - 0.2 ATR
 short retest_reject: stop = reaction_high + 0.2 ATR
+long internal_reject:  stop = reaction_low - 0.2 ATR
+short internal_reject: stop = reaction_high + 0.2 ATR
 ```
 
 Sau do van ap dung `min_stop_distance`. Cach nay tranh truong hop zone SR/FVG rat rong lam SL bi day ve dau kia cua zone.

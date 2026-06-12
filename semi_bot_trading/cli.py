@@ -9,7 +9,7 @@ from .backtest_report import render_backtest_html, render_backtest_report
 from .candles import candle_summary, find_gaps
 from .chart import build_chart_payload
 from .config import DEFAULT_CONFIG_PATH, load_config
-from .context import detect_and_store_bias, detect_and_store_regime, latest_contexts
+from .context import detect_and_store_bias, detect_and_store_macro_trend, detect_and_store_regime, latest_contexts
 from .db import DEFAULT_DB_PATH, connect, init_db
 from .importer import import_data_dir
 from .price_action import detect_and_store_price_action_patterns
@@ -249,6 +249,30 @@ def cmd_detect_bias(args: argparse.Namespace) -> None:
     print(
         f"Stored {symbol} {timeframe} bias={context.effective_value} "
         f"confidence={context.effective_confidence:.2f} from {context.valid_from}"
+    )
+
+
+def cmd_detect_macro_trend(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbol = args.symbol or config.symbol
+    timeframe = args.timeframe or config.macro_trend.timeframe
+    db_path = args.db or config.database
+
+    with connect(db_path) as conn:
+        init_db(conn)
+        context = detect_and_store_macro_trend(
+            conn,
+            symbol=symbol,
+            timeframe=timeframe,
+            lookback_candles=args.lookback_candles or config.macro_trend.lookback_candles,
+            flat_threshold_atr=config.macro_trend.flat_threshold_atr,
+            atr_period=config.macro_trend.atr_period,
+        )
+    momentum_atr = context.metadata.get("momentum_atr")
+    print(
+        f"Stored {symbol} {timeframe} macro_trend={context.effective_value} "
+        f"momentum_atr={momentum_atr} confidence={context.effective_confidence:.2f} "
+        f"from {context.valid_from}"
     )
 
 
@@ -832,6 +856,17 @@ def build_parser() -> argparse.ArgumentParser:
     bias_parser.add_argument("--recent-swings", type=int)
     bias_parser.add_argument("--recent-breaks", type=int)
     bias_parser.set_defaults(func=cmd_detect_bias)
+
+    macro_trend_parser = subparsers.add_parser(
+        "detect-macro-trend",
+        help="Detect slow macro trend from long-lookback momentum in ATR units.",
+    )
+    add_common_config_arg(macro_trend_parser)
+    add_common_db_arg(macro_trend_parser)
+    macro_trend_parser.add_argument("--symbol")
+    macro_trend_parser.add_argument("--timeframe")
+    macro_trend_parser.add_argument("--lookback-candles", type=int)
+    macro_trend_parser.set_defaults(func=cmd_detect_macro_trend)
 
     regime_parser = subparsers.add_parser(
         "detect-regime",

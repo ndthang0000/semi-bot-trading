@@ -495,12 +495,16 @@ class IncrementalBacktestTimeline:
         context_start = context_views[0].open_time if context_views else signal_time
         context_points = [point for point in structure_points if point.event_time >= context_start]
         recent_strategy_points = strategy_points[-STRATEGY_POINT_WINDOW:]
+        # Macro trend needs a much longer candle window than bias/regime, so it
+        # reads the full point-in-time H1 history available at the signal candle.
+        macro_window = self.config.macro_trend.lookback_candles + self.config.macro_trend.atr_period + 2
         contexts = build_replay_contexts(
             self.symbol,
             self.config.bias.timeframe,
             context_points,
             context_views,
             self.config,
+            macro_candles=structure_views[-macro_window:],
         )
         return build_setup_candidates(
             symbol=self.symbol,
@@ -511,6 +515,7 @@ class IncrementalBacktestTimeline:
             config=self.config.strategy,
             context_timeframe=self.config.bias.timeframe,
             allowed_playbooks=self.allowed_playbooks,
+            context_candles=self.structure_candles[: bisect_right(self.structure_view_times, signal_time)][-STRATEGY_EVALUATION_WINDOW:],
         )
 
     def zones_at(self, signal_time: str) -> list[dict[str, Any]]:
@@ -612,7 +617,14 @@ class IncrementalBacktestTimeline:
         snapshot = [
             zone_to_chart(zone)
             for zone in [*sr_zones, *[zone for zones in smc_detected.values() for zone in zones]]
-            if zone.status == "active" and (self.allowed_zone_types is None or zone.zone_type in self.allowed_zone_types)
+            # Recently-invalidated SR zones stay in the snapshot because the H1
+            # candle that invalidates them is exactly the breakout candle that
+            # sr_breakout_v1 trades; eligibility re-checks the recency window.
+            if (
+                zone.status == "active"
+                or (zone.status == "invalidated" and zone.zone_type in ("support", "resistance"))
+            )
+            and (self.allowed_zone_types is None or zone.zone_type in self.allowed_zone_types)
         ]
         snapshot.sort(key=lambda zone: (zone_detection_time(zone), zone.get("id", "")))
         self.zone_snapshot_cache[snapshot_key] = snapshot
@@ -632,6 +644,20 @@ def build_incremental_timeline(
     structure_candles = load_backtest_candles_between(conn, symbol, config.bias.timeframe, start, end)
     if not structure_candles:
         structure_candles = load_backtest_candles(conn, symbol, config.bias.timeframe, max(len(strategy_candles) // 4, 1))
+    elif structure_candles:
+        # Prepend extra context-timeframe history so the slow macro trend detector
+        # has its full lookback even at the start of a chunk. Without this, the
+        # chunked engine reports macro_trend=unknown for the first ~lookback
+        # candles of every chunk and the macro gate silently stops filtering.
+        macro_history = config.macro_trend.lookback_candles + config.macro_trend.atr_period + 2
+        earlier = load_backtest_candles_before(
+            conn,
+            symbol,
+            config.bias.timeframe,
+            structure_candles[0]["close_time"],
+            macro_history,
+        )
+        structure_candles = [*earlier, *structure_candles]
     structure_views = chart_candles_to_views(structure_candles)
     structure_slices = chart_candles_to_slices(structure_candles)
     structure_swing_config = config.swing_for(config.bias.timeframe)
@@ -1154,6 +1180,38 @@ def load_backtest_candles_between(conn: Connection, symbol: str, timeframe: str,
             "volume": float(row["volume"]) if row["volume"] is not None else None,
         }
         for row in rows
+    ]
+
+
+def load_backtest_candles_before(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    before: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT open_time, close_time, open, high, low, close, volume
+        FROM candles
+        WHERE symbol = ? AND timeframe = ? AND close_time < ?
+        ORDER BY open_time DESC
+        LIMIT ?
+        """,
+        (symbol, timeframe, before, limit),
+    ).fetchall()
+    return [
+        {
+            "time": row["close_time"],
+            "open_time": row["open_time"],
+            "close_time": row["close_time"],
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": float(row["volume"]) if row["volume"] is not None else None,
+        }
+        for row in reversed(rows)
     ]
 
 

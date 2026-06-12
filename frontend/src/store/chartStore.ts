@@ -26,6 +26,7 @@ export const defaultSelectedPlaybooks: PlaybookKey[] = ["zone_reaction_v2"];
 
 export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibilityKey[]; structure: boolean }> = {
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
+  sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
 };
 
 type ChartState = {

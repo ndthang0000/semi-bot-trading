@@ -1,4 +1,4 @@
-import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe, TradeHistoryResponse, TradeReview } from "../types";
+import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe, TradeHistoryResponse, TradeReview, ZoneTradeMode } from "../types";
 type ChartQuery = {
     symbol: string;
     timeframe: Timeframe;
@@ -46,6 +46,7 @@ export type ZoneOverrideInput = {
     status: "active" | "disabled";
     no_expiry: boolean;
     reason?: string;
+    trade_modes?: ZoneTradeMode[];
 };
 export type ZoneCreateInput = {
     symbol: string;

@@ -395,6 +395,7 @@ def research_sections() -> list[tuple[str, Any]]:
         ("By confluence types", lambda row: row.get("confluence_types", "--") or "--"),
         ("By trigger type", lambda row: row.get("trigger_types", "--") or "--"),
         ("By score bucket", lambda row: numeric_bucket(float_value(row.get("score")), [0.6, 0.7, 0.8, 0.9])),
+        ("By FVG fill ratio bucket", lambda row: numeric_bucket(float_value(row.get("zone_fill_ratio")), [0.5, 0.8])),
         ("By zone width/ATR bucket", lambda row: numeric_bucket(float_value(row.get("zone_width_atr")), [0.5, 1.0, 1.5, 2.5, 4.0])),
         ("By zone weight bucket", lambda row: numeric_bucket(float_value(row.get("zone_weight")), [0.2, 0.4, 0.6, 0.8])),
         ("By signal year", lambda row: row.get("signal_year", "--")),

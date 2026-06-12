@@ -211,7 +211,7 @@ Default:
 
 ```text
 partial_fill_threshold = 0.50
-fill_threshold = 0.80
+fill_threshold = 0.95
 H1 max_active_days = 2
 H1 decay_start_days = 0.75
 M15 max_active_days = 1

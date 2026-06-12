@@ -228,6 +228,7 @@ function PlaybookMenu() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const toggleSelectedPlaybook = useChartStore((state) => state.toggleSelectedPlaybook);
 
   useEffect(() => {
     if (!open) return;
@@ -260,19 +261,19 @@ function PlaybookMenu() {
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2 font-semibold text-slate-100">
               <Target size={15} className="text-cyan-300" />
-              Running playbook
+              Running playbooks
             </div>
-            <span className="text-xs text-cyan-200">Runtime only</span>
+            <span className="text-xs text-cyan-200">Auto layers</span>
           </div>
 
           <div className="grid gap-1">
             {PLAYBOOK_ITEMS.map((item) => (
-              <label key={item.key} className="grid cursor-default gap-0.5 rounded px-1.5 py-1.5 bg-ink-800/50">
+              <label key={item.key} className="grid cursor-pointer gap-0.5 rounded px-1.5 py-1.5 hover:bg-ink-800/70">
                 <span className="flex items-center gap-2">
                   <input
-                    checked
+                    checked={selectedPlaybooks.includes(item.key)}
                     className="accent-cyan-400"
-                    disabled
+                    onChange={(event) => toggleSelectedPlaybook(item.key, event.target.checked)}
                     type="checkbox"
                   />
                   <span className="font-medium text-slate-100">{item.label}</span>
@@ -433,6 +434,7 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "zone_reaction_v2", label: "Zone Reaction V2" },
+  { key: "sr_breakout_v1", label: "SR Breakout V1" },
 ];
 
 function playbookRequirementLabel(playbook: PlaybookKey): string {

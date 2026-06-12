@@ -28,6 +28,14 @@ class BiasConfig:
 
 
 @dataclass(frozen=True)
+class MacroTrendConfig:
+    timeframe: str
+    lookback_candles: int
+    flat_threshold_atr: float
+    atr_period: int
+
+
+@dataclass(frozen=True)
 class RegimeConfig:
     timeframe: str
     atr_period: int
@@ -159,6 +167,7 @@ class StrategyConfig:
     zone_reaction_v2_breakout_min_close_outside_atr: float
     zone_reaction_v2_consolidation_breakout_body_atr: float
     zone_reaction_v2_retest_max_bars: int
+    zone_reaction_v2_reject_stop_mode: str
     zone_reaction_v2_rr_minimum: float
     zone_reaction_v2_stop_buffer_atr: float
     zone_reaction_v2_min_stop_price: float
@@ -166,9 +175,31 @@ class StrategyConfig:
     zone_reaction_v2_max_stop_distance: float
     zone_reaction_v2_require_trigger_for_fakeout: bool
     zone_reaction_v2_fakeout_max_reaction_depth_atr: float
+    zone_reaction_v2_internal_reject_enabled: bool
+    zone_reaction_v2_internal_reject_requires_structure: bool
+    zone_reaction_v2_internal_reject_sr_requires_structure: bool
+    zone_reaction_v2_internal_reject_requires_price_action: bool
+    zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars: int
+    zone_reaction_v2_internal_reject_min_fvg_fill_ratio: float
+    zone_reaction_v2_internal_reject_deep_fvg_fill_ratio: float
+    zone_reaction_v2_internal_reject_min_sr_penetration_atr: float
     zone_reaction_v2_allow_neutral_range_trade: bool
     zone_reaction_v2_block_news_or_risk_off: bool
+    zone_reaction_v2_macro_gate_enabled: bool
     zone_reaction_v2_confluence_score_bonus: float
+    sr_breakout_v1_enabled: bool
+    sr_breakout_v1_allowed_entries: tuple[str, ...]
+    sr_breakout_v1_allow_bot_sr_breakout: bool
+    sr_breakout_v1_breakout_buffer_atr: float
+    sr_breakout_v1_market_entry_max_distance_atr: float
+    sr_breakout_v1_retest_max_bars: int
+    sr_breakout_v1_min_body_atr: float
+    sr_breakout_v1_sl_mode: str
+    sr_breakout_v1_sl_zone_buffer_atr: float
+    sr_breakout_v1_sl_min_atr: float
+    sr_breakout_v1_sl_atr: float
+    sr_breakout_v1_rr: float
+    sr_breakout_v1_max_stop_distance: float
 
 
 @dataclass(frozen=True)
@@ -191,6 +222,7 @@ class AppConfig:
     swing_timeframes: dict[str, SwingConfig]
     breaks: BreakConfig
     bias: BiasConfig
+    macro_trend: MacroTrendConfig
     regime: RegimeConfig
     support_resistance: SupportResistanceConfig
     zone_lifecycle: ZoneLifecycleConfig
@@ -223,10 +255,12 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
     strategy = raw.get("strategy", {})
     strategy_playbooks = strategy.get("playbooks", {})
     zone_reaction_v2 = strategy_playbooks.get("zone_reaction_v2", {}) if isinstance(strategy_playbooks, dict) else {}
+    sr_breakout_v1 = strategy_playbooks.get("sr_breakout_v1", {}) if isinstance(strategy_playbooks, dict) else {}
     backtest = raw.get("backtest", {})
     swing = structure.get("swing", {})
     breaks = structure.get("breaks", {})
     bias = context.get("bias", {})
+    macro_trend = context.get("macro_trend", {})
     regime = context.get("regime", {})
     support_resistance = zones.get("support_resistance", {})
     zone_lifecycle = zones.get("lifecycle", {})
@@ -247,6 +281,12 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             timeframe=str(bias.get("timeframe", "H1")).upper(),
             recent_swings=int(bias.get("recent_swings", 6)),
             recent_breaks=int(bias.get("recent_breaks", 3)),
+        ),
+        macro_trend=MacroTrendConfig(
+            timeframe=str(macro_trend.get("timeframe", "H1")).upper(),
+            lookback_candles=int(macro_trend.get("lookback_candles", 720)),
+            flat_threshold_atr=float(macro_trend.get("flat_threshold_atr", 0.0)),
+            atr_period=int(macro_trend.get("atr_period", 14)),
         ),
         regime=RegimeConfig(
             timeframe=str(regime.get("timeframe", "H1")).upper(),
@@ -367,6 +407,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
                 zone_reaction_v2.get("consolidation_breakout_body_atr", 1.2)
             ),
             zone_reaction_v2_retest_max_bars=int(zone_reaction_v2.get("retest_max_bars", 8)),
+            zone_reaction_v2_reject_stop_mode=str(zone_reaction_v2.get("reject_stop_mode", "zone")).lower(),
             zone_reaction_v2_rr_minimum=float(zone_reaction_v2.get("rr_minimum", 2.0)),
             zone_reaction_v2_stop_buffer_atr=float(zone_reaction_v2.get("stop_buffer_atr", 0.2)),
             zone_reaction_v2_min_stop_price=float(zone_reaction_v2.get("min_stop_price", 4.0)),
@@ -376,9 +417,49 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_fakeout_max_reaction_depth_atr=float(
                 zone_reaction_v2.get("fakeout_max_reaction_depth_atr", 1.5)
             ),
+            zone_reaction_v2_internal_reject_enabled=bool(zone_reaction_v2.get("internal_reject_enabled", True)),
+            zone_reaction_v2_internal_reject_requires_structure=bool(
+                zone_reaction_v2.get("internal_reject_requires_structure", True)
+            ),
+            zone_reaction_v2_internal_reject_sr_requires_structure=bool(
+                zone_reaction_v2.get("internal_reject_sr_requires_structure", True)
+            ),
+            zone_reaction_v2_internal_reject_requires_price_action=bool(
+                zone_reaction_v2.get("internal_reject_requires_price_action", True)
+            ),
+            zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars=int(
+                zone_reaction_v2.get("internal_reject_watch_after_fvg_fill_bars", 8)
+            ),
+            zone_reaction_v2_internal_reject_min_fvg_fill_ratio=float(
+                zone_reaction_v2.get("internal_reject_min_fvg_fill_ratio", 0.5)
+            ),
+            zone_reaction_v2_internal_reject_deep_fvg_fill_ratio=float(
+                zone_reaction_v2.get("internal_reject_deep_fvg_fill_ratio", 0.8)
+            ),
+            zone_reaction_v2_internal_reject_min_sr_penetration_atr=float(
+                zone_reaction_v2.get("internal_reject_min_sr_penetration_atr", 0.0)
+            ),
             zone_reaction_v2_allow_neutral_range_trade=bool(zone_reaction_v2.get("allow_neutral_range_trade", True)),
             zone_reaction_v2_block_news_or_risk_off=bool(zone_reaction_v2.get("block_news_or_risk_off", True)),
+            zone_reaction_v2_macro_gate_enabled=bool(zone_reaction_v2.get("macro_gate_enabled", True)),
             zone_reaction_v2_confluence_score_bonus=float(zone_reaction_v2.get("confluence_score_bonus", 0.08)),
+            sr_breakout_v1_enabled=bool(sr_breakout_v1.get("enabled", True)),
+            sr_breakout_v1_allowed_entries=tuple(
+                str(item) for item in sr_breakout_v1.get("allowed_entries", ["retest_breakout"])
+            ),
+            sr_breakout_v1_allow_bot_sr_breakout=bool(sr_breakout_v1.get("allow_bot_sr_breakout", False)),
+            sr_breakout_v1_breakout_buffer_atr=float(sr_breakout_v1.get("breakout_buffer_atr", 0.15)),
+            sr_breakout_v1_market_entry_max_distance_atr=float(
+                sr_breakout_v1.get("market_entry_max_distance_atr", 0.5)
+            ),
+            sr_breakout_v1_retest_max_bars=int(sr_breakout_v1.get("retest_max_bars", 8)),
+            sr_breakout_v1_min_body_atr=float(sr_breakout_v1.get("min_body_atr", 0.5)),
+            sr_breakout_v1_sl_mode=str(sr_breakout_v1.get("sl_mode", "atr")).lower(),
+            sr_breakout_v1_sl_zone_buffer_atr=float(sr_breakout_v1.get("sl_zone_buffer_atr", 0.2)),
+            sr_breakout_v1_sl_min_atr=float(sr_breakout_v1.get("sl_min_atr", 0.6)),
+            sr_breakout_v1_sl_atr=float(sr_breakout_v1.get("sl_atr", 1.2)),
+            sr_breakout_v1_rr=float(sr_breakout_v1.get("rr", 2.0)),
+            sr_breakout_v1_max_stop_distance=float(sr_breakout_v1.get("max_stop_distance", 60.0)),
         ),
         backtest=BacktestConfig(
             spread=float(backtest.get("spread", 0.30)),

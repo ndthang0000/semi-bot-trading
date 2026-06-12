@@ -233,6 +233,7 @@ def report_sections() -> list[tuple[str, DimensionFunc]]:
         ("By reaction state", lambda trade: metadata_value(trade, "zone_reaction_state", fallback=trade.metadata.get("zone_reaction_state"))),
         ("By trigger type", lambda trade: list_value(trade, "trigger_types")),
         ("By score bucket", score_bucket),
+        ("By FVG fill ratio bucket", fill_ratio_bucket),
         ("By zone weight bucket", numeric_bucket("zone_weight", [0.2, 0.4, 0.6, 0.8])),
         ("By zone confidence bucket", numeric_bucket("zone_confidence", [0.2, 0.4, 0.6, 0.8])),
         ("By zone width/ATR bucket", numeric_bucket("zone_width_atr", [0.5, 1.0, 1.5, 2.5, 4.0])),
@@ -293,6 +294,25 @@ def numeric_bucket(key: str, thresholds: list[float]) -> DimensionFunc:
         return f">={thresholds[-1]:g}"
 
     return bucket
+
+
+def fill_ratio_bucket(trade: BacktestTrade) -> str:
+    metadata = candidate_metadata(trade)
+    value = metadata.get("fill_ratio", metadata.get("zone_fill_ratio"))
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    return numeric_bucket_value(number, [0.5, 0.8])
+
+
+def numeric_bucket_value(number: float, thresholds: list[float]) -> str:
+    previous = None
+    for threshold in thresholds:
+        if number < threshold:
+            return f"<{threshold:g}" if previous is None else f"{previous:g}-{threshold:g}"
+        previous = threshold
+    return f">={thresholds[-1]:g}"
 
 
 def score_bucket(trade: BacktestTrade) -> str:

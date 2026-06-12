@@ -5,8 +5,46 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from semi_bot_trading.context import detect_bias_context, detect_regime_context, replace_active_context
+from semi_bot_trading.context import detect_bias_context, detect_regime_context, replace_active_context, score_macro_trend
 from semi_bot_trading.db import connect, init_db
+
+
+def macro_candles(closes: list[float]) -> list[dict[str, object]]:
+    return [
+        {
+            "open_time": f"2026-01-{(index // 24) + 1:02d}T{index % 24:02d}:00:00+00:00",
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+        }
+        for index, close in enumerate(closes)
+    ]
+
+
+class MacroTrendTest(unittest.TestCase):
+    def test_rising_closes_produce_up_trend(self) -> None:
+        candles = macro_candles([100.0 + index for index in range(40)])
+        score = score_macro_trend(candles, lookback_candles=20, flat_threshold_atr=0.0, atr_period=14)
+        self.assertEqual("up", score["value"])
+        self.assertGreater(score["momentum_atr"], 0)
+
+    def test_falling_closes_produce_down_trend(self) -> None:
+        candles = macro_candles([200.0 - index for index in range(40)])
+        score = score_macro_trend(candles, lookback_candles=20, flat_threshold_atr=0.0, atr_period=14)
+        self.assertEqual("down", score["value"])
+        self.assertLess(score["momentum_atr"], 0)
+
+    def test_small_momentum_below_threshold_is_flat(self) -> None:
+        closes = [100.0, 100.5] * 20
+        candles = macro_candles(closes)
+        score = score_macro_trend(candles, lookback_candles=20, flat_threshold_atr=2.0, atr_period=14)
+        self.assertEqual("flat", score["value"])
+
+    def test_insufficient_history_is_unknown(self) -> None:
+        candles = macro_candles([100.0 + index for index in range(10)])
+        score = score_macro_trend(candles, lookback_candles=720, flat_threshold_atr=0.0, atr_period=14)
+        self.assertEqual("unknown", score["value"])
+        self.assertIsNone(score["momentum_atr"])
 
 
 class BiasContextTest(unittest.TestCase):

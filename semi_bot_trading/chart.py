@@ -4,10 +4,66 @@ import json
 from sqlite3 import Connection
 from typing import Any
 
+from .context import score_macro_trend
 from .strategy import build_setup_candidates
 
 
 CHART_PAYLOAD_VERSION = 1
+
+
+def compute_live_macro_trend_context(
+    conn: Connection,
+    symbol: str,
+    macro_trend_config: Any,
+    end: str | None = None,
+) -> dict[str, Any] | None:
+    """Compute a chart-context dict for macro trend straight from candles.
+
+    Used as a fallback so the dashboard always shows a fresh macro trend even
+    when no `detect-macro-trend` CLI run has persisted one to market_contexts.
+    """
+    limit = macro_trend_config.lookback_candles + macro_trend_config.atr_period + 2
+    candles = load_chart_candles(conn, symbol, macro_trend_config.timeframe, limit, end=end)
+    if not candles:
+        return None
+    candle_rows = [
+        {
+            "open_time": candle["time"],
+            "high": candle["high"],
+            "low": candle["low"],
+            "close": candle["close"],
+        }
+        for candle in candles
+    ]
+    score = score_macro_trend(
+        candle_rows,
+        macro_trend_config.lookback_candles,
+        macro_trend_config.flat_threshold_atr,
+        macro_trend_config.atr_period,
+    )
+    value = str(score["value"])
+    confidence = float(score["confidence"])
+    return {
+        "bot_value": value,
+        "primary_value": value,
+        "secondary_value": None,
+        "bot_confidence": confidence,
+        "effective_value": value,
+        "effective_confidence": confidence,
+        "source": "bot",
+        "valid_from": str(candles[-1]["time"]),
+        "valid_until": None,
+        "status": "active",
+        "metadata": {
+            "detector": "macro_trend_v1_live",
+            "version": 1,
+            "lookback_candles": score["lookback_candles"],
+            "momentum": score["momentum"],
+            "momentum_atr": score["momentum_atr"],
+            "atr": score["atr"],
+            "reference_time": score["reference_time"],
+        },
+    }
 
 
 def json_loads(value: str | None, default: Any) -> Any:
@@ -323,6 +379,7 @@ def build_chart_payload(
     structure_timeframe: str | None = None,
     strategy_config: Any | None = None,
     allowed_playbooks: set[str] | None = None,
+    macro_trend_config: Any | None = None,
 ) -> dict[str, Any]:
     candles = load_chart_candles(conn, symbol, timeframe, limit, start, end, start_index)
     if not candles:
@@ -333,9 +390,17 @@ def build_chart_payload(
     effective_structure_timeframe = structure_timeframe or timeframe
     zones = load_chart_zones(conn, symbol, timeframe, range_start, range_end, active_only=active_zones_only)
     contexts = load_chart_contexts(conn, symbol)
+    if macro_trend_config is not None:
+        macro_timeframe = str(macro_trend_config.timeframe)
+        # Persisted contexts (including human overrides) win; the live value is a fallback.
+        if "macro_trend" not in contexts.get(macro_timeframe, {}):
+            live_macro = compute_live_macro_trend_context(conn, symbol, macro_trend_config)
+            if live_macro is not None:
+                contexts.setdefault(macro_timeframe, {})["macro_trend"] = live_macro
     setup_candidates: list[dict[str, Any]] = []
     if strategy_config is not None:
         strategy_candles = load_chart_candles(conn, symbol, strategy_config.timeframe, 240, end=range_end)
+        context_candles = load_chart_candles(conn, symbol, effective_structure_timeframe, 240, end=range_end)
         if strategy_candles:
             setup_candidates = build_setup_candidates(
                 symbol=symbol,
@@ -352,6 +417,7 @@ def build_chart_payload(
                 config=strategy_config,
                 context_timeframe=effective_structure_timeframe,
                 allowed_playbooks=allowed_playbooks,
+                context_candles=context_candles,
             )
     return {
         "version": CHART_PAYLOAD_VERSION,

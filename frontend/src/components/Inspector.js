@@ -342,6 +342,7 @@ function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
     const [weight, setWeight] = useState(String(zone.weight));
     const [confidence, setConfidence] = useState(String(zone.confidence));
     const [status, setStatus] = useState(zone.status === "disabled" ? "disabled" : "active");
+    const [tradeModes, setTradeModes] = useState(defaultTradeModes(zone));
     const [noExpiry, setNoExpiry] = useState(defaultNoExpiry(zone));
     const [reason, setReason] = useState("");
     const [error, setError] = useState(null);
@@ -352,6 +353,7 @@ function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
         setWeight(String(zone.weight));
         setConfidence(String(zone.confidence));
         setStatus(zone.status === "disabled" ? "disabled" : "active");
+        setTradeModes(defaultTradeModes(zone));
         setNoExpiry(defaultNoExpiry(zone));
         setReason("");
         setError(null);
@@ -362,6 +364,7 @@ function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
         setWeight(String(zone.weight));
         setConfidence(String(zone.confidence));
         setStatus(zone.status === "disabled" ? "disabled" : "active");
+        setTradeModes(defaultTradeModes(zone));
         setNoExpiry(defaultNoExpiry(zone));
         setReason("");
         setError(null);
@@ -396,6 +399,7 @@ function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
                 status,
                 no_expiry: noExpiry,
                 reason: reason.trim() || undefined,
+                trade_modes: tradeModes,
             });
             setSelected({ kind: "zone", entity: updated });
             onZoneUpdated();
@@ -409,7 +413,7 @@ function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
         finally {
             setIsSaving(false);
         }
-    }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, weight, zone]);
+    }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
     const deleteZone = useCallback(async () => {
         if (isSaving)
             return;
@@ -454,13 +458,36 @@ function ZoneEditor({ zone, onZoneUpdated, showToast, }) {
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [deleteZone, save, setSelected]);
-    return (_jsxs("div", { className: "grid gap-3 text-sm", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx(Detail, { label: "Type", value: zoneDisplayName(zone) }), _jsx(Detail, { label: "Source", value: zone.source }), _jsx(Detail, { label: "Start", value: compactTime(zone.visual_start) }), _jsx(Detail, { label: "End", value: compactTime(zone.visual_end) }), _jsx(Detail, { label: "Touches", value: String(zone.metadata.touch_count_total ?? zone.metadata.touch_count ?? "--") })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx(NumberField, { label: "Low", value: priceLow, onChange: setPriceLow, step: "0.01" }), _jsx(NumberField, { label: "High", value: priceHigh, onChange: setPriceHigh, step: "0.01" }), _jsx(NumberField, { label: "Weight", value: weight, onChange: setWeight, step: "0.01", min: "0", max: "1" }), _jsx(NumberField, { label: "Confidence", value: confidence, onChange: setConfidence, step: "0.01", min: "0", max: "1" })] }), _jsxs("label", { className: "grid gap-1 text-xs text-slate-500", children: ["Status", _jsxs("select", { className: "h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none", value: status, onChange: (event) => setStatus(event.target.value === "disabled" ? "disabled" : "active"), children: [_jsx("option", { value: "active", children: "active" }), _jsx("option", { value: "disabled", children: "disabled" })] })] }), _jsxs("label", { className: "flex items-center gap-2 text-xs text-slate-400", children: [_jsx("input", { checked: noExpiry, className: "accent-cyan-400", type: "checkbox", onChange: (event) => setNoExpiry(event.target.checked) }), "No expiry"] }), _jsxs("label", { className: "grid gap-1 text-xs text-slate-500", children: ["Reason", _jsx("textarea", { className: "min-h-16 resize-none rounded-md border border-ink-700 bg-ink-850 px-2 py-2 text-sm text-slate-100 outline-none", value: reason, onChange: (event) => setReason(event.target.value) })] }), error ? _jsx("div", { className: "rounded-md border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-100", children: error }) : null, _jsxs("div", { className: "grid grid-cols-3 gap-2", children: [_jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-ink-700 bg-ink-800 text-sm text-slate-100 hover:border-slate-500", type: "button", onClick: reset, children: [_jsx(RotateCcw, { size: 14 }), "Reset"] }), _jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-400/60 bg-cyan-400/15 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50", type: "button", disabled: isSaving, onClick: save, children: [_jsx(Save, { size: 14 }), isSaving ? "Saving" : "Save"] }), _jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-rose-400/50 bg-rose-500/10 text-sm font-semibold text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50", type: "button", disabled: isSaving, title: "Delete zone (D)", onClick: deleteZone, children: [_jsx(Trash2, { size: 14 }), "Delete"] })] })] }));
+    return (_jsxs("div", { className: "grid gap-3 text-sm", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx(Detail, { label: "Type", value: zoneDisplayName(zone) }), _jsx(Detail, { label: "Source", value: zone.source }), _jsx(Detail, { label: "Start", value: compactTime(zone.visual_start) }), _jsx(Detail, { label: "End", value: compactTime(zone.visual_end) }), _jsx(Detail, { label: "Touches", value: String(zone.metadata.touch_count_total ?? zone.metadata.touch_count ?? "--") })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx(NumberField, { label: "Low", value: priceLow, onChange: setPriceLow, step: "0.01" }), _jsx(NumberField, { label: "High", value: priceHigh, onChange: setPriceHigh, step: "0.01" }), _jsx(NumberField, { label: "Weight", value: weight, onChange: setWeight, step: "0.01", min: "0", max: "1" }), _jsx(NumberField, { label: "Confidence", value: confidence, onChange: setConfidence, step: "0.01", min: "0", max: "1" })] }), _jsxs("label", { className: "grid gap-1 text-xs text-slate-500", children: ["Status", _jsxs("select", { className: "h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none", value: status, onChange: (event) => setStatus(event.target.value === "disabled" ? "disabled" : "active"), children: [_jsx("option", { value: "active", children: "active" }), _jsx("option", { value: "disabled", children: "disabled" })] })] }), _jsxs("label", { className: "flex items-center gap-2 text-xs text-slate-400", children: [_jsx("input", { checked: noExpiry, className: "accent-cyan-400", type: "checkbox", onChange: (event) => setNoExpiry(event.target.checked) }), "No expiry"] }), _jsxs("div", { className: "grid gap-2 rounded-md border border-ink-700 bg-ink-950/50 p-3", children: [_jsx("div", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-slate-500", children: "Trade modes" }), _jsx("div", { className: "grid grid-cols-3 gap-2", children: TRADE_MODE_OPTIONS.map((option) => (_jsxs("label", { className: "inline-flex items-center gap-2 rounded border border-ink-700 bg-ink-850 px-2 py-1.5 text-xs text-slate-200", children: [_jsx("input", { checked: tradeModes.includes(option.value), className: "accent-cyan-400", type: "checkbox", onChange: (event) => {
+                                        setTradeModes((current) => event.target.checked
+                                            ? Array.from(new Set([...current, option.value]))
+                                            : current.filter((mode) => mode !== option.value));
+                                    } }), option.label] }, option.value))) })] }), _jsxs("label", { className: "grid gap-1 text-xs text-slate-500", children: ["Reason", _jsx("textarea", { className: "min-h-16 resize-none rounded-md border border-ink-700 bg-ink-850 px-2 py-2 text-sm text-slate-100 outline-none", value: reason, onChange: (event) => setReason(event.target.value) })] }), error ? _jsx("div", { className: "rounded-md border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-100", children: error }) : null, _jsxs("div", { className: "grid grid-cols-3 gap-2", children: [_jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-ink-700 bg-ink-800 text-sm text-slate-100 hover:border-slate-500", type: "button", onClick: reset, children: [_jsx(RotateCcw, { size: 14 }), "Reset"] }), _jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-400/60 bg-cyan-400/15 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50", type: "button", disabled: isSaving, onClick: save, children: [_jsx(Save, { size: 14 }), isSaving ? "Saving" : "Save"] }), _jsxs("button", { className: "inline-flex h-9 items-center justify-center gap-2 rounded-md border border-rose-400/50 bg-rose-500/10 text-sm font-semibold text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50", type: "button", disabled: isSaving, title: "Delete zone (D)", onClick: deleteZone, children: [_jsx(Trash2, { size: 14 }), "Delete"] })] })] }));
 }
 function NumberField({ label, value, onChange, step, min, max, }) {
     return (_jsxs("label", { className: "grid gap-1 text-xs text-slate-500", children: [label, _jsx("input", { className: "h-9 min-w-0 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none", max: max, min: min, step: step, type: "number", value: value, onChange: (event) => onChange(event.target.value) })] }));
 }
 function defaultNoExpiry(zone) {
     return zone.valid_until === null && zone.metadata.human_adjusted === true;
+}
+const TRADE_MODE_OPTIONS = [
+    { value: "reject", label: "Reject" },
+    { value: "internal_reject", label: "Internal" },
+    { value: "breakout", label: "Breakout" },
+];
+function defaultTradeModes(zone) {
+    const raw = zone.metadata.trade_modes;
+    if (Array.isArray(raw)) {
+        const modes = raw.filter((mode) => mode === "reject" || mode === "internal_reject" || mode === "breakout");
+        return modes;
+    }
+    if (zone.type === "fvg")
+        return ["reject", "internal_reject"];
+    if (zone.type === "consolidation")
+        return ["breakout"];
+    if (zone.type === "support" || zone.type === "resistance")
+        return ["reject"];
+    return [];
 }
 function filterImportantZoneList(zones, currentPrice, lastCandleTime, maxZones, selectedZoneId) {
     const pinned = zones.filter((zone) => zone.id === selectedZoneId);
@@ -567,6 +594,10 @@ function setupCardClass(status) {
     return "border-ink-700 bg-ink-850";
 }
 function playbookLabel(value) {
+    if (value === "sr_breakout_v1")
+        return "SR Breakout V1";
+    if (value === "zone_reaction_v2")
+        return "Zone Reaction V2";
     return value
         .split("_")
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

@@ -8,6 +8,7 @@ from sqlite3 import Connection
 
 BIAS_DETECTOR = "bias_v2"
 REGIME_DETECTOR = "regime_v1"
+MACRO_TREND_DETECTOR = "macro_trend_v1"
 
 BIAS_DIRECTION_THRESHOLD = 0.25
 BIAS_RANGE_EFFICIENCY_NEUTRAL_MAX = 0.25
@@ -368,6 +369,111 @@ def detect_and_store_bias(
     recent_breaks: int,
 ) -> MarketContext:
     context = detect_bias_context(conn, symbol, timeframe, recent_swings, recent_breaks)
+    replace_active_context(conn, context)
+    return context
+
+
+def score_macro_trend(
+    candles: list[dict[str, object]],
+    lookback_candles: int,
+    flat_threshold_atr: float,
+    atr_period: int = 14,
+) -> dict[str, object]:
+    """Slow higher-timeframe momentum: last close vs close `lookback_candles` ago, in ATR units.
+
+    Returns value in {"up", "down", "flat", "unknown"}. "unknown" means not enough history;
+    callers should treat it like "flat" (no directional gate).
+    """
+    if len(candles) <= lookback_candles or lookback_candles <= 0:
+        return {
+            "value": "unknown",
+            "confidence": 0.35,
+            "momentum": None,
+            "momentum_atr": None,
+            "atr": None,
+            "lookback_candles": lookback_candles,
+            "reference_time": None,
+        }
+    last = candles[-1]
+    reference = candles[-1 - lookback_candles]
+    momentum = float(last["close"]) - float(reference["close"])
+    atr_value = recent_atr(candles, period=atr_period)
+    momentum_atr = momentum / atr_value if atr_value else None
+    if momentum_atr is None:
+        value = "up" if momentum > 0 else "down" if momentum < 0 else "flat"
+    elif momentum_atr > flat_threshold_atr:
+        value = "up"
+    elif momentum_atr < -flat_threshold_atr:
+        value = "down"
+    else:
+        value = "flat"
+    if momentum_atr is None:
+        confidence = 0.5
+    else:
+        # Scale: |momentum| of 10+ ATR over the lookback maps to full confidence.
+        confidence = min(max(abs(momentum_atr) / 10.0, 0.35), 1.0)
+    return {
+        "value": value,
+        "confidence": round(confidence, 4),
+        "momentum": round(momentum, 5),
+        "momentum_atr": round(momentum_atr, 6) if momentum_atr is not None else None,
+        "atr": round(atr_value, 6) if atr_value is not None else None,
+        "lookback_candles": lookback_candles,
+        "reference_time": reference["open_time"],
+    }
+
+
+def detect_macro_trend_context(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    lookback_candles: int,
+    flat_threshold_atr: float,
+    atr_period: int = 14,
+    end_time: str | None = None,
+) -> MarketContext:
+    candles = load_recent_candles(conn, symbol, timeframe, limit=lookback_candles + atr_period + 2, end_time=end_time)
+    if not candles:
+        raise ValueError(f"Cannot detect macro trend without candles for {symbol} {timeframe}")
+    score = score_macro_trend(candles, lookback_candles, flat_threshold_atr, atr_period)
+    value = str(score["value"])
+    confidence = float(score["confidence"])
+    return MarketContext(
+        symbol=symbol,
+        timeframe=timeframe,
+        context_type="macro_trend",
+        bot_value=value,
+        primary_value=value,
+        secondary_value=None,
+        bot_confidence=round(confidence, 4),
+        effective_value=value,
+        effective_confidence=round(confidence, 4),
+        source="bot",
+        valid_from=str(candles[-1]["open_time"]),
+        valid_until=None,
+        status="active",
+        metadata={
+            "detector": MACRO_TREND_DETECTOR,
+            "version": 1,
+            "lookback_candles": lookback_candles,
+            "flat_threshold_atr": flat_threshold_atr,
+            "momentum": score["momentum"],
+            "momentum_atr": score["momentum_atr"],
+            "atr": score["atr"],
+            "reference_time": score["reference_time"],
+        },
+    )
+
+
+def detect_and_store_macro_trend(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    lookback_candles: int,
+    flat_threshold_atr: float,
+    atr_period: int = 14,
+) -> MarketContext:
+    context = detect_macro_trend_context(conn, symbol, timeframe, lookback_candles, flat_threshold_atr, atr_period)
     replace_active_context(conn, context)
     return context
 

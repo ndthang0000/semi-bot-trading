@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteManualZone, fetchTradeHistory, updateTradeReview, updateZoneOverride } from "../api/chart";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { ChartPayload, PriceZone, SetupCandidate, TradeOrder, TradeReview, ZoneTypeVisibility } from "../types";
+import type { ChartPayload, PriceZone, SetupCandidate, TradeOrder, TradeReview, ZoneTradeMode, ZoneTypeVisibility } from "../types";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
@@ -957,6 +957,7 @@ function ZoneEditor({
   const [weight, setWeight] = useState(String(zone.weight));
   const [confidence, setConfidence] = useState(String(zone.confidence));
   const [status, setStatus] = useState<"active" | "disabled">(zone.status === "disabled" ? "disabled" : "active");
+  const [tradeModes, setTradeModes] = useState<ZoneTradeMode[]>(defaultTradeModes(zone));
   const [noExpiry, setNoExpiry] = useState(defaultNoExpiry(zone));
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -968,6 +969,7 @@ function ZoneEditor({
     setWeight(String(zone.weight));
     setConfidence(String(zone.confidence));
     setStatus(zone.status === "disabled" ? "disabled" : "active");
+    setTradeModes(defaultTradeModes(zone));
     setNoExpiry(defaultNoExpiry(zone));
     setReason("");
     setError(null);
@@ -979,6 +981,7 @@ function ZoneEditor({
     setWeight(String(zone.weight));
     setConfidence(String(zone.confidence));
     setStatus(zone.status === "disabled" ? "disabled" : "active");
+    setTradeModes(defaultTradeModes(zone));
     setNoExpiry(defaultNoExpiry(zone));
     setReason("");
     setError(null);
@@ -1015,6 +1018,7 @@ function ZoneEditor({
         status,
         no_expiry: noExpiry,
         reason: reason.trim() || undefined,
+        trade_modes: tradeModes,
       });
       setSelected({ kind: "zone", entity: updated });
       onZoneUpdated();
@@ -1026,7 +1030,7 @@ function ZoneEditor({
     } finally {
       setIsSaving(false);
     }
-  }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, weight, zone]);
+  }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
 
   const deleteZone = useCallback(async () => {
     if (isSaving) return;
@@ -1106,6 +1110,29 @@ function ZoneEditor({
         No expiry
       </label>
 
+      <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/50 p-3">
+        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trade modes</div>
+        <div className="grid grid-cols-3 gap-2">
+          {TRADE_MODE_OPTIONS.map((option) => (
+            <label key={option.value} className="inline-flex items-center gap-2 rounded border border-ink-700 bg-ink-850 px-2 py-1.5 text-xs text-slate-200">
+              <input
+                checked={tradeModes.includes(option.value)}
+                className="accent-cyan-400"
+                type="checkbox"
+                onChange={(event) => {
+                  setTradeModes((current) =>
+                    event.target.checked
+                      ? Array.from(new Set([...current, option.value]))
+                      : current.filter((mode) => mode !== option.value),
+                  );
+                }}
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      </div>
+
       <label className="grid gap-1 text-xs text-slate-500">
         Reason
         <textarea
@@ -1183,6 +1210,24 @@ function NumberField({
 
 function defaultNoExpiry(zone: PriceZone): boolean {
   return zone.valid_until === null && zone.metadata.human_adjusted === true;
+}
+
+const TRADE_MODE_OPTIONS: Array<{ value: ZoneTradeMode; label: string }> = [
+  { value: "reject", label: "Reject" },
+  { value: "internal_reject", label: "Internal" },
+  { value: "breakout", label: "Breakout" },
+];
+
+function defaultTradeModes(zone: PriceZone): ZoneTradeMode[] {
+  const raw = zone.metadata.trade_modes;
+  if (Array.isArray(raw)) {
+    const modes = raw.filter((mode): mode is ZoneTradeMode => mode === "reject" || mode === "internal_reject" || mode === "breakout");
+    return modes;
+  }
+  if (zone.type === "fvg") return ["reject", "internal_reject"];
+  if (zone.type === "consolidation") return ["breakout"];
+  if (zone.type === "support" || zone.type === "resistance") return ["reject"];
+  return [];
 }
 
 function filterImportantZoneList(
@@ -1280,6 +1325,8 @@ function setupCardClass(status: SetupCandidate["status"]): string {
 }
 
 function playbookLabel(value: string): string {
+  if (value === "sr_breakout_v1") return "SR Breakout V1";
+  if (value === "zone_reaction_v2") return "Zone Reaction V2";
   return value
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

@@ -207,7 +207,7 @@ Research 3 kieu limit entry:
 
 - SL ngoai FVG + `0.2 ATR`.
 - `min_stop_distance = max(4.0, 1.2 * ATR_M15)`.
-- `max_stop_distance = 30`.
+- `max_stop_distance = 35`.
 - TP mac dinh `2R`.
 
 ### Verify

@@ -45,7 +45,7 @@ def detect_fvg_zones(
     third_candle_follow_through_required: bool = True,
     third_candle_min_body_ratio: float = 0.20,
     max_zones: int = 80,
-    fill_threshold: float = 0.80,
+    fill_threshold: float = 0.95,
     partial_fill_threshold: float = 0.50,
     min_middle_body_ratio: float = 0.50,
     max_active_days: float | None = None,

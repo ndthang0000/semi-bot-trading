@@ -5,7 +5,7 @@ from typing import Any
 
 from .chart import CHART_PAYLOAD_VERSION, load_chart_candles, load_chart_trades, load_chart_zones
 from .config import AppConfig
-from .context import percentile_rank, rolling_average, score_bias_from_structure, true_ranges
+from .context import percentile_rank, rolling_average, score_bias_from_structure, score_macro_trend, true_ranges
 from .price_action import detect_price_action_patterns
 from .smc_zones import detect_smc_zones
 from .strategy import build_setup_candidates
@@ -180,6 +180,9 @@ def build_realtime_replay_payload(
             config=config.strategy,
             context_timeframe=structure_timeframe,
             allowed_playbooks=allowed_playbooks,
+            # Breakout logic expects context-timeframe (H1) candles; the replay
+            # view candles may be M15, which would diverge from the backtest.
+            context_candles=structure_candles,
         )
     payload = {
         "version": CHART_PAYLOAD_VERSION,
@@ -319,6 +322,7 @@ def build_replay_contexts(
     structure_points: list[StructurePoint],
     candles: list[CandleView],
     config: AppConfig,
+    macro_candles: list[CandleView] | None = None,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     contexts: dict[str, dict[str, dict[str, Any]]] = {timeframe: {}}
     bias = detect_replay_bias(symbol, timeframe, structure_points, candles, config)
@@ -327,7 +331,51 @@ def build_replay_contexts(
     regime = detect_replay_regime(symbol, timeframe, structure_points, candles, config)
     if regime:
         contexts[timeframe]["regime"] = regime
+    macro = detect_replay_macro_trend(symbol, timeframe, macro_candles if macro_candles is not None else candles, config)
+    if macro:
+        contexts[timeframe]["macro_trend"] = macro
     return contexts
+
+
+def detect_replay_macro_trend(
+    symbol: str,
+    timeframe: str,
+    candles: list[CandleView],
+    config: AppConfig,
+) -> dict[str, Any] | None:
+    if not candles:
+        return None
+    candle_rows = [
+        {
+            "open_time": candle.open_time,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+        }
+        for candle in candles
+    ]
+    score = score_macro_trend(
+        candle_rows,
+        config.macro_trend.lookback_candles,
+        config.macro_trend.flat_threshold_atr,
+        config.macro_trend.atr_period,
+    )
+    return context_to_chart(
+        value=str(score["value"]),
+        confidence=float(score["confidence"]),
+        valid_from=candles[-1].open_time,
+        metadata={
+            "detector": "macro_trend_v1_replay",
+            "version": 1,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "lookback_candles": score["lookback_candles"],
+            "momentum": score["momentum"],
+            "momentum_atr": score["momentum_atr"],
+            "atr": score["atr"],
+            "reference_time": score["reference_time"],
+        },
+    )
 
 
 def detect_replay_bias(

@@ -11,6 +11,7 @@ export const defaultZoneTypeVisibility = {
 export const defaultSelectedPlaybooks = ["zone_reaction_v2"];
 export const playbookLayerRequirements = {
     zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
+    sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
 };
 export const useChartStore = create()(persist((set) => ({
     symbol: "XAUUSD",

@@ -46,8 +46,13 @@ def zone(zone_type: str, direction: str, low: float, high: float, zone_id: str =
     }
 
 
-def contexts(bias: str = "bullish", regime: str = "trending", secondary: str | None = None) -> dict[str, dict[str, dict[str, object]]]:
-    return {
+def contexts(
+    bias: str = "bullish",
+    regime: str = "trending",
+    secondary: str | None = None,
+    macro_trend: str | None = None,
+) -> dict[str, dict[str, dict[str, object]]]:
+    result: dict[str, dict[str, dict[str, object]]] = {
         "H1": {
             "bias": {
                 "effective_value": bias,
@@ -61,6 +66,13 @@ def contexts(bias: str = "bullish", regime: str = "trending", secondary: str | N
             },
         }
     }
+    if macro_trend is not None:
+        result["H1"]["macro_trend"] = {
+            "effective_value": macro_trend,
+            "secondary_value": None,
+            "metadata": {},
+        }
+    return result
 
 
 def point(point_type: str, direction: str, time: str = "00:45", point_id: str = "p1") -> dict[str, object]:
@@ -88,7 +100,7 @@ CONFIG = StrategyConfig(
     max_eligible=3,
     max_waiting=5,
     zone_reaction_v2_enabled=True,
-    zone_reaction_v2_allowed_reactions=("reject",),
+    zone_reaction_v2_allowed_reactions=("reject", "internal_reject"),
     zone_reaction_v2_fakeout_max_atr=0.5,
     zone_reaction_v2_reject_body_min_ratio=1.5,
     zone_reaction_v2_reject_avg_body_period=20,
@@ -99,6 +111,7 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_breakout_min_close_outside_atr=0.75,
     zone_reaction_v2_consolidation_breakout_body_atr=1.2,
     zone_reaction_v2_retest_max_bars=8,
+    zone_reaction_v2_reject_stop_mode="zone",
     zone_reaction_v2_rr_minimum=2.0,
     zone_reaction_v2_stop_buffer_atr=0.2,
     zone_reaction_v2_min_stop_price=4.0,
@@ -106,9 +119,31 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_max_stop_distance=30.0,
     zone_reaction_v2_require_trigger_for_fakeout=True,
     zone_reaction_v2_fakeout_max_reaction_depth_atr=1.5,
+    zone_reaction_v2_internal_reject_enabled=True,
+    zone_reaction_v2_internal_reject_requires_structure=True,
+    zone_reaction_v2_internal_reject_sr_requires_structure=True,
+    zone_reaction_v2_internal_reject_requires_price_action=True,
+    zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars=8,
+    zone_reaction_v2_internal_reject_min_fvg_fill_ratio=0.5,
+    zone_reaction_v2_internal_reject_deep_fvg_fill_ratio=0.8,
+    zone_reaction_v2_internal_reject_min_sr_penetration_atr=0.0,
     zone_reaction_v2_allow_neutral_range_trade=True,
     zone_reaction_v2_block_news_or_risk_off=True,
+    zone_reaction_v2_macro_gate_enabled=True,
     zone_reaction_v2_confluence_score_bonus=0.08,
+    sr_breakout_v1_enabled=True,
+    sr_breakout_v1_allowed_entries=("breakout_close", "retest_breakout"),
+    sr_breakout_v1_allow_bot_sr_breakout=False,
+    sr_breakout_v1_breakout_buffer_atr=0.15,
+    sr_breakout_v1_market_entry_max_distance_atr=0.5,
+    sr_breakout_v1_retest_max_bars=8,
+    sr_breakout_v1_min_body_atr=0.5,
+    sr_breakout_v1_sl_mode="atr",
+    sr_breakout_v1_sl_zone_buffer_atr=0.2,
+    sr_breakout_v1_sl_min_atr=0.6,
+    sr_breakout_v1_sl_atr=1.2,
+    sr_breakout_v1_rr=2.0,
+    sr_breakout_v1_max_stop_distance=60.0,
 )
 
 
@@ -132,6 +167,224 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(["zone_reaction_v2"], [candidate["playbook"] for candidate in candidates])
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("reject", candidates[0]["zone_reaction_state"])
+
+    def test_price_near_zone_emits_approaching_watch_state(self) -> None:
+        candles = [
+            candle("00:00", 110, 111, 109, 110),
+            candle("00:15", 110, 110.5, 108.5, 109),
+            candle("00:30", 109, 109.2, 107.4, 107.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [],
+            CONFIG,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("watching", candidates[0]["status"])
+        self.assertEqual("approaching", candidates[0]["zone_reaction_state"])
+        steps = {step["key"]: step["status"] for step in candidates[0]["metadata"]["state_machine"]}
+        self.assertEqual("active", steps["APPROACHING"])
+        self.assertEqual("pending", steps["ZONE_TOUCHED"])
+
+    def test_reject_stop_mode_reaction_wick_tightens_stop(self) -> None:
+        from dataclasses import replace
+
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        zone_wide = zone("support", "bullish", 95, 107)
+
+        zone_mode = build_setup_candidates(
+            "XAUUSD", [zone_wide], contexts("bullish", "trending"), candles,
+            [point("pinbar_bullish", "up", "00:30")], CONFIG,
+        )
+        wick_mode = build_setup_candidates(
+            "XAUUSD", [zone_wide], contexts("bullish", "trending"), candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            replace(CONFIG, zone_reaction_v2_reject_stop_mode="reaction_wick"),
+        )
+
+        self.assertEqual("reject", wick_mode[0]["zone_reaction_state"])
+        # Zone mode anchors below the whole zone (95), wick mode below the
+        # reaction wick (105.5); the min-stop floor still applies to both.
+        self.assertLess(zone_mode[0]["stop_loss"], 95.5)
+        self.assertGreater(wick_mode[0]["stop_loss"], 100.0)
+        self.assertLess(wick_mode[0]["stop_loss"], 105.5)
+
+    def test_zone_reject_stop_falls_back_to_reaction_wick_when_zone_stop_too_wide(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        zone_too_wide = zone("support", "bullish", 50, 107)
+
+        candidates = build_setup_candidates(
+            "XAUUSD", [zone_too_wide], contexts("bullish", "trending"), candles,
+            [point("pinbar_bullish", "up", "00:30")], CONFIG,
+        )
+
+        self.assertEqual("reject", candidates[0]["zone_reaction_state"])
+        self.assertGreater(candidates[0]["stop_loss"], 100.0)
+        self.assertLess(candidates[0]["stop_loss"], 105.5)
+        self.assertLessEqual(abs(candidates[0]["entry"] - candidates[0]["stop_loss"]), 30.0)
+
+    def test_human_reject_mode_bypasses_macro_gate(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        support["metadata"] = {"trade_modes": ["reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertTrue(candidates[0]["metadata"]["context_bypass"])
+        self.assertIn("bypasses all context gates", " ".join(candidates[0]["reason"]))
+
+    def test_explicit_trade_modes_without_reject_disable_reject(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        support["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual([], candidates)
+
+    def test_human_breakout_mode_bypasses_macro_for_support_short(self) -> None:
+        context_candles = [
+            candle("01:00", 104, 106, 102, 105),
+            candle("02:00", 105, 107, 103, 104),
+            candle("03:00", 104, 105, 101, 102),
+            candle("04:00", 102, 103, 96, 97.2),
+        ]
+        support = zone("support", "bullish", 100, 102)
+        support["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("short", candidates[0]["direction"])
+        self.assertTrue(candidates[0]["metadata"]["context_bypass"])
+        self.assertIn("bypasses all context gates", " ".join(candidates[0]["reason"]))
+
+    def test_macro_trend_down_blocks_long_reject(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertIn("Macro trend down blocks", " ".join(candidates[0]["blocked_reason"]))
+        self.assertEqual("down", candidates[0]["metadata"]["macro_trend"])
+
+    def test_macro_trend_up_blocks_short_reject(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 109),
+            candle("00:15", 109, 111, 107, 108),
+            candle("00:30", 114, 114.5, 110, 110.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("resistance", "bearish", 113, 115)],
+            contexts("bearish", "trending", macro_trend="up"),
+            candles,
+            [point("pinbar_bearish", "down", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("short", candidates[0]["direction"])
+        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertIn("Macro trend up blocks", " ".join(candidates[0]["blocked_reason"]))
+
+    def test_macro_trend_up_allows_long_reject(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending", macro_trend="up"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("up", candidates[0]["metadata"]["macro_trend"])
+
+    def test_missing_macro_trend_context_allows_both_directions(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bullish", "trending"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("unknown", candidates[0]["metadata"]["macro_trend"])
 
     def test_legacy_playbooks_no_longer_emit_candidates(self) -> None:
         candles = [
@@ -177,7 +430,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(1, candidates[0]["metadata"]["confluence_count"])
         self.assertIn("Fakeout requires M15 trigger", " ".join(candidates[0]["reason"]))
 
-    def test_zone_reaction_v2_fakeout_with_trigger_stays_waiting_in_reject_only_phase(self) -> None:
+    def test_zone_reaction_v2_fakeout_with_trigger_stays_waiting_when_disabled(self) -> None:
         candles = [
             candle("00:00", 108, 109, 107, 108),
             candle("00:15", 108, 108.5, 107.5, 108.1),
@@ -197,7 +450,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(1, len(candidates))
         self.assertEqual("waiting_confirmation", candidates[0]["status"])
         self.assertEqual("fakeout", candidates[0]["zone_reaction_state"])
-        self.assertIn("reject-only", " ".join(candidates[0]["reason"]))
+        self.assertIn("keeping it for debug", " ".join(candidates[0]["reason"]))
         self.assertGreaterEqual(candidates[0]["entry"] - candidates[0]["stop_loss"], 4.0)
 
     def test_zone_reaction_v2_deep_fakeout_waits_even_with_trigger(self) -> None:
@@ -286,7 +539,7 @@ class StrategyTest(unittest.TestCase):
             allowed_playbooks={"zone_reaction_v2"},
         )
 
-        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
         self.assertEqual("clean_breakout", candidates[0]["zone_reaction_state"])
         self.assertEqual("transition_bearish", candidates[0]["metadata"]["bias_phase"])
 
@@ -415,6 +668,519 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("waiting_confirmation", candidates[0]["status"])
         self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
+
+    def test_zone_reaction_v2_bearish_fvg_internal_reject_requires_structure_and_pa(self) -> None:
+        candles = [
+            candle("00:00", 122, 124, 121, 123),
+            candle("00:15", 116, 118, 108, 110),
+        ]
+        fvg = zone("fvg", "bearish", 100, 120)
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [fvg],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("CHOCH", "down", "00:15", "bos1"),
+                point("engulfing_bearish", "down", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual("short", candidates[0]["direction"])
+        self.assertGreaterEqual(candidates[0]["metadata"]["fill_ratio"], 0.8)
+        self.assertEqual(["CHOCH"], candidates[0]["metadata"]["structure_trigger_types"])
+        self.assertEqual(["engulfing_bearish"], candidates[0]["metadata"]["price_action_trigger_types"])
+
+    def test_zone_reaction_v2_internal_reject_allows_structure_and_pa_within_watch_window(self) -> None:
+        candles = [
+            candle("00:00", 118, 119, 110, 112),
+            candle("00:15", 116, 118, 108, 110),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bearish", 100, 120)],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("engulfing_bearish", "down", "00:00", "pa1"),
+                point("CHOCH", "down", "00:15", "bos1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual(["CHOCH"], candidates[0]["metadata"]["structure_trigger_types"])
+        self.assertEqual(["engulfing_bearish"], candidates[0]["metadata"]["price_action_trigger_types"])
+
+    def test_zone_reaction_v2_internal_reject_does_not_reuse_stale_window_without_current_trigger(self) -> None:
+        candles = [
+            candle("00:00", 118, 119, 110, 112),
+            candle("00:15", 116, 118, 108, 110),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bearish", 100, 120)],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("engulfing_bearish", "down", "00:00", "pa1"),
+                point("CHOCH", "down", "00:00", "bos1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
+
+    def test_zone_reaction_v2_recent_mitigated_fvg_can_internal_reject(self) -> None:
+        candles = [
+            candle("00:00", 122, 124, 121, 123),
+            candle("00:15", 116, 118, 108, 110),
+        ]
+        fvg = zone("fvg", "bearish", 100, 120)
+        fvg["status"] = "mitigated"
+        fvg["valid_until"] = "2026-01-01T00:15:00+00:00"
+        fvg["visual_end"] = "2026-01-01T00:15:00+00:00"
+        fvg["invalidated_at"] = "2026-01-01T00:15:00+00:00"
+        fvg["metadata"] = {"fill_ratio": 0.9, "fill_state": "filled"}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [fvg],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("CHOCH", "down", "00:15", "bos1"),
+                point("engulfing_bearish", "down", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+
+    def test_zone_reaction_v2_internal_reject_waits_without_structure(self) -> None:
+        candles = [candle("00:15", 116, 118, 108, 110)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bearish", 100, 120)],
+            contexts("bearish", "trending"),
+            candles,
+            [point("engulfing_bearish", "down", "00:15", "pa1")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
+        self.assertNotEqual("eligible", candidates[0]["status"])
+
+    def test_zone_reaction_v2_internal_reject_waits_without_price_action(self) -> None:
+        candles = [candle("00:15", 116, 118, 108, 110)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bearish", 100, 120)],
+            contexts("bearish", "trending"),
+            candles,
+            [point("CHOCH", "down", "00:15", "bos1")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
+        self.assertNotEqual("eligible", candidates[0]["status"])
+
+    def test_zone_reaction_v2_support_internal_reject_long(self) -> None:
+        candles = [candle("00:15", 102, 109, 101, 108)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 100, 110)],
+            contexts("bullish", "trending"),
+            candles,
+            [
+                point("BOS", "up", "00:15", "bos1"),
+                point("marubozu_bullish", "up", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual("long", candidates[0]["direction"])
+
+    def test_zone_reaction_v2_resistance_internal_reject_short(self) -> None:
+        candles = [candle("00:15", 108, 109, 101, 102)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("resistance", "bearish", 100, 110)],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("BOS", "down", "00:15", "bos1"),
+                point("marubozu_bearish", "down", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual("short", candidates[0]["direction"])
+
+    def test_zone_reaction_v2_expired_fvg_does_not_trade_internal_reject(self) -> None:
+        expired = zone("fvg", "bearish", 100, 120)
+        expired["status"] = "expired"
+        expired["metadata"] = {"fill_ratio": 0.95}
+        candles = [candle("00:15", 116, 118, 108, 110)]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [expired],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("CHOCH", "down", "00:15", "bos1"),
+                point("engulfing_bearish", "down", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual([], candidates)
+
+    def test_sr_breakout_v1_recently_invalidated_zone_still_tradeable(self) -> None:
+        from dataclasses import replace
+
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+        resistance["status"] = "invalidated"
+        resistance["invalidated_at"] = context_candles[-1]["time"]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("sr_breakout_v1", candidates[0]["playbook"])
+
+        stale = dict(resistance)
+        stale["invalidated_at"] = "2020-01-01T00:00:00+00:00"
+        candidates_stale = build_setup_candidates(
+            "XAUUSD",
+            [stale],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+        self.assertEqual([], candidates_stale)
+
+    def test_sr_breakout_v1_small_body_waits_for_retest(self) -> None:
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 102.2, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("waiting_retest", candidates[0]["zone_reaction_state"])
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+
+    def test_sr_breakout_v1_zone_edge_stop_mode(self) -> None:
+        from dataclasses import replace
+
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+        wick_candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            replace(CONFIG, sr_breakout_v1_sl_mode="zone_edge"),
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        # atr mode: stop = entry - 1.2*ATR. zone_edge mode: stop anchored just
+        # below the broken edge (102) instead.
+        self.assertLess(candidates[0]["stop_loss"], wick_candidates[0]["stop_loss"])
+        self.assertLess(wick_candidates[0]["stop_loss"], 102)
+
+    def test_sr_breakout_v1_disabled_entry_stays_waiting(self) -> None:
+        from dataclasses import replace
+
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            replace(CONFIG, sr_breakout_v1_allowed_entries=("retest_breakout",)),
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("breakout_close", candidates[0]["zone_reaction_state"])
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertIn("disabled for SR Breakout V1", " ".join(candidates[0]["reason"]))
+
+    def test_sr_breakout_v1_requires_breakout_trade_mode(self) -> None:
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("resistance", "bearish", 100, 102)],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual([], candidates)
+
+    def test_sr_breakout_v1_long_resistance_near_breakout_is_eligible(self) -> None:
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("sr_breakout_v1", candidates[0]["playbook"])
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("long", candidates[0]["direction"])
+        self.assertEqual("breakout_close", candidates[0]["zone_reaction_state"])
+        self.assertEqual("next_h1_open", candidates[0]["metadata"]["entry_model"])
+        self.assertAlmostEqual(2.0, candidates[0]["risk_reward"])
+
+    def test_sr_breakout_v1_short_support_near_breakout_is_eligible(self) -> None:
+        context_candles = [
+            candle("01:00", 106, 108, 104, 105),
+            candle("02:00", 105, 107, 103, 104),
+            candle("03:00", 104, 106, 102, 103),
+            candle("04:00", 103, 104, 96, 98.5),
+        ]
+        support = zone("support", "bullish", 100, 102)
+        support["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("neutral", "ranging", macro_trend="down"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("short", candidates[0]["direction"])
+        self.assertEqual("breakout_close", candidates[0]["zone_reaction_state"])
+
+    def test_sr_breakout_v1_far_breakout_waits_for_retest(self) -> None:
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 108, 98, 106.5),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("waiting_retest", candidates[0]["zone_reaction_state"])
+        self.assertEqual("wait_retest", candidates[0]["metadata"]["entry_model"])
+
+    def test_sr_breakout_v1_retest_after_far_breakout_is_eligible(self) -> None:
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 108, 98, 106.5),
+            candle("05:00", 106.5, 107, 101.5, 103.2),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("retest_breakout", candidates[0]["zone_reaction_state"])
+        self.assertEqual("retest_next_h1_open", candidates[0]["metadata"]["entry_model"])
+
+    def test_sr_breakout_v1_human_breakout_allows_unknown_macro(self) -> None:
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["source"] = "human"
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("bearish", "news", macro_trend="unknown"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual(True, candidates[0]["metadata"]["context_bypass"])
+
+    def test_sr_breakout_v1_human_breakout_bypasses_opposite_macro(self) -> None:
+        # Spec change 2026-06-12: human-set trade modes bypass every context
+        # gate including macro trend; direction comes from the zone side only.
+        context_candles = [
+            candle("01:00", 96, 98, 94, 97),
+            candle("02:00", 97, 99, 95, 98),
+            candle("03:00", 98, 100, 96, 99),
+            candle("04:00", 99, 104, 98, 102.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["source"] = "human"
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("bearish", "news", macro_trend="down"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("long", candidates[0]["direction"])
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertTrue(candidates[0]["metadata"]["context_bypass"])
 
 if __name__ == "__main__":
     unittest.main()

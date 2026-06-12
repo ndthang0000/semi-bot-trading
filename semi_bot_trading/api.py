@@ -31,6 +31,7 @@ class ZoneOverrideRequest(BaseModel):
     no_expiry: bool = False
     expires_at: str | None = None
     reason: str | None = None
+    trade_modes: list[str] | None = None
 
 
 class ZoneCreateRequest(BaseModel):
@@ -142,6 +143,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                     structure_timeframe=config.bias.timeframe,
                     strategy_config=config.strategy,
                     allowed_playbooks=allowed_playbooks,
+                    macro_trend_config=config.macro_trend,
                 )
                 return payload
         except ValueError as exc:
@@ -442,6 +444,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
         if request.status not in {"active", "disabled"}:
             raise HTTPException(status_code=422, detail="status must be active or disabled")
+        if request.trade_modes is not None:
+            unknown_modes = sorted(set(request.trade_modes) - {"reject", "internal_reject", "breakout"})
+            if unknown_modes:
+                raise HTTPException(status_code=422, detail=f"Unknown trade mode(s): {', '.join(unknown_modes)}")
 
         now = utc_now_iso()
         expires_at = resolve_override_expiry(now, request.no_expiry, request.expires_at)
@@ -476,6 +482,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 raise HTTPException(status_code=422, detail="visual_start must be before visual_end")
             valid_until = end_time if request.status == "disabled" else expires_at
             metadata = json_loads(row["metadata_json"], {})
+            if request.trade_modes is not None:
+                metadata["trade_modes"] = sorted(set(request.trade_modes))
             metadata.update(
                 {
                     "human_adjusted": True,

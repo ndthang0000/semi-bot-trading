@@ -163,9 +163,10 @@ See more commands in `docs/14-terminal-commands.md`.
 
 ## Current Strategy Notes
 
-- Runtime, research, and backtest focus is `zone_reaction_v2`.
+- Runtime, research, and backtest focus is `zone_reaction_v2` for reject/internal-reject and `sr_breakout_v1` for SR breakout/retest.
 - Legacy playbooks are disabled/removed from candidate generation and UI selection. Keep old trade rows readable for review, but do not use legacy playbooks to judge current edge.
 - `zone_reaction_v2` uses single-zone reactions first: support, resistance, FVG. Consolidation is currently excluded from the strategy because it created too many noisy trades.
+- `sr_breakout_v1` uses only support/resistance with `trade_modes` containing `breakout`, unless research config enables bot SR breakout.
 - OB and consolidation can still be displayed for human context/research, but they do not create `zone_reaction_v2` trades.
 - Backtest trades should be persisted with `source='backtest'` and `metadata_json.backtest=true` so they can be filtered and cleared.
 

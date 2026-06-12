@@ -1,7 +1,7 @@
 export type Timeframe = "M15" | "H1";
 export type ZoneVisibilityKey = "support" | "resistance" | "order_block" | "fvg" | "liquidity_pool" | "consolidation";
 export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
-export type PlaybookKey = "zone_reaction_v2";
+export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1";
 export type AddEntityKind = "support" | "resistance" | "demand_order_block" | "supply_order_block" | "bullish_fvg" | "bearish_fvg" | "consolidation" | "buy_side_liquidity" | "sell_side_liquidity";
 export type ChartCandle = {
     time: string;
@@ -43,6 +43,7 @@ export type PriceZone = {
     confidence: number;
     metadata: Record<string, unknown>;
 };
+export type ZoneTradeMode = "reject" | "internal_reject" | "breakout";
 export type MarketContext = {
     bot_value: string;
     primary_value: string;
@@ -103,7 +104,7 @@ export type TradeHistoryResponse = {
 export type SetupCandidate = {
     id: string;
     symbol: string;
-    timeframe: "M15";
+    timeframe: Timeframe;
     playbook: string;
     direction: "long" | "short";
     status: "watching" | "waiting_confirmation" | "eligible" | "blocked" | "expired";

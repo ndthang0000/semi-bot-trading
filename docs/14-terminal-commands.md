@@ -376,7 +376,29 @@ python -m semi_bot_trading.cli backtest-report \
   --html-output var/reports/zone_reaction_v2.html
 ```
 
-Legacy playbooks nhu `trend_pullback`, `ob_mitigation_continuation`, `fvg_fill_go`, `breakout_retest`, `momentum_expansion_continuation`, `range_boundary_reversal`, `liquidity_sweep_reversal`, va `failed_breakout_trap` da ngung runtime. CLI/API se bao loi neu truyen playbook cu.
+Backtest SR Breakout V1:
+
+```bash
+python -m semi_bot_trading.cli backtest-report \
+  --limit 60000 \
+  --engine incremental \
+  --playbook sr_breakout_v1 \
+  --html-output var/reports/sr_breakout_v1.html
+```
+
+Persist SR Breakout V1 de ve trade len chart UI:
+
+```bash
+python -m semi_bot_trading.cli backtest-report \
+  --limit 60000 \
+  --engine incremental \
+  --playbook sr_breakout_v1 \
+  --persist \
+  --clear-backtest-trades \
+  --html-output var/reports/sr_breakout_v1.html
+```
+
+Legacy playbooks nhu `trend_pullback`, `ob_mitigation_continuation`, `fvg_fill_go`, `breakout_retest`, `momentum_expansion_continuation`, `range_boundary_reversal`, `liquidity_sweep_reversal`, va `failed_breakout_trap` da ngung runtime. Playbook runtime/research hien tai la `zone_reaction_v2` va `sr_breakout_v1`; CLI/API se bao loi neu truyen playbook cu.
 
 ## 8. Research / edge discovery
 

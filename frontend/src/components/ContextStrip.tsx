@@ -37,6 +37,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const h1 = payload?.layers.contexts.H1;
   const biasContext = h1?.bias;
   const regimeContext = h1?.regime;
+  const macroContext = h1?.macro_trend;
   const bias = biasContext?.effective_value ?? "--";
   const regime = regimeContext?.effective_value ?? "--";
   const overlays = readOverlays(regimeContext?.metadata.overlays);
@@ -44,7 +45,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const priceChange = readCurrentPriceChange(payload);
 
   return (
-    <section className="grid grid-cols-[210px_220px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3">
+    <section className="grid grid-cols-[210px_220px_170px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3">
       <BiasCard bias={bias} context={biasContext} priceChange={priceChange} onEdit={() => setEditing("bias")} />
       <ContextCard
         label="H1 Regime"
@@ -52,6 +53,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
         context={regimeContext}
         onEdit={() => setEditing("regime")}
       />
+      <MacroTrendCard context={macroContext} />
       <ContextCard label="Structure" value={structureTimeframe} />
       <ContextCard label="Range" value={payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--"} />
 
@@ -108,6 +110,30 @@ function BiasCard({
             <Pencil size={13} />
           </IconButton>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MacroTrendCard({ context }: { context: MarketContext | undefined }) {
+  const value = context?.effective_value ?? "--";
+  const toneClass =
+    value === "up" ? "text-emerald-300" : value === "down" ? "text-rose-300" : "text-slate-100";
+  const momentumAtr = typeof context?.metadata.momentum_atr === "number" ? (context.metadata.momentum_atr as number) : null;
+  const lookback = typeof context?.metadata.lookback_candles === "number" ? (context.metadata.lookback_candles as number) : null;
+  const lookbackDays = lookback ? Math.round(lookback / 24) : null;
+  const momentumLabel =
+    momentumAtr !== null ? `${momentumAtr > 0 ? "+" : ""}${momentumAtr.toFixed(1)} ATR${lookbackDays ? ` / ${lookbackDays}d` : ""}` : null;
+
+  return (
+    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2" title="Slow H1 momentum gate: up blocks shorts, down blocks longs">
+      <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span>Macro Trend{lookbackDays ? ` (${lookbackDays}d)` : ""}</span>
+        <ContextSourceBadge context={context} />
+      </div>
+      <div className="mt-1 flex items-end justify-between gap-2">
+        <div className={`text-sm font-semibold leading-tight ${toneClass}`}>{value}</div>
+        {momentumLabel ? <div className="text-[11px] font-semibold leading-tight text-slate-400">{momentumLabel}</div> : null}
       </div>
     </div>
   );
