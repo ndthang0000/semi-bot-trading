@@ -283,6 +283,18 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
 
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_lookup
 ON backtest_runs(symbol, created_at);
+
+CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash
+ON auth_refresh_tokens(token_hash);
 """
 
 

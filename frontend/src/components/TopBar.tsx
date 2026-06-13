@@ -1,5 +1,7 @@
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/auth";
+import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, ZoneVisibilityKey } from "../types";
 
@@ -132,8 +134,33 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
           <RefreshCw className={isFetching ? "animate-spin" : ""} size={15} />
           Reload
         </button>
+        <LogoutButton />
       </div>
     </header>
+  );
+}
+
+function LogoutButton() {
+  const { accessToken, username, clearAuth } = useAuthStore();
+
+  const handleLogout = async () => {
+    const refreshToken = getStoredRefreshToken();
+    if (accessToken && refreshToken) {
+      await logout(accessToken, refreshToken);
+    }
+    clearStoredRefreshToken();
+    clearAuth();
+  };
+
+  return (
+    <button
+      className="inline-flex h-9 items-center gap-2 rounded-md border border-ink-700 bg-ink-800 px-3 text-sm text-slate-400 hover:border-rose-500/50 hover:text-rose-300"
+      title={`Signed in as ${username ?? "unknown"} — click to sign out`}
+      type="button"
+      onClick={handleLogout}
+    >
+      <LogOut size={15} />
+    </button>
   );
 }
 

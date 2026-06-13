@@ -1,4 +1,5 @@
 import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe, TradeHistoryResponse, TradeReview, ZoneTradeMode } from "../types";
+import { authFetch } from "./auth";
 
 type ChartQuery = {
   symbol: string;
@@ -31,7 +32,7 @@ export async function fetchChartPayload(query: ChartQuery): Promise<ChartPayload
     params.set("replay_start", query.replayStart);
   }
 
-  const response = await fetch(`/api/chart?${params.toString()}`);
+  const response = await authFetch(`/api/chart?${params.toString()}`);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Chart API failed with ${response.status}`);
@@ -48,7 +49,7 @@ export async function fetchReplayTimeline(query: Omit<ChartQuery, "activeZonesOn
   if (query.startIndex !== null) {
     params.set("start_index", String(query.startIndex));
   }
-  const response = await fetch(`/api/replay/timeline?${params.toString()}`);
+  const response = await authFetch(`/api/replay/timeline?${params.toString()}`);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Replay timeline failed with ${response.status}`);
@@ -89,7 +90,7 @@ export async function fetchTradeHistory(query: TradeHistoryQuery): Promise<Trade
   if (query.tradeId) params.set("trade_id", query.tradeId);
   if (query.backtest !== null && query.backtest !== undefined) params.set("backtest", String(query.backtest));
 
-  const response = await fetch(`/api/trades?${params.toString()}`);
+  const response = await authFetch(`/api/trades?${params.toString()}`);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Trade history failed with ${response.status}`);
@@ -107,7 +108,7 @@ export type TradeReviewInput = {
 };
 
 export async function updateTradeReview(tradeOrderId: string, input: TradeReviewInput): Promise<TradeReview> {
-  const response = await fetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/review`, {
+  const response = await authFetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/review`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -152,7 +153,7 @@ export type ZoneCreateInput = {
 };
 
 export async function createManualZone(input: ZoneCreateInput): Promise<PriceZone> {
-  const response = await fetch("/api/zones", {
+  const response = await authFetch("/api/zones", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -167,7 +168,7 @@ export async function createManualZone(input: ZoneCreateInput): Promise<PriceZon
 }
 
 export async function updateZoneOverride(zoneId: string, input: ZoneOverrideInput): Promise<PriceZone> {
-  const response = await fetch(`/api/zones/${encodeURIComponent(zoneId)}`, {
+  const response = await authFetch(`/api/zones/${encodeURIComponent(zoneId)}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -187,7 +188,7 @@ export async function deleteManualZone(zoneId: string, reason?: string): Promise
     params.set("reason", reason);
   }
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const response = await fetch(`/api/zones/${encodeURIComponent(zoneId)}${suffix}`, {
+  const response = await authFetch(`/api/zones/${encodeURIComponent(zoneId)}${suffix}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -213,7 +214,7 @@ export async function updateMarketContextOverride(
   contextType: "bias" | "regime",
   input: ContextOverrideInput,
 ): Promise<MarketContext> {
-  const response = await fetch(`/api/contexts/${encodeURIComponent(timeframe)}/${encodeURIComponent(contextType)}`, {
+  const response = await authFetch(`/api/contexts/${encodeURIComponent(timeframe)}/${encodeURIComponent(contextType)}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",

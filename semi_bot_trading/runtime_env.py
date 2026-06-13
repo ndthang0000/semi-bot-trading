@@ -18,11 +18,20 @@ class RuntimeEnv:
     telegram_token: str | None
     telegram_chat_id: str | None
     execution_enabled: bool
-    live_order_volume: float
+    live_order_volume: float  # fallback fixed lot; ignored when risk_per_trade_pct is set
     max_open_positions_per_symbol: int
     max_trades_per_day: int
     poll_seconds: float
     chart_url_base: str
+    # Risk management
+    account_profile: str          # "personal" | "ftmo_challenge" | "the5ers"
+    risk_per_trade_pct: float | None  # % of balance per trade; None → use profile default
+    # Auth
+    secret_key: str               # JWT signing key — must be set in .env
+    admin_username: str           # login username (default: admin)
+    admin_password_hash: str | None  # bcrypt hash — set via: semi-bot hash-password
+    # CORS — comma-separated origins allowed to call the API
+    allowed_origins: list[str]
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -56,6 +65,15 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         max_trades_per_day=env_int("MAX_TRADES_PER_DAY", 10) or 10,
         poll_seconds=env_float("LIVE_POLL_SECONDS", 15.0) or 15.0,
         chart_url_base=env_text("CHART_URL_BASE", "http://127.0.0.1:5173") or "http://127.0.0.1:5173",
+        account_profile=env_text("ACCOUNT_PROFILE", "personal") or "personal",
+        risk_per_trade_pct=env_float("RISK_PER_TRADE_PCT"),
+        secret_key=env_text("SECRET_KEY", "") or "",
+        admin_username=env_text("ADMIN_USERNAME", "admin") or "admin",
+        admin_password_hash=env_text("ADMIN_PASSWORD_HASH"),
+        allowed_origins=env_list(
+            "ALLOWED_ORIGINS",
+            ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8765", "http://localhost:8765"],
+        ),
     )
 
 
@@ -91,3 +109,11 @@ def env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in TRUE_VALUES
+
+
+def env_list(name: str, default: list[str]) -> list[str]:
+    """Parse a comma-separated env variable into a list of strings."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return [item.strip() for item in value.split(",") if item.strip()]

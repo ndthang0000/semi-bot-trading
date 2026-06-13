@@ -6,18 +6,45 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from .auth import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    is_refresh_token_valid,
+    purge_expired_refresh_tokens,
+    revoke_refresh_token,
+    store_refresh_token,
+    verify_password,
+)
 from .chart import build_chart_payload, trade_order_row_to_chart
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
 from .db import connect, init_db
 from .replay_chart import build_realtime_replay_payload
+from .runtime_env import load_runtime_env
 from .strategy import PLAYBOOK_ZONE_TYPES
 
 
 MAX_CHART_LIMIT = 15_000
+
+_http_bearer = HTTPBearer(auto_error=False)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
 
 
 class ZoneOverrideRequest(BaseModel):
@@ -77,19 +104,125 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     from fastapi.middleware.cors import CORSMiddleware
 
     config = load_config(config_path)
+    env = load_runtime_env()
+
+    # ------------------------------------------------------------------
+    # Startup validation — catch misconfigurations early
+    # ------------------------------------------------------------------
+    if not env.secret_key:
+        raise RuntimeError(
+            "SECRET_KEY is not set in .env — JWT auth will not work.\n"
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+            "Then add: SECRET_KEY=\"<value>\" to your .env file."
+        )
+    if len(env.secret_key) < 32:
+        import warnings
+        warnings.warn(
+            f"SECRET_KEY is only {len(env.secret_key)} chars — use at least 32 random hex chars for security.",
+            stacklevel=1,
+        )
+    if not env.admin_password_hash:
+        import warnings
+        warnings.warn(
+            "ADMIN_PASSWORD_HASH is not set — login endpoint will return 503.\n"
+            "Run: semi-bot hash-password   to generate a hash.",
+            stacklevel=1,
+        )
+
     app = FastAPI(title="Semi Bot Trading API", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-            "http://127.0.0.1:8765",
-            "http://localhost:8765",
-        ],
+        allow_origins=env.allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ------------------------------------------------------------------
+    # Auth dependency — injected into every protected endpoint
+    # ------------------------------------------------------------------
+
+    def require_auth(
+        credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    ) -> str:
+        """Validate the Bearer access token. Returns the username on success."""
+        if credentials is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        try:
+            import jwt as _jwt
+
+            payload = decode_token(credentials.credentials, env.secret_key)
+            if payload.get("type") != "access":
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+            return str(payload["sub"])
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+    # ------------------------------------------------------------------
+    # Auth endpoints (public — no require_auth)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/auth/login")
+    def auth_login(body: LoginRequest) -> dict[str, Any]:
+        if not env.admin_password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Auth not configured. Set ADMIN_PASSWORD_HASH in .env.",
+            )
+        if body.username != env.admin_username:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if not verify_password(body.password, env.admin_password_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        access_token = create_access_token(body.username, env.secret_key)
+        refresh_token = create_refresh_token(body.username, env.secret_key)
+        with connect(config.database) as conn:
+            init_db(conn)
+            purge_expired_refresh_tokens(conn)
+            store_refresh_token(conn, refresh_token, body.username)
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": 900,
+            "username": body.username,
+        }
+
+    @app.post("/api/auth/refresh")
+    def auth_refresh(body: RefreshRequest) -> dict[str, Any]:
+        try:
+            import jwt as _jwt
+
+            payload = decode_token(body.refresh_token, env.secret_key)
+            if payload.get("type") != "refresh":
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+            username = str(payload["sub"])
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+        with connect(config.database) as conn:
+            init_db(conn)
+            if not is_refresh_token_valid(conn, body.refresh_token):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token revoked or expired")
+        access_token = create_access_token(username, env.secret_key)
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": 900,
+            "username": username,
+        }
+
+    @app.post("/api/auth/logout")
+    def auth_logout(
+        body: LogoutRequest,
+        _username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            revoke_refresh_token(conn, body.refresh_token)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Public health (no auth — useful for uptime checks)
+    # ------------------------------------------------------------------
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -111,6 +244,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         replay_start: str | None = None,
         active_zones_only: bool = False,
         playbooks: str | None = None,
+        _: str = Depends(require_auth),
     ) -> dict[str, Any]:
         try:
             allowed_playbooks = parse_playbooks(playbooks)
@@ -155,6 +289,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         timeframe: str = Query(default="M15"),
         limit: int = Query(default=300, ge=1, le=MAX_CHART_LIMIT),
         start_index: int | None = Query(default=None, ge=0),
+        _: str = Depends(require_auth),
     ) -> dict[str, Any]:
         with connect(config.database) as conn:
             init_db(conn)
@@ -224,6 +359,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         trade_id: str | None = Query(default=None),
         backtest: bool | None = Query(default=None),
         sort: str = Query(default="opened_at_desc"),
+        _: str = Depends(require_auth),
     ) -> dict[str, Any]:
         resolved_symbol = symbol or config.symbol
         resolved_timeframe = timeframe.upper()
@@ -367,7 +503,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         }
 
     @app.get("/api/trades/{trade_order_id}/review")
-    def get_trade_review(trade_order_id: str) -> dict[str, Any]:
+    def get_trade_review(trade_order_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
         with connect(config.database) as conn:
             init_db(conn)
             ensure_trade_exists(conn, trade_order_id)
@@ -382,7 +518,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         return trade_review_row_to_api(row, trade_order_id)
 
     @app.put("/api/trades/{trade_order_id}/review")
-    def upsert_trade_review(trade_order_id: str, request: TradeReviewRequest = Body(...)) -> dict[str, Any]:
+    def upsert_trade_review(trade_order_id: str, request: TradeReviewRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         normalized = normalize_trade_review_request(request)
         now = utc_now_iso()
         with connect(config.database) as conn:
@@ -439,7 +575,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         return trade_review_row_to_api(row, trade_order_id)
 
     @app.patch("/api/zones/{zone_id}")
-    def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...)) -> dict[str, Any]:
+    def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         if request.price_low >= request.price_high:
             raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
         if request.status not in {"active", "disabled"}:
@@ -569,7 +705,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             return zone_row_to_chart(updated)
 
     @app.post("/api/zones")
-    def create_zone(request: ZoneCreateRequest = Body(...)) -> dict[str, Any]:
+    def create_zone(request: ZoneCreateRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         if request.price_low >= request.price_high:
             raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
         if request.status not in {"active", "disabled"}:
@@ -682,7 +818,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             return zone_row_to_chart(row)
 
     @app.delete("/api/zones/{zone_id}")
-    def delete_zone(zone_id: str, reason: str | None = None) -> dict[str, Any]:
+    def delete_zone(zone_id: str, reason: str | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
         now = utc_now_iso()
         with connect(config.database) as conn:
             init_db(conn)
@@ -751,7 +887,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             return zone_row_to_chart(updated)
 
     @app.patch("/api/contexts/{timeframe}/{context_type}")
-    def update_context(timeframe: str, context_type: str, request: ContextOverrideRequest = Body(...)) -> dict[str, Any]:
+    def update_context(timeframe: str, context_type: str, request: ContextOverrideRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         timeframe = timeframe.upper()
         context_type = context_type.lower()
         if context_type not in {"bias", "regime"}:
@@ -891,6 +1027,29 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             ).fetchone()
             conn.commit()
             return context_row_to_chart(updated)
+
+    # ------------------------------------------------------------------
+    # Static file serving — production VPS (frontend/dist built by Vite)
+    # In development the Vite dev server (port 5173) proxies /api to here,
+    # so this block is skipped when dist/ doesn't exist yet.
+    # ------------------------------------------------------------------
+    _frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+    if _frontend_dist.exists():
+        from fastapi.responses import FileResponse
+        from fastapi.staticfiles import StaticFiles
+
+        _assets_dir = _frontend_dist / "assets"
+        if _assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_spa(full_path: str) -> Any:
+            # Serve real files (favicon.ico, vite.svg, …) if they exist
+            candidate = _frontend_dist / full_path
+            if candidate.is_file():
+                return FileResponse(str(candidate))
+            # Everything else → index.html (SPA client-side routing)
+            return FileResponse(str(_frontend_dist / "index.html"))
 
     return app
 

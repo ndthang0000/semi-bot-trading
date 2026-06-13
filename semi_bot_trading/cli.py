@@ -613,6 +613,25 @@ def cmd_serve_api(args: argparse.Namespace) -> None:
     run_api_server(config_path=args.config, host=args.host, port=args.port, reload=args.reload)
 
 
+def cmd_hash_password(args: argparse.Namespace) -> None:
+    """Interactively prompt for a password and print its bcrypt hash."""
+    import getpass
+
+    from .auth import hash_password
+
+    password = getpass.getpass("Enter password: ")
+    confirm = getpass.getpass("Confirm password: ")
+    if password != confirm:
+        print("Passwords do not match.")
+        raise SystemExit(1)
+    if len(password) < 8:
+        print("Password must be at least 8 characters.")
+        raise SystemExit(1)
+    hashed = hash_password(password)
+    print("\nAdd this line to your .env file:")
+    print(f'ADMIN_PASSWORD_HASH="{hashed}"')
+
+
 def cmd_telegram_test(args: argparse.Namespace) -> None:
     from .alerts import queue_alert, send_pending_telegram_alerts
     from .runtime_env import load_runtime_env
@@ -1213,6 +1232,12 @@ def build_parser() -> argparse.ArgumentParser:
     live_worker_parser.add_argument("--env", type=Path, default=Path(".env"))
     live_worker_parser.add_argument("--once", action="store_true", help="Run one iteration and exit.")
     live_worker_parser.set_defaults(func=cmd_live_worker)
+
+    hash_pw_parser = subparsers.add_parser(
+        "hash-password",
+        help="Generate a bcrypt password hash to set as ADMIN_PASSWORD_HASH in .env.",
+    )
+    hash_pw_parser.set_defaults(func=cmd_hash_password)
 
     return parser
 

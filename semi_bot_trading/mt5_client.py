@@ -134,11 +134,68 @@ class MT5BrokerClient:
             raise RuntimeError(f"MT5 order rejected retcode={retcode}: {data}")
         return data
 
+    def get_account_info(self) -> dict[str, Any]:
+        """Return key account metrics: balance, equity, margin, free_margin, profit."""
+        info = self.mt5.account_info()
+        if info is None:
+            raise RuntimeError(f"MT5 account_info failed: {self.mt5.last_error()}")
+        d = info._asdict()
+        return {
+            "balance": float(d.get("balance", 0)),
+            "equity": float(d.get("equity", 0)),
+            "margin": float(d.get("margin", 0)),
+            "free_margin": float(d.get("margin_free", 0)),
+            "profit": float(d.get("profit", 0)),
+            "currency": str(d.get("currency", "USD")),
+        }
+
+    def get_symbol_contract_size(self, broker_symbol: str) -> float:
+        """Return the contract size for a symbol (e.g. 100 for XAUUSD, 100000 for EURUSD)."""
+        info = self.mt5.symbol_info(broker_symbol)
+        if info is None:
+            return 100000.0  # safe default (standard forex lot)
+        return float(info.trade_contract_size)
+
     def positions_count(self, broker_symbol: str) -> int:
         positions = self.mt5.positions_get(symbol=broker_symbol)
         if positions is None:
             return 0
         return len(positions)
+
+    def get_open_position_tickets(self, broker_symbol: str) -> set[str]:
+        """Return ticket IDs of all currently open positions for the symbol."""
+        positions = self.mt5.positions_get(symbol=broker_symbol)
+        if not positions:
+            return set()
+        return {str(p.ticket) for p in positions}
+
+    def get_closed_deal_for_position(self, position_ticket: str) -> dict[str, Any] | None:
+        """Find the closing deal for a position identified by its opening ticket.
+
+        MT5 links all deals to a position via position_id. The closing deal
+        has entry == DEAL_ENTRY_OUT (1). Returns None if not yet closed or
+        history is unavailable.
+        """
+        try:
+            ticket = int(position_ticket)
+        except (TypeError, ValueError):
+            return None
+        deals = self.mt5.history_deals_get(position=ticket)
+        if not deals:
+            return None
+        for deal in deals:
+            if int(deal.entry) == 1:  # DEAL_ENTRY_OUT
+                close_time = datetime.fromtimestamp(int(deal.time), tz=UTC)
+                return {
+                    "price": float(deal.price),
+                    "profit": float(deal.profit),
+                    "swap": float(getattr(deal, "swap", 0) or 0),
+                    "commission": float(getattr(deal, "commission", 0) or 0),
+                    "time_iso": close_time.replace(microsecond=0).isoformat(),
+                    "volume": float(deal.volume),
+                    "deal_ticket": str(deal.ticket),
+                }
+        return None
 
     def mt5_timeframe(self, timeframe: str) -> int:
         key = timeframe.upper()

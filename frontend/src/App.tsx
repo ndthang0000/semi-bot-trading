@@ -1,15 +1,54 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { clearStoredRefreshToken, getStoredRefreshToken, refreshAccessToken } from "./api/auth";
 import { fetchChartPayload, fetchReplayTimeline } from "./api/chart";
+import { LoginPage } from "./components/LoginPage";
 import { ContextStrip } from "./components/ContextStrip";
 import { Inspector } from "./components/Inspector";
 import { ReplayControls } from "./components/ReplayControls";
 import { TopBar } from "./components/TopBar";
 import { TradingChart } from "./components/TradingChart";
+import { useAuthStore } from "./store/authStore";
 import { useChartStore } from "./store/chartStore";
 
 export function App() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isInitializing = useAuthStore((s) => s.isInitializing);
+  const setTokens = useAuthStore((s) => s.setTokens);
+  const clearAuth = useAuthStore((s) => s.clearAuth);
+
+  // Restore session from stored refresh token on page load
+  useEffect(() => {
+    const stored = getStoredRefreshToken();
+    if (!stored) {
+      clearAuth();
+      return;
+    }
+    refreshAccessToken(stored)
+      .then((data) => setTokens(data.access_token, data.username))
+      .catch(() => {
+        clearStoredRefreshToken();
+        clearAuth();
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (isInitializing) {
+    return (
+      <div className="grid h-dvh place-items-center bg-ink-950 text-sm text-slate-500">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const mode = window.location.pathname === "/replay-chart" ? "replay" : "dashboard";
   const isReplayRoute = mode === "replay";
   const symbol = useChartStore((state) => state.symbol);

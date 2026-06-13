@@ -16,6 +16,7 @@ from .context import detect_and_store_bias, detect_and_store_macro_trend, detect
 from .db import connect, init_db
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
 from .price_action import detect_and_store_price_action_patterns
+from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
 from .smc_zones import detect_and_store_smc_zones
 from .structure import detect_and_store_break_structure, detect_and_store_swing_structure
@@ -51,6 +52,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
     with connect(config.database) as conn:
         init_db(conn)
         sync_mt5_candles(conn, config, env, client)
+        if state.broker_symbol:
+            sync_closed_positions(conn, config, env, client, state.broker_symbol)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         if latest_m15 is not None and latest_m15 != state.last_closed_m15:
             before_zone_ids = current_zone_ids(conn, config.symbol)
@@ -294,7 +297,32 @@ def maybe_execute_candidates(
     candidate = sorted(eligible, key=lambda item: float(item.get("score") or 0.0), reverse=True)[0]
     if live_candidate_already_executed(conn, str(candidate["id"])):
         return
-    execute_candidate(conn, config, env, client, candidate, broker_symbol)
+    # Risk check: compute lot size and verify daily loss limit
+    risk_manager = build_risk_manager(client, env.account_profile, env.risk_per_trade_pct)
+    assessment = risk_manager.assess_trade(
+        conn=conn,
+        symbol=config.symbol,
+        entry=candidate.get("entry"),
+        stop_loss=candidate.get("stop_loss"),
+        broker_symbol=broker_symbol,
+    )
+    if not assessment.allowed:
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="important",
+            entity_ids=[str(candidate.get("id"))],
+            payload={
+                "title": "Trade blocked by risk manager",
+                "reason": [assessment.reason],
+                "setup": {"playbook": candidate.get("playbook"), "direction": candidate.get("direction")},
+            },
+            dedupe_key=f"risk-block:{candidate.get('id')}:{datetime.now(UTC).date().isoformat()}",
+        )
+        return
+    execute_candidate(conn, config, env, client, candidate, broker_symbol, lot_size=assessment.lot_size)
 
 
 def execute_candidate(
@@ -304,7 +332,10 @@ def execute_candidate(
     client: MT5BrokerClient,
     candidate: dict[str, Any],
     broker_symbol: str,
+    lot_size: float | None = None,
 ) -> None:
+    # lot_size from risk manager takes precedence; fall back to env fixed volume
+    volume = lot_size if lot_size is not None else env.live_order_volume
     stop_loss = candidate.get("stop_loss")
     take_profit = candidate.get("take_profit") or []
     if stop_loss is None or not take_profit:
@@ -360,10 +391,10 @@ def execute_candidate(
             config.symbol,
             broker_symbol,
             side,
-            env.live_order_volume,
+            volume,
             stop_loss,
             json.dumps(take_profit),
-            json.dumps({"execution_enabled": True, "volume": env.live_order_volume}, sort_keys=True),
+            json.dumps({"execution_enabled": True, "volume": volume, "account_profile": env.account_profile}, sort_keys=True),
             json.dumps(context_snapshot, sort_keys=True),
             now,
             now,
@@ -374,7 +405,7 @@ def execute_candidate(
             MT5OrderRequest(
                 broker_symbol=broker_symbol,
                 side=side,
-                volume=env.live_order_volume,
+                volume=volume,
                 stop_loss=float(stop_loss),
                 take_profit=float(take_profit[0]),
                 comment=f"{candidate['playbook']} {candidate['id'][:8]}",
@@ -408,7 +439,7 @@ def execute_candidate(
                 fill_price,
                 stop_loss,
                 json.dumps(take_profit),
-                env.live_order_volume,
+                volume,
                 now,
                 json.dumps({"candidate_id": candidate["id"], "broker_order_id": broker_order_id}, sort_keys=True),
                 now,
@@ -455,6 +486,95 @@ def execute_candidate(
             payload={"title": "Live order failed", "reason": [str(exc)]},
             dedupe_key=f"live-order-failed:{candidate['id']}:{request_id}",
         )
+
+
+def sync_closed_positions(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> None:
+    """Sync MT5 position closures back to trade_orders.
+
+    Called every live iteration. Finds any 'filled' live orders whose MT5
+    position has since been closed (TP / SL / manual) and updates the DB
+    with close_price, pnl, pnl_r, and status='closed'. Without this the
+    risk manager's daily loss query returns nothing.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, entry_price, stop_loss, quantity, metadata_json
+        FROM trade_orders
+        WHERE symbol = ? AND status = 'filled' AND source = 'live'
+        """,
+        (config.symbol,),
+    ).fetchall()
+    if not rows:
+        return
+
+    open_tickets = client.get_open_position_tickets(broker_symbol)
+    now = utc_now_iso()
+    closed_any = False
+
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        broker_order_id = str(metadata.get("broker_order_id", ""))
+        if not broker_order_id or broker_order_id in open_tickets:
+            continue  # still open or no broker link recorded
+
+        deal = client.get_closed_deal_for_position(broker_order_id)
+        if deal is None:
+            continue  # MT5 history not yet available
+
+        # Total P&L includes swap and commission
+        pnl = round(deal["profit"] + deal.get("swap", 0) + deal.get("commission", 0), 2)
+        close_price = deal["price"]
+        closed_at = deal["time_iso"]
+
+        # Rough pnl_r: P&L divided by initial dollar risk (entry-to-stop * qty)
+        pnl_r: float | None = None
+        try:
+            entry = float(row["entry_price"])
+            stop = float(row["stop_loss"])
+            qty = float(row["quantity"])
+            risk_amount = abs(entry - stop) * qty
+            if risk_amount > 0:
+                pnl_r = round(pnl / risk_amount, 3)
+        except (TypeError, ValueError):
+            pass
+
+        conn.execute(
+            """
+            UPDATE trade_orders
+            SET status = 'closed',
+                close_price = ?,
+                pnl = ?,
+                pnl_r = ?,
+                closed_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (close_price, pnl, pnl_r, closed_at, now, row["id"]),
+        )
+        closed_any = True
+        pnl_str = f"+{pnl:.2f}" if pnl >= 0 else f"{pnl:.2f}"
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="important",
+            entity_ids=[row["id"]],
+            payload={
+                "title": "Live position closed",
+                "reason": [f"P&L: ${pnl_str}", f"Close: {close_price}"],
+            },
+            dedupe_key=f"position-closed:{row['id']}",
+        )
+
+    if closed_any:
+        conn.commit()
 
 
 def latest_closed_candle_time(conn: Connection, symbol: str, timeframe: str) -> str | None:
