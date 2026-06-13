@@ -217,3 +217,38 @@ Nếu candle không cập nhật:
 ## Compliance cá nhân
 
 Tài liệu này không phải lời khuyên tài chính. Hệ thống cần được dùng với replay/backtest và kiểm thử trước khi có lệnh thật.
+
+## Implementation Notes
+
+Live MT5 support is implemented as a separate worker:
+
+```powershell
+python -m semi_bot_trading.cli live-worker
+```
+
+One-shot smoke run:
+
+```powershell
+python -m semi_bot_trading.cli live-worker --once
+```
+
+Required runtime variables:
+
+```text
+MT5_LOGIN
+MT5_PASSWORD
+MT5_SERVER
+MT5_SYMBOL
+EXECUTION_ENABLED
+LIVE_ORDER_VOLUME
+MAX_OPEN_POSITIONS_PER_SYMBOL
+MAX_TRADES_PER_DAY
+```
+
+`MT5_SYMBOL` is the broker symbol, for example `XAUUSDm` on an Exness cent
+account. The local project symbol remains `XAUUSD`.
+
+The worker syncs only closed candles before running detectors and strategy.
+When `EXECUTION_ENABLED=false`, it still updates data and sends Telegram alerts,
+but it does not place orders. When `EXECUTION_ENABLED=true`, the worker may send
+real market orders for eligible setup candidates through MT5.

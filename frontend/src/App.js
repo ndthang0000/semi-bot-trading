@@ -18,9 +18,11 @@ export function App() {
     const startIndex = useChartStore((state) => state.startIndex);
     const activeZonesOnly = useChartStore((state) => state.activeZonesOnly);
     const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+    const autoRefreshEnabled = useChartStore((state) => state.autoRefreshEnabled);
     const [replayPlaying, setReplayPlaying] = useState(false);
     const [replaySpeedSeconds, setReplaySpeedSeconds] = useState(1);
     const [replayIndex, setReplayIndex] = useState(0);
+    const autoRefreshActive = !isReplayRoute && autoRefreshEnabled && startIndex === null;
     const timelineQuery = useQuery({
         queryKey: ["replay-timeline", symbol, timeframe, limit, startIndex],
         queryFn: () => fetchReplayTimeline({ symbol, timeframe, limit, startIndex }),
@@ -34,6 +36,10 @@ export function App() {
         queryKey: ["chart", mode, symbol, timeframe, limit, startIndex, activeZonesOnly, selectedPlaybooks, replayStart, replayAt],
         queryFn: () => fetchChartPayload({ symbol, timeframe, limit, startIndex, activeZonesOnly, selectedPlaybooks, replayStart, replayAt }),
         placeholderData: isReplayRoute ? keepPreviousData : undefined,
+        refetchInterval: autoRefreshActive ? 60_000 : false,
+        refetchIntervalInBackground: false,
+        refetchOnReconnect: autoRefreshActive,
+        refetchOnWindowFocus: autoRefreshActive,
         staleTime: 10_000,
         enabled: !isReplayRoute || (replayStart !== null && replayAt !== null),
     });

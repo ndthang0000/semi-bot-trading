@@ -32,3 +32,14 @@ input,
 select {
   font: inherit;
 }
+
+select option,
+select optgroup {
+  background: #101722;
+  color: #e5edf8;
+}
+
+select option:checked {
+  background: #1f6f8b;
+  color: #f8fbff;
+}

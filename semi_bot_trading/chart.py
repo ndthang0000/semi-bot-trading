@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from sqlite3 import Connection
 from typing import Any
 
@@ -210,13 +211,29 @@ def load_chart_zones(
         status = row["status"]
         visual_end = row["end_time"]
         invalidated_at = row["invalidated_at"]
+        is_human_zone = row["source"] == "human" or metadata.get("human_created") is True
         deterministic_expiry = metadata.get("expired_rule") == "smc_zone_max_active_days" or (
             metadata.get("max_active_days") is not None and row["valid_until"] == row["end_time"]
         )
         if row["end_time"] is not None and row["end_time"] > end and not deterministic_expiry:
             status = "active"
-            visual_end = None
             invalidated_at = None
+            is_bot_sr = (
+                row["zone_type"] in ("support", "resistance")
+                and row["detector"] != "human_manual_v1"
+            )
+            if is_human_zone:
+                # Human-drawn zones keep the exact end_time the user drew, even
+                # when it is in the future beyond the latest candle.
+                visual_end = row["end_time"]
+            elif is_bot_sr:
+                # Bot-detected SR zones: extend 7 days from last candle so the
+                # frontend can render them with a fixed end without special-casing.
+                visual_end = (
+                    datetime.fromisoformat(end) + timedelta(days=7)
+                ).replace(microsecond=0).isoformat()
+            else:
+                visual_end = None
         zones.append(
             {
             "id": row["id"],

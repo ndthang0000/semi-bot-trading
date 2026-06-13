@@ -114,6 +114,47 @@ def upsert_candles(conn: Connection, candles: list[Candle]) -> int:
     return len(rows)
 
 
+def upsert_live_candle(conn: Connection, candle: Candle | None) -> int:
+    if candle is None:
+        return 0
+
+    conn.execute(
+        """
+        INSERT INTO live_candles (
+            id, symbol, timeframe, open_time, close_time,
+            open, high, low, close, volume, source, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(symbol, timeframe) DO UPDATE SET
+            id = excluded.id,
+            open_time = excluded.open_time,
+            close_time = excluded.close_time,
+            open = excluded.open,
+            high = excluded.high,
+            low = excluded.low,
+            close = excluded.close,
+            volume = excluded.volume,
+            source = excluded.source,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            candle.id,
+            candle.symbol,
+            candle.timeframe,
+            candle.open_time.isoformat(),
+            candle.close_time.isoformat(),
+            candle.open,
+            candle.high,
+            candle.low,
+            candle.close,
+            candle.volume,
+            candle.source,
+        ),
+    )
+    conn.commit()
+    return 1
+
+
 def candle_summary(conn: Connection) -> list[dict[str, object]]:
     rows = conn.execute(
         """

@@ -158,3 +158,26 @@ alert_event:
 - Không cần inline buttons trong MVP.
 - Không cần override/mute từ Telegram trong MVP.
 - Chart snapshot là nice-to-have, ưu tiên cho setup có entry/SL/TP.
+
+## Implementation Notes
+
+Runtime Telegram support is implemented through:
+
+- `alert_events` SQLite table.
+- `semi_bot_trading.alerts` queue/sender helpers.
+- CLI smoke test:
+
+```powershell
+python -m semi_bot_trading.cli telegram-test --message-key smoke-1
+```
+
+Credentials are read from `.env` or environment variables:
+
+```text
+TELEGRAM_TOKEN
+TELEGRAM_CHAT_ID
+CHART_URL_BASE
+```
+
+The live worker queues Telegram alerts for new important zones, setup candidates,
+and execution events, then sends pending alerts without blocking detector logic.

@@ -16,6 +16,7 @@ type ChartState = {
     showStructure: boolean;
     importantZonesOnly: boolean;
     maxVisibleZones: number;
+    autoRefreshEnabled: boolean;
     selectedPlaybooks: PlaybookKey[];
     addEntityKind: AddEntityKind | null;
     selected: SelectedEntity | null;
@@ -32,6 +33,7 @@ type ChartState = {
     setShowStructure: (showStructure: boolean) => void;
     setImportantZonesOnly: (importantZonesOnly: boolean) => void;
     setMaxVisibleZones: (maxVisibleZones: number) => void;
+    setAutoRefreshEnabled: (autoRefreshEnabled: boolean) => void;
     setSelectedPlaybooks: (playbooks: PlaybookKey[]) => void;
     toggleSelectedPlaybook: (playbook: PlaybookKey, enabled: boolean) => void;
     setAddEntityKind: (kind: AddEntityKind | null) => void;
@@ -50,6 +52,7 @@ export declare const useChartStore: import("zustand").UseBoundStore<Omit<import(
             showStructure: boolean;
             importantZonesOnly: boolean;
             maxVisibleZones: number;
+            autoRefreshEnabled: boolean;
             selectedPlaybooks: PlaybookKey[];
             startIndex: number | null;
         }, unknown>>) => void;
@@ -65,6 +68,7 @@ export declare const useChartStore: import("zustand").UseBoundStore<Omit<import(
             showStructure: boolean;
             importantZonesOnly: boolean;
             maxVisibleZones: number;
+            autoRefreshEnabled: boolean;
             selectedPlaybooks: PlaybookKey[];
             startIndex: number | null;
         }, unknown>>;

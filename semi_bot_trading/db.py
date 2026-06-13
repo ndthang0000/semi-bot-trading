@@ -193,6 +193,73 @@ CREATE TABLE IF NOT EXISTS trade_reviews (
 CREATE INDEX IF NOT EXISTS idx_trade_reviews_lookup
 ON trade_reviews(verdict, updated_at);
 
+CREATE TABLE IF NOT EXISTS alert_events (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    entity_ids_json TEXT NOT NULL DEFAULT '[]',
+    message_payload_json TEXT NOT NULL DEFAULT '{}',
+    dedupe_key TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    status TEXT NOT NULL,
+    failure_reason TEXT,
+    chart_snapshot_path TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_events_lookup
+ON alert_events(symbol, timeframe, event_type, status, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_events_dedupe
+ON alert_events(dedupe_key);
+
+CREATE TABLE IF NOT EXISTS live_candles (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    open_time TEXT NOT NULL,
+    close_time TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL,
+    source TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, timeframe)
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_candles_lookup
+ON live_candles(symbol, timeframe, open_time);
+
+CREATE TABLE IF NOT EXISTS execution_requests (
+    id TEXT PRIMARY KEY,
+    trade_idea_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    broker_symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    entry_price REAL,
+    stop_loss REAL NOT NULL,
+    take_profit_json TEXT NOT NULL DEFAULT '[]',
+    risk_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    context_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    requested_by TEXT NOT NULL,
+    status TEXT NOT NULL,
+    broker_order_id TEXT,
+    broker_result_json TEXT NOT NULL DEFAULT '{}',
+    failure_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(trade_idea_id) REFERENCES trade_ideas(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_requests_lookup
+ON execution_requests(symbol, status, created_at);
+
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,
@@ -222,9 +289,11 @@ ON backtest_runs(symbol, created_at);
 def connect(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=2.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 2000")
     return conn
 
 

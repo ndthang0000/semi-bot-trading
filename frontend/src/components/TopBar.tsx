@@ -1,4 +1,4 @@
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, ZoneVisibilityKey } from "../types";
@@ -13,12 +13,15 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
   const startIndex = useChartStore((state) => state.startIndex);
+  const autoRefreshEnabled = useChartStore((state) => state.autoRefreshEnabled);
   const addEntityKind = useChartStore((state) => state.addEntityKind);
   const setTimeframe = useChartStore((state) => state.setTimeframe);
   const setLimit = useChartStore((state) => state.setLimit);
   const setStartIndex = useChartStore((state) => state.setStartIndex);
   const shiftStartIndex = useChartStore((state) => state.shiftStartIndex);
+  const setAutoRefreshEnabled = useChartStore((state) => state.setAutoRefreshEnabled);
   const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
+  const autoRefreshActive = mode === "dashboard" && autoRefreshEnabled && startIndex === null;
 
   return (
     <header className="flex h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4">
@@ -107,6 +110,20 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
         />
         <PlaybookMenu />
         <LayerMenu />
+        <button
+          className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition ${
+            autoRefreshActive
+              ? "border-cyan-500/60 bg-cyan-400/10 text-cyan-100"
+              : "border-ink-700 bg-ink-800 text-slate-300 hover:border-cyan-500"
+          }`}
+          title={startIndex === null ? "Toggle auto refresh every 60 seconds" : "Auto refresh is paused while viewing historical windows"}
+          type="button"
+          onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+        >
+          {autoRefreshEnabled ? <Pause size={15} /> : <Play size={15} />}
+          <span>{autoRefreshEnabled ? "Auto 60s" : "Manual"}</span>
+          {autoRefreshEnabled && startIndex !== null ? <span className="text-[11px] text-slate-500">paused</span> : null}
+        </button>
         <button
           className="inline-flex h-9 items-center gap-2 rounded-md border border-ink-700 bg-ink-800 px-3 text-sm text-slate-100 hover:border-cyan-500"
           type="button"

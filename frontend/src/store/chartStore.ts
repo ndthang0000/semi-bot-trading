@@ -40,6 +40,7 @@ type ChartState = {
   showStructure: boolean;
   importantZonesOnly: boolean;
   maxVisibleZones: number;
+  autoRefreshEnabled: boolean;
   selectedPlaybooks: PlaybookKey[];
   addEntityKind: AddEntityKind | null;
   selected: SelectedEntity | null;
@@ -56,6 +57,7 @@ type ChartState = {
   setShowStructure: (showStructure: boolean) => void;
   setImportantZonesOnly: (importantZonesOnly: boolean) => void;
   setMaxVisibleZones: (maxVisibleZones: number) => void;
+  setAutoRefreshEnabled: (autoRefreshEnabled: boolean) => void;
   setSelectedPlaybooks: (playbooks: PlaybookKey[]) => void;
   toggleSelectedPlaybook: (playbook: PlaybookKey, enabled: boolean) => void;
   setAddEntityKind: (kind: AddEntityKind | null) => void;
@@ -77,6 +79,7 @@ export const useChartStore = create<ChartState>()(
       showStructure: true,
       importantZonesOnly: true,
       maxVisibleZones: 8,
+      autoRefreshEnabled: true,
       selectedPlaybooks: defaultSelectedPlaybooks,
       addEntityKind: null,
       selected: null,
@@ -125,6 +128,7 @@ export const useChartStore = create<ChartState>()(
         })),
       setImportantZonesOnly: (importantZonesOnly) => set({ importantZonesOnly }),
       setMaxVisibleZones: (maxVisibleZones) => set({ maxVisibleZones: Math.min(Math.max(maxVisibleZones, 1), 40) }),
+      setAutoRefreshEnabled: (autoRefreshEnabled) => set({ autoRefreshEnabled }),
       setSelectedPlaybooks: (selectedPlaybooks) =>
         set((state) => applyPlaybookLayerRequirements({ ...state, selectedPlaybooks: uniquePlaybooks(selectedPlaybooks) })),
       toggleSelectedPlaybook: (playbook, enabled) =>
@@ -160,6 +164,7 @@ export const useChartStore = create<ChartState>()(
         showStructure: state.showStructure,
         importantZonesOnly: state.importantZonesOnly,
         maxVisibleZones: state.maxVisibleZones,
+        autoRefreshEnabled: state.autoRefreshEnabled,
         selectedPlaybooks: state.selectedPlaybooks,
         startIndex: state.startIndex,
       }),

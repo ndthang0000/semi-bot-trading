@@ -54,6 +54,24 @@ cd frontend
 npm run dev -- --port 5173
 ```
 
+Start backend và frontend cùng lúc trên Windows PowerShell:
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
+Start backend, frontend và MT5/Telegram live worker:
+
+```powershell
+.\scripts\start-dev.ps1 -WithWorker
+```
+
+Bật auto execution cho live worker real account:
+
+```powershell
+.\scripts\start-dev.ps1 -WithWorker -EnableExecution
+```
+
 Mở UI:
 
 ```text
@@ -61,6 +79,8 @@ Realtime dashboard: http://127.0.0.1:5173/
 Replay chart:       http://127.0.0.1:5173/replay-chart
 Backend health:     http://127.0.0.1:8000/api/health
 ```
+
+Trong Realtime dashboard, nút `Auto 60s` trên toolbar bật/tắt auto refresh chart mỗi 60 giây. Auto refresh chỉ chạy khi candle window đang ở `Latest`; khi xem `Start <index>` lịch sử, UI tự pause để tránh giật viewport.
 
 Nếu port bị chiếm:
 
@@ -564,3 +584,35 @@ Các nhóm config hay chỉnh:
 ```
 
 Sau khi đổi config detector hoặc lifecycle, nên chạy lại pipeline detect tương ứng để DB được cập nhật.
+
+## Live MT5 and Telegram
+
+Create local `.env` from `.env.example` and fill real credentials outside git.
+
+Telegram smoke test:
+
+```powershell
+python -m semi_bot_trading.cli telegram-test --message-key smoke-1
+```
+
+Run one MT5 live-worker iteration without looping:
+
+```powershell
+python -m semi_bot_trading.cli live-worker --once
+```
+
+Run continuous live worker:
+
+```powershell
+python -m semi_bot_trading.cli live-worker
+```
+
+Important environment values:
+
+```text
+MT5_SYMBOL=XAUUSDm
+EXECUTION_ENABLED=false
+LIVE_ORDER_VOLUME=0.01
+```
+
+Set `EXECUTION_ENABLED=true` only when the worker may send real market orders.

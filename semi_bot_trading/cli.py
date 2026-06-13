@@ -613,6 +613,45 @@ def cmd_serve_api(args: argparse.Namespace) -> None:
     run_api_server(config_path=args.config, host=args.host, port=args.port, reload=args.reload)
 
 
+def cmd_telegram_test(args: argparse.Namespace) -> None:
+    from .alerts import queue_alert, send_pending_telegram_alerts
+    from .runtime_env import load_runtime_env
+
+    config = load_config(args.config)
+    env = load_runtime_env(args.env)
+    with connect(config.database) as conn:
+        init_db(conn)
+        queued = queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="system",
+            severity="info",
+            entity_ids=[],
+            payload={
+                "title": "Telegram connection test",
+                "reason": ["Semi Bot Trading can send Telegram notifications."],
+                "chart_url": env.chart_url_base,
+            },
+            dedupe_key=f"telegram-test:{args.message_key}",
+        )
+        sent = send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id)
+    print(f"Telegram test queued={queued} sent={sent}")
+
+
+def cmd_live_worker(args: argparse.Namespace) -> None:
+    from .live_worker import run_live_worker
+    from .runtime_env import load_runtime_env
+
+    config = load_config(args.config)
+    env = load_runtime_env(args.env)
+    print(
+        f"Starting live worker local_symbol={config.symbol} broker_symbol={env.mt5_symbol} "
+        f"execution_enabled={env.execution_enabled} poll_seconds={env.poll_seconds}"
+    )
+    run_live_worker(config, env, once=args.once)
+
+
 def cmd_backtest_strategies(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     symbol = args.symbol or config.symbol
@@ -1156,6 +1195,24 @@ def build_parser() -> argparse.ArgumentParser:
     api_parser.add_argument("--port", type=int, default=8000)
     api_parser.add_argument("--reload", action="store_true")
     api_parser.set_defaults(func=cmd_serve_api)
+
+    telegram_test_parser = subparsers.add_parser(
+        "telegram-test",
+        help="Queue and send a Telegram system test message using .env credentials.",
+    )
+    add_common_config_arg(telegram_test_parser)
+    telegram_test_parser.add_argument("--env", type=Path, default=Path(".env"))
+    telegram_test_parser.add_argument("--message-key", default="default")
+    telegram_test_parser.set_defaults(func=cmd_telegram_test)
+
+    live_worker_parser = subparsers.add_parser(
+        "live-worker",
+        help="Sync closed candles from MT5, refresh detectors, send Telegram alerts, and optionally auto-execute.",
+    )
+    add_common_config_arg(live_worker_parser)
+    live_worker_parser.add_argument("--env", type=Path, default=Path(".env"))
+    live_worker_parser.add_argument("--once", action="store_true", help="Run one iteration and exit.")
+    live_worker_parser.set_defaults(func=cmd_live_worker)
 
     return parser
 

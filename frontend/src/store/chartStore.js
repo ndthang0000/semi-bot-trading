@@ -24,6 +24,7 @@ export const useChartStore = create()(persist((set) => ({
     showStructure: true,
     importantZonesOnly: true,
     maxVisibleZones: 8,
+    autoRefreshEnabled: true,
     selectedPlaybooks: defaultSelectedPlaybooks,
     addEntityKind: null,
     selected: null,
@@ -67,6 +68,7 @@ export const useChartStore = create()(persist((set) => ({
     })),
     setImportantZonesOnly: (importantZonesOnly) => set({ importantZonesOnly }),
     setMaxVisibleZones: (maxVisibleZones) => set({ maxVisibleZones: Math.min(Math.max(maxVisibleZones, 1), 40) }),
+    setAutoRefreshEnabled: (autoRefreshEnabled) => set({ autoRefreshEnabled }),
     setSelectedPlaybooks: (selectedPlaybooks) => set((state) => applyPlaybookLayerRequirements({ ...state, selectedPlaybooks: uniquePlaybooks(selectedPlaybooks) })),
     toggleSelectedPlaybook: (playbook, enabled) => set((state) => {
         const selectedPlaybooks = enabled
@@ -97,6 +99,7 @@ export const useChartStore = create()(persist((set) => ({
         showStructure: state.showStructure,
         importantZonesOnly: state.importantZonesOnly,
         maxVisibleZones: state.maxVisibleZones,
+        autoRefreshEnabled: state.autoRefreshEnabled,
         selectedPlaybooks: state.selectedPlaybooks,
         startIndex: state.startIndex,
     }),

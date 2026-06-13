@@ -112,7 +112,7 @@ const MIN_ZONE_DURATION_SECONDS = 60;
 const RIGHT_OFFSET_BARS = 18;
 const REPLAY_VISIBLE_BARS = 120;
 const VERTICAL_FOCUS_BARS = 14;
-const SR_EXTENSION_DAYS = 7;
+
 
 export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -309,16 +309,22 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
     const chart = chartRef.current;
     if (!container || !chart) return null;
     const rect = container.getBoundingClientRect();
-    const time = chart.timeScale().coordinateToTime(clientX - rect.left);
-    return chartTimeToUnix(time);
+    const coordinate = clientX - rect.left;
+    const time = chart.timeScale().coordinateToTime(coordinate);
+    return chartTimeToUnix(time) ?? projectedTimeFromCoordinate(chart, candleDataRef.current, coordinate);
   }, []);
 
   const updateDraftZone = useCallback(
-    (zone: PriceZone) => {
-      lockCurrentViewport(chartRef.current, lockedViewportRef);
+    (zone: PriceZone, options: { preserveViewport?: boolean } = {}) => {
+      const preserveViewport = options.preserveViewport ?? true;
+      if (preserveViewport) {
+        lockCurrentViewport(chartRef.current, lockedViewportRef);
+      }
       draftZoneRef.current = zone;
       setSelected({ kind: "zone", entity: zone });
-      restoreLockedViewport(chartRef.current, lockedViewportRef);
+      if (preserveViewport) {
+        restoreLockedViewport(chartRef.current, lockedViewportRef);
+      }
       scheduleOverlayRecalc();
     },
     [scheduleOverlayRecalc, setSelected],
@@ -383,7 +389,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
         price_low: roundPrice(low),
         price_high: roundPrice(safeHigh),
         visual_start: unixToIso(startTime),
-        visual_end: isoForZoneEnd(endTime, lastCandleTime),
+        visual_end: unixToIso(endTime),
         valid_from: unixToIso(startTime),
         valid_until: null,
         invalidated_at: null,
@@ -450,15 +456,16 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
   const beginZoneDrag = useCallback(
     (event: ReactPointerEvent<HTMLElement>, box: ZoneBox, mode: ZoneDragMode) => {
       const pointerPrice = priceFromClientY(event.clientY);
-      const pointerTime = timeFromClientX(event.clientX);
-      if (pointerPrice === null || pointerTime === null) return;
+      const needsPointerTime = mode === "move" || mode === "resize-left" || mode === "resize-right";
+      const pointerTime = needsPointerTime ? timeFromClientX(event.clientX) : null;
+      if (pointerPrice === null || (needsPointerTime && pointerTime === null)) return;
       event.preventDefault();
       event.stopPropagation();
       zoneDragRef.current = {
         mode,
         zone: box.zone,
         startPointerPrice: pointerPrice,
-        startPointerTime: pointerTime,
+        startPointerTime: pointerTime ?? toUnixTime(box.zone.visual_start),
         startLow: box.zone.price_low,
         startHigh: box.zone.price_high,
         startVisualStart: box.zone.visual_start,
@@ -475,12 +482,13 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
       const drag = zoneDragRef.current;
       if (!drag) return;
       const pointerPrice = priceFromClientY(event.clientY);
-      const pointerTime = timeFromClientX(event.clientX);
-      if (pointerPrice === null || pointerTime === null) return;
+      const needsPointerTime = drag.mode === "move" || drag.mode === "resize-left" || drag.mode === "resize-right";
+      const pointerTime = needsPointerTime ? timeFromClientX(event.clientX) : null;
+      if (pointerPrice === null || (needsPointerTime && pointerTime === null)) return;
 
       event.preventDefault();
       const priceDelta = pointerPrice - drag.startPointerPrice;
-      const timeDelta = pointerTime - drag.startPointerTime;
+      const timeDelta = (pointerTime ?? drag.startPointerTime) - drag.startPointerTime;
       let nextLow = drag.startLow;
       let nextHigh = drag.startHigh;
       let nextVisualStart = drag.startVisualStart;
@@ -494,29 +502,34 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
         nextLow = drag.startLow + priceDelta;
         nextHigh = drag.startHigh + priceDelta;
         nextVisualStart = unixToIso(startTime + timeDelta);
-        nextVisualEnd = isoForZoneEnd(endTime + timeDelta, lastCandleTime);
+        // Preserve null (open-ended) for zones that were originally open-ended
+        nextVisualEnd = drag.startVisualEnd === null ? null : unixToIso(endTime + timeDelta);
       } else if (drag.mode === "resize-top") {
         nextHigh = Math.max(pointerPrice, drag.startLow + MIN_ZONE_HEIGHT);
       } else if (drag.mode === "resize-bottom") {
         nextLow = Math.min(pointerPrice, drag.startHigh - MIN_ZONE_HEIGHT);
       } else if (drag.mode === "resize-left") {
-        nextVisualStart = unixToIso(Math.min(pointerTime, endTime - MIN_ZONE_DURATION_SECONDS));
+        nextVisualStart = unixToIso(Math.min(pointerTime ?? startTime, endTime - MIN_ZONE_DURATION_SECONDS));
       } else {
-        nextVisualEnd = isoForZoneEnd(Math.max(pointerTime, startTime + MIN_ZONE_DURATION_SECONDS), lastCandleTime);
+        // resize-right: always use cursor position, never null
+        nextVisualEnd = unixToIso(Math.max(pointerTime ?? endTime, startTime + MIN_ZONE_DURATION_SECONDS));
       }
 
-      updateDraftZone({
-        ...drag.zone,
-        price_low: roundPrice(nextLow),
-        price_high: roundPrice(nextHigh),
-        visual_start: nextVisualStart,
-        visual_end: nextVisualEnd,
-        metadata: {
-          ...drag.zone.metadata,
-          human_adjusted: true,
-          unsaved_drag: true,
+      updateDraftZone(
+        {
+          ...drag.zone,
+          price_low: roundPrice(nextLow),
+          price_high: roundPrice(nextHigh),
+          visual_start: nextVisualStart,
+          visual_end: nextVisualEnd,
+          metadata: {
+            ...drag.zone.metadata,
+            human_adjusted: true,
+            unsaved_drag: true,
+          },
         },
-      });
+        { preserveViewport: false },
+      );
     },
     [priceFromClientY, timeFromClientX, updateDraftZone],
   );
@@ -627,6 +640,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
         borderColor: "#202b3a",
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 20,
       },
     });
 
@@ -786,6 +800,57 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
     const visibleRange = savedViewport?.logicalRange ?? chart.timeScale().getVisibleLogicalRange();
     const visiblePriceRange = savedViewport?.priceRange ?? chart.priceScale("right").getVisibleRange();
     const isReplay = Boolean(payload.replay?.enabled);
+
+    // Detect incremental update: same view window, last candle updated OR one new candle added.
+    // Works for both growing windows and sliding fixed-limit windows (oldest bar drops, new bar appends).
+    // Use series.update() instead of setData() to avoid resetting the viewport.
+    const prevData = candleDataRef.current;
+    const isSameView = previousViewKey === viewKey;
+    const lastCandleTimeNew = Number(candleData.at(-1)?.time ?? 0);
+    const lastCandleTimePrev = Number(prevData.at(-1)?.time ?? 0);
+    const isIncremental =
+      !isReplay &&
+      isSameView &&
+      prevData.length > 0 &&
+      candleData.length >= prevData.length &&
+      candleData.length <= prevData.length + 1 &&
+      lastCandleTimeNew >= lastCandleTimePrev; // last candle same or newer (not a full window shift)
+
+    if (isIncremental) {
+      // Snapshot viewport BEFORE update — series.update() with a new timestamp triggers
+      // shiftVisibleRangeOnNewBar (default true) and can scroll the chart unexpectedly.
+      const rangeBeforeUpdate = visibleRange;
+      const priceRangeBeforeUpdate = visiblePriceRange;
+      const wasManual = manualViewportRef.current;
+
+      if (candleData.length > prevData.length) {
+        // New candle: finalize the previous last bar, then append the new one.
+        series.update(candleData[candleData.length - 2]);
+      }
+      series.update(candleData[candleData.length - 1]);
+
+      // If the user has manually scrolled/zoomed, restore their viewport after update
+      // so the chart does not auto-scroll to follow the new bar.
+      if (wasManual) {
+        requestAnimationFrame(() => {
+          if (rangeBeforeUpdate) chart.timeScale().setVisibleLogicalRange(rangeBeforeUpdate);
+          chart.priceScale("right").setAutoScale(false);
+          if (priceRangeBeforeUpdate) chart.priceScale("right").setVisibleRange(priceRangeBeforeUpdate);
+        });
+      }
+
+      // Do NOT call scaleAnchorSeries.setData() — that resets the price scale.
+      zigzagSeriesRef.current?.setData(
+        buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current),
+      );
+      payloadRef.current = payload;
+      appliedCandleKeyRef.current = candleKey;
+      lastViewportRef.current = readCurrentViewport(chart);
+      scheduleOverlayRecalc();
+      return;
+    }
+
+    // Full reload path (window change, symbol/timeframe change, or replay mode).
     series.setData(candleData);
     scaleAnchorSeriesRef.current?.setData(buildScaleAnchorData(candleData));
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
@@ -812,13 +877,16 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
       applyInitialViewport(chart, candleData, payload.range.limit);
       replayPriceRangeRef.current = applyInitialPriceViewport(chart, candleData);
     } else {
-      if (visibleRange) {
-        chart.timeScale().setVisibleLogicalRange(visibleRange);
-      }
-      if (visiblePriceRange) {
-        chart.priceScale("right").setVisibleRange(visiblePriceRange);
-        replayPriceRangeRef.current = visiblePriceRange;
-      }
+      // Same view but non-incremental (e.g. many candles changed at once).
+      // Restore viewport — defer one frame so setData's internal layout finishes first.
+      const restoreRange = visibleRange;
+      const restorePriceRange = visiblePriceRange;
+      requestAnimationFrame(() => {
+        if (restoreRange) chart.timeScale().setVisibleLogicalRange(restoreRange);
+        chart.priceScale("right").setAutoScale(false);
+        if (restorePriceRange) chart.priceScale("right").setVisibleRange(restorePriceRange);
+        replayPriceRangeRef.current = restorePriceRange;
+      });
     }
     if (lockedViewportRef.current) {
       restoreLockedViewport(chart, lockedViewportRef);
@@ -899,7 +967,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
                 event.stopPropagation();
                 if (box.zone.id === "__manual_zone_preview__") return;
                 if (isSelected) {
-                  beginZoneDrag(event, box, "move");
+                  beginZoneDrag(event, box, zoneDragModeFromPointer(event, box));
                 }
               }}
             >
@@ -1565,20 +1633,6 @@ function zoneEndCoordinate(
   if (zone.visual_end) {
     return projectedTimeCoordinate(timeScale, candles, toUnixTime(zone.visual_end));
   }
-  if (zone.status === "active" && isSupportResistanceZone(zone)) {
-    const lastUnix = toUnixTime(lastCandleTime);
-    const futureUnix = lastUnix + SR_EXTENSION_DAYS * 86_400;
-    const futureCoordinate = projectedTimeCoordinate(timeScale, candles, futureUnix as ReturnType<typeof toUnixTime>);
-    if (futureCoordinate !== null) return futureCoordinate;
-
-    const lastCoordinate = timeScale.timeToCoordinate(lastUnix);
-    const previousCandle = candles.at(-2);
-    const previousCoordinate = previousCandle ? timeScale.timeToCoordinate(toUnixTime(previousCandle.time)) : null;
-    const spacing = lastCoordinate !== null && previousCoordinate !== null ? Math.max(lastCoordinate - previousCoordinate, 1) : 8;
-    const timeframeSeconds = candles.length >= 2 ? Math.max(lastUnix - toUnixTime(candles.at(-2)?.time ?? lastCandleTime), 1) : 3600;
-    const futureBars = (SR_EXTENSION_DAYS * 86_400) / timeframeSeconds;
-    return lastCoordinate !== null ? lastCoordinate + spacing * futureBars : width;
-  }
   return timeScale.timeToCoordinate(toUnixTime(lastCandleTime));
 }
 
@@ -1620,9 +1674,51 @@ function projectedTimeCoordinate(
   return anchorCoordinate + (targetUnix - Number(candleTimes[anchorIndex])) * pixelsPerSecond;
 }
 
-function isSupportResistanceZone(zone: PriceZone): boolean {
-  return zone.type === "support" || zone.type === "resistance";
+function projectedTimeFromCoordinate(chart: IChartApi, candles: CandleDatum[], coordinate: number): number | null {
+  if (candles.length === 0) return null;
+  const logical = chart.timeScale().coordinateToLogical(coordinate);
+  if (logical === null) return null;
+
+  const logicalNumber = Number(logical);
+  const first = candles[0];
+  const last = candles[candles.length - 1];
+  if (candles.length === 1) return Number(first.time);
+
+  if (logicalNumber <= 0) {
+    const step = Number(candles[1].time) - Number(first.time);
+    return Math.round(Number(first.time) + logicalNumber * step);
+  }
+
+  const lastIndex = candles.length - 1;
+  if (logicalNumber >= lastIndex) {
+    const step = Number(last.time) - Number(candles[lastIndex - 1].time);
+    return Math.round(Number(last.time) + (logicalNumber - lastIndex) * step);
+  }
+
+  const lowerIndex = Math.max(0, Math.floor(logicalNumber));
+  const upperIndex = Math.min(lastIndex, Math.ceil(logicalNumber));
+  if (lowerIndex === upperIndex) return Number(candles[lowerIndex].time);
+
+  const lowerTime = Number(candles[lowerIndex].time);
+  const upperTime = Number(candles[upperIndex].time);
+  const progress = logicalNumber - lowerIndex;
+  return Math.round(lowerTime + (upperTime - lowerTime) * progress);
 }
+
+function zoneDragModeFromPointer(event: ReactPointerEvent<HTMLElement>, box: ZoneBox): ZoneDragMode {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const y = event.clientY - rect.top;
+  const x = event.clientX - rect.left;
+  const verticalHandle = Math.min(22, Math.max(12, box.height * 0.42));
+  const horizontalHandle = Math.min(16, Math.max(10, box.width * 0.04));
+
+  if (y <= verticalHandle) return "resize-top";
+  if (box.height - y <= verticalHandle) return "resize-bottom";
+  if (x <= horizontalHandle) return "resize-left";
+  if (box.width - x <= horizontalHandle) return "resize-right";
+  return "move";
+}
+
 
 function lockCurrentViewport(chart: IChartApi | null, targetRef: { current: ViewportState | null }): void {
   if (!chart) return;
