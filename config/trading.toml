@@ -51,8 +51,8 @@ tolerance_pct = 0.0005
 min_zone_width = 1.0
 atr_width_multiplier = 0.25
 min_touches = 2
-lookback_swings = 300
-max_zones = 40
+lookback_swings = 1500   # ~18 tháng H1, ~6 tháng M15
+max_zones = 100
 
 [zones.lifecycle]
 close_break_buffer = 0.0
@@ -80,7 +80,7 @@ linger_penalty = 0.10
 
 [zones.smc]
 max_candles = 5000
-lookback_swings = 300
+lookback_swings = 1500   # ~18 tháng H1, ~6 tháng M15
 fvg_middle_candle_atr_multiplier = 2.0
 fvg_gap_atr_ratio = 0.25
 fvg_min_width_atr_ratio = 1.0
