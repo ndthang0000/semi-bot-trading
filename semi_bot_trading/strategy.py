@@ -300,6 +300,7 @@ def evaluate_zone_reaction_v2(
         has_price_action_trigger=bool(price_action_trigger_ids),
         macro_trend=macro_trend,
         context_bypass=context_bypass,
+        zone_type=str(zone.get("type", "")),
     )
     entry, stop, take_profit, rr = compute_zone_reaction_v2_levels(zone, direction, reaction, last_close, atr, config)
     stop_distance = abs(entry - stop) if entry is not None and stop is not None else None
@@ -748,6 +749,7 @@ def zone_reaction_v2_status(
     has_price_action_trigger: bool = False,
     macro_trend: str = "unknown",
     context_bypass: bool = False,
+    zone_type: str = "",
 ) -> tuple[str, list[str], list[str]]:
     blocked: list[str] = []
     reasons = ["Zone Reaction V2 single-zone reaction setup.", f"Reaction V2: {reaction.state}."]
@@ -762,13 +764,17 @@ def zone_reaction_v2_status(
     # Macro trend gate: counter-macro trades had a clear negative edge in backtest
     # (resistance shorts during the 2023-2026 gold uptrend). "flat"/"unknown"
     # macro allows both directions so the gate degrades gracefully without history.
-    if not context_bypass and config.zone_reaction_v2_macro_gate_enabled:
+    # FVG zones are exempt: FVG fills reverse against macro fine (PA-only edge).
+    fvg_macro_exempt = zone_type == "fvg"
+    if not context_bypass and config.zone_reaction_v2_macro_gate_enabled and not fvg_macro_exempt:
         if macro_trend == "up" and direction == "short":
             blocked.append("Macro trend up blocks Zone Reaction V2 short.")
         elif macro_trend == "down" and direction == "long":
             blocked.append("Macro trend down blocks Zone Reaction V2 long.")
         else:
             reasons.append(f"Macro trend {macro_trend} allows {direction}.")
+    elif fvg_macro_exempt:
+        reasons.append(f"FVG zone: macro trend gate skipped (macro={macro_trend}, direction={direction}).")
 
     # TEMP RESEARCH OVERRIDE:
     # The normal context gate requires bias-aligned trades and only allows
@@ -1748,9 +1754,11 @@ def trigger_points_for_direction(
 
 
 def trigger_types_for_ids(points: list[dict[str, Any]], trigger_ids: list[str]) -> list[str]:
-    point_by_id = {str(point.get("id")): str(point.get("type")) for point in points}
-    return [point_by_id[point_id] for point_id in trigger_ids if point_id in point_by_id]
-
+    point_by_id = {str(point.get("id")): str(point.get("point_type", ""))
+        for point in points
+    }
+    return [point_by_id[tid] for tid in trigger_ids if tid in point_by_id]
+  
 
 def unique_ids(point_ids: list[str]) -> list[str]:
     seen: set[str] = set()
