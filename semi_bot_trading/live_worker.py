@@ -116,7 +116,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)
             state.last_closed_m15 = latest_m15
     with connect(config.database) as conn:
-        send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id)
+        send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id, environment=env.environment)
 
 
 def sync_mt5_candles(conn: Connection, config: AppConfig, client: MT5BrokerClient, broker_symbol: str) -> None:

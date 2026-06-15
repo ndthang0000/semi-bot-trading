@@ -33,6 +33,8 @@ class RuntimeEnv:
     admin_password_hash: str | None  # bcrypt hash — set via: semi-bot hash-password
     # CORS — comma-separated origins allowed to call the API
     allowed_origins: list[str]
+    # Environment — "development" | "production"
+    environment: str
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -76,7 +78,12 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
             "ALLOWED_ORIGINS",
             ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8765", "http://localhost:8765"],
         ),
+        environment=env_text("ENVIRONMENT", "development") or "development",
     )
+
+
+def is_production(env: RuntimeEnv) -> bool:
+    return env.environment.lower() == "production"
 
 
 def env_text(name: str, default: str | None = None) -> str | None:

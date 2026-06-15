@@ -654,7 +654,7 @@ def cmd_telegram_test(args: argparse.Namespace) -> None:
             },
             dedupe_key=f"telegram-test:{args.message_key}",
         )
-        sent = send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id)
+        sent = send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id, environment=env.environment)
     print(f"Telegram test queued={queued} sent={sent}")
 
 

@@ -110,13 +110,18 @@ def send_pending_telegram_alerts(
     token: str | None,
     chat_id: str | None,
     limit: int = 20,
+    environment: str = "development",
 ) -> int:
     if not token or not chat_id:
         return 0
+    prefix = "" if environment.lower() == "production" else "[DEV] "
     sent = 0
     for alert in pending_alerts(conn, limit=limit):
         try:
-            send_telegram_message(token, chat_id, format_alert_message(alert))
+            text = format_alert_message(alert)
+            if prefix:
+                text = prefix + text
+            send_telegram_message(token, chat_id, text)
             mark_alert_sent(conn, alert.id)
             sent += 1
         except Exception as exc:
