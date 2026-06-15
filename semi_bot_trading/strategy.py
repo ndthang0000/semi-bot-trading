@@ -1052,6 +1052,19 @@ def classify_zone_reaction_v2(
             )
         if touched and close > zone_high and strong_reject:
             return reaction_v2("reject", "long", True, last, ["Strong bullish rejection from zone."], buffer)
+        if (
+            config.zone_reaction_v2_reject_pinbar_enabled
+            and low <= zone_high
+            and close > zone_high
+            and _is_pinbar_reject(
+                last, "long",
+                config.zone_reaction_v2_reject_pinbar_wick_body_ratio,
+                config.zone_reaction_v2_reject_pinbar_min_wick_ratio,
+                avg_body=avg_body,
+                body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
+            )
+        ):
+            return reaction_v2("reject", "long", True, last, ["Bullish pinbar rejection at zone."], buffer)
         close_outside = zone_low - close
         if close_outside >= min_close_outside and breakout_body:
             return reaction_v2(
@@ -1084,6 +1097,19 @@ def classify_zone_reaction_v2(
             )
         if touched and close < zone_low and strong_reject:
             return reaction_v2("reject", "short", True, last, ["Strong bearish rejection from zone."], buffer)
+        if (
+            config.zone_reaction_v2_reject_pinbar_enabled
+            and high >= zone_low
+            and close < zone_low
+            and _is_pinbar_reject(
+                last, "short",
+                config.zone_reaction_v2_reject_pinbar_wick_body_ratio,
+                config.zone_reaction_v2_reject_pinbar_min_wick_ratio,
+                avg_body=avg_body,
+                body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
+            )
+        ):
+            return reaction_v2("reject", "short", True, last, ["Bearish pinbar rejection at zone."], buffer)
         close_outside = close - zone_high
         if close_outside >= min_close_outside and breakout_body:
             return reaction_v2(
@@ -1423,6 +1449,54 @@ def reaction_v2(
 
 def candle_body(candle: dict[str, Any]) -> float:
     return abs(float(candle.get("close", 0.0)) - float(candle.get("open", 0.0)))
+
+
+def _is_pinbar_reject(
+    candle: dict[str, Any],
+    direction: str,
+    wick_body_ratio: float,
+    min_wick_ratio: float,
+    avg_body: float = 0.0,
+    body_min_ratio: float = 1.5,
+) -> bool:
+    """
+    Bullish pinbar (long): long lower wick, close near top.
+      - lower_wick >= body * wick_body_ratio
+      - lower_wick_ratio >= min_wick_ratio
+      - (close - low) >= avg_body * body_min_ratio  ← size check
+    Bearish pinbar (short): long upper wick, close near bottom.
+      - upper_wick >= body * wick_body_ratio
+      - upper_wick_ratio >= min_wick_ratio
+      - (high - close) >= avg_body * body_min_ratio  ← size check
+    """
+    high = float(candle.get("high", 0.0))
+    low = float(candle.get("low", 0.0))
+    open_ = float(candle.get("open", 0.0))
+    close = float(candle.get("close", 0.0))
+    full_range = high - low
+    if full_range <= 0:
+        return False
+    body = abs(close - open_)
+    if direction == "long":
+        lower_wick = min(open_, close) - low
+        lower_wick_ratio = lower_wick / full_range
+        rejection_size = close - low  # recovery from wick tip to close
+        size_ok = avg_body <= 0 or rejection_size >= avg_body * body_min_ratio
+        return (
+            lower_wick >= body * wick_body_ratio
+            and lower_wick_ratio >= min_wick_ratio
+            and size_ok
+        )
+    else:
+        upper_wick = high - max(open_, close)
+        upper_wick_ratio = upper_wick / full_range
+        rejection_size = high - close  # drop from wick tip to close
+        size_ok = avg_body <= 0 or rejection_size >= avg_body * body_min_ratio
+        return (
+            upper_wick >= body * wick_body_ratio
+            and upper_wick_ratio >= min_wick_ratio
+            and size_ok
+        )
 
 
 def average_body(candles: list[dict[str, Any]], period: int) -> float:

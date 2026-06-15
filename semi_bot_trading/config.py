@@ -160,6 +160,9 @@ class StrategyConfig:
     zone_reaction_v2_fakeout_max_atr: float
     zone_reaction_v2_reject_body_min_ratio: float
     zone_reaction_v2_reject_avg_body_period: int
+    zone_reaction_v2_reject_pinbar_enabled: bool
+    zone_reaction_v2_reject_pinbar_wick_body_ratio: float
+    zone_reaction_v2_reject_pinbar_min_wick_ratio: float
     zone_reaction_v2_slow_min_bars: int
     zone_reaction_v2_slow_max_bars: int
     zone_reaction_v2_slow_body_max_ratio: float
@@ -396,6 +399,9 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_fakeout_max_atr=float(zone_reaction_v2.get("fakeout_max_atr", 0.5)),
             zone_reaction_v2_reject_body_min_ratio=float(zone_reaction_v2.get("reject_body_min_ratio", 1.5)),
             zone_reaction_v2_reject_avg_body_period=int(zone_reaction_v2.get("reject_avg_body_period", 20)),
+            zone_reaction_v2_reject_pinbar_enabled=bool(zone_reaction_v2.get("reject_pinbar_enabled", True)),
+            zone_reaction_v2_reject_pinbar_wick_body_ratio=float(zone_reaction_v2.get("reject_pinbar_wick_body_ratio", 2.0)),
+            zone_reaction_v2_reject_pinbar_min_wick_ratio=float(zone_reaction_v2.get("reject_pinbar_min_wick_ratio", 0.55)),
             zone_reaction_v2_slow_min_bars=int(zone_reaction_v2.get("slow_min_bars", 3)),
             zone_reaction_v2_slow_max_bars=int(zone_reaction_v2.get("slow_max_bars", 8)),
             zone_reaction_v2_slow_body_max_ratio=float(zone_reaction_v2.get("slow_body_max_ratio", 0.8)),
@@ -475,11 +481,9 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
 
 def parse_swing_timeframes(raw: dict[str, Any], default_tolerance: float) -> dict[str, SwingConfig]:
     result: dict[str, SwingConfig] = {}
-    for timeframe, values in raw.items():
-        if not isinstance(values, dict):
-            raise ValueError(f"Invalid swing timeframe config for {timeframe}")
-        result[timeframe.upper()] = SwingConfig(
-            window=int(values["window"]),
-            tolerance=float(values.get("tolerance", default_tolerance)),
+    for tf, cfg in raw.items():
+        result[tf.upper()] = SwingConfig(
+            window=int(cfg.get("window", 4)),
+            tolerance=float(cfg.get("tolerance", default_tolerance)),
         )
     return result
