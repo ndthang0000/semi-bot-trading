@@ -214,9 +214,16 @@ class MT5BrokerClient:
 
     def order_filling_mode(self, broker_symbol: str) -> int:
         info = self.mt5.symbol_info(broker_symbol)
-        filling = getattr(info, "filling_mode", None)
-        if filling == self.mt5.ORDER_FILLING_FOK:
+        # filling_mode is a bitmask from symbol_info:
+        #   bit 0 (value 1) = SYMBOL_FILLING_FOK supported → use ORDER_FILLING_FOK
+        #   bit 1 (value 2) = SYMBOL_FILLING_IOC supported → use ORDER_FILLING_IOC
+        # These are *different* constant families from ORDER_FILLING_* so equality
+        # comparisons with ORDER_FILLING_FOK / ORDER_FILLING_RETURN were incorrect.
+        filling = getattr(info, "filling_mode", None) if info is not None else None
+        if filling is None:
+            return self.mt5.ORDER_FILLING_IOC  # safe default
+        if filling & 1:  # SYMBOL_FILLING_FOK supported
             return self.mt5.ORDER_FILLING_FOK
-        if filling == self.mt5.ORDER_FILLING_RETURN:
-            return self.mt5.ORDER_FILLING_RETURN
-        return self.mt5.ORDER_FILLING_IOC
+        if filling & 2:  # SYMBOL_FILLING_IOC supported
+            return self.mt5.ORDER_FILLING_IOC
+        return self.mt5.ORDER_FILLING_RETURN

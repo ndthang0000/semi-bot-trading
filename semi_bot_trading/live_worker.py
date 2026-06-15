@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from .smc_zones import detect_and_store_smc_zones
 from .structure import detect_and_store_break_structure, detect_and_store_swing_structure
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class LiveWorkerState:
@@ -36,10 +39,18 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
     credentials = MT5Credentials(env.mt5_login, env.mt5_password, env.mt5_server)
     client = MT5BrokerClient(credentials)
     client.connect()
+    # Initialise DB schema once at startup, not on every poll iteration.
+    with connect(config.database) as conn:
+        init_db(conn)
     state = LiveWorkerState(broker_symbol=client.resolve_symbol(env.mt5_symbol, config.symbol))
     try:
         while True:
-            run_live_iteration(config, env, client, state)
+            try:
+                run_live_iteration(config, env, client, state)
+            except Exception:
+                if once:
+                    raise  # propagate in one-shot / test mode so callers see the error
+                logger.exception("Live iteration error — retrying next cycle")
             if once:
                 return
             time.sleep(env.poll_seconds)
@@ -49,11 +60,12 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
 
 def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient, state: LiveWorkerState) -> None:
     state.loop_count += 1
+    broker_symbol: str = state.broker_symbol or ""
     with connect(config.database) as conn:
-        init_db(conn)
-        sync_mt5_candles(conn, config, env, client)
-        if state.broker_symbol:
-            sync_closed_positions(conn, config, env, client, state.broker_symbol)
+        # init_db is called once at startup in run_live_worker; skip here.
+        sync_mt5_candles(conn, config, client, broker_symbol)
+        if broker_symbol:
+            sync_closed_positions(conn, config, env, client, broker_symbol)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         if latest_m15 is not None and latest_m15 != state.last_closed_m15:
             before_zone_ids = current_zone_ids(conn, config.symbol)
@@ -71,19 +83,22 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
                 macro_trend_config=config.macro_trend,
             )
             queue_setup_alerts(conn, config, env, payload["layers"].get("setup_candidates", []))
-            maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []))
+            maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)
             state.last_closed_m15 = latest_m15
     with connect(config.database) as conn:
         send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id)
 
 
-def sync_mt5_candles(conn: Connection, config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient) -> None:
-    broker_symbol = client.resolve_symbol(env.mt5_symbol, config.symbol)
+def sync_mt5_candles(conn: Connection, config: AppConfig, client: MT5BrokerClient, broker_symbol: str) -> None:
+    # broker_symbol is resolved once at startup and passed in — no redundant MT5 call.
     for timeframe, count in ((config.bias.timeframe, 800), (config.strategy.timeframe, 1200)):
         candles = client.copy_rates(broker_symbol, config.symbol, timeframe, count)
-        closed_candles = candles[:-1] if len(candles) > 1 else candles
+        # The last candle from MT5 is the still-forming live candle; exclude it from
+        # the closed-candle store.  When MT5 returns ≤1 candle (unexpected) treat
+        # everything as live so we never write an open candle into the closed table.
+        closed_candles = candles[:-1] if len(candles) > 1 else []
         upsert_candles(conn, closed_candles)
-        live_candle = candles[-1] if len(candles) > 1 else None
+        live_candle = candles[-1] if candles else None
         upsert_live_candle(conn, live_candle)
 
 
@@ -283,10 +298,10 @@ def maybe_execute_candidates(
     env: RuntimeEnv,
     client: MT5BrokerClient,
     candidates: list[dict[str, Any]],
+    broker_symbol: str,
 ) -> None:
     if not env.execution_enabled:
         return
-    broker_symbol = client.resolve_symbol(env.mt5_symbol, config.symbol)
     if client.positions_count(broker_symbol) >= env.max_open_positions_per_symbol:
         return
     if live_trade_count_today(conn, config.symbol) >= env.max_trades_per_day:
@@ -412,7 +427,12 @@ def execute_candidate(
                 magic=env.mt5_magic,
             )
         )
-        broker_order_id = str(result.get("order") or result.get("deal") or "")
+        # Store both the order ticket and the deal ticket.  In hedging mode the
+        # order ticket becomes the position_id; in netting mode the deal ticket
+        # may differ.  Persisting both lets sync_closed_positions fall back to
+        # the deal ticket when the order-ticket lookup returns nothing.
+        broker_order_id = str(result.get("order") or "")
+        broker_deal_id = str(result.get("deal") or "")
         fill_price = float(result.get("price") or candidate.get("entry") or 0)
         conn.execute(
             """
@@ -420,7 +440,7 @@ def execute_candidate(
             SET status = 'sent', broker_order_id = ?, broker_result_json = ?, updated_at = ?
             WHERE id = ?
             """,
-            (broker_order_id, json.dumps(result, sort_keys=True, default=str), now, request_id),
+            (broker_order_id or broker_deal_id, json.dumps(result, sort_keys=True, default=str), now, request_id),
         )
         conn.execute(
             """
@@ -441,7 +461,14 @@ def execute_candidate(
                 json.dumps(take_profit),
                 volume,
                 now,
-                json.dumps({"candidate_id": candidate["id"], "broker_order_id": broker_order_id}, sort_keys=True),
+                json.dumps(
+                    {
+                        "candidate_id": candidate["id"],
+                        "broker_order_id": broker_order_id,
+                        "broker_deal_id": broker_deal_id,
+                    },
+                    sort_keys=True,
+                ),
                 now,
             ),
         )
@@ -517,13 +544,30 @@ def sync_closed_positions(
     now = utc_now_iso()
     closed_any = False
 
+    # Fetch contract size once for the whole batch (needed for accurate pnl_r).
+    try:
+        contract_size = client.get_symbol_contract_size(broker_symbol)
+    except Exception:
+        contract_size = 100.0  # safe fallback for XAUUSD
+
     for row in rows:
         metadata = json.loads(row["metadata_json"] or "{}")
         broker_order_id = str(metadata.get("broker_order_id", ""))
-        if not broker_order_id or broker_order_id in open_tickets:
-            continue  # still open or no broker link recorded
+        broker_deal_id = str(metadata.get("broker_deal_id", ""))
 
-        deal = client.get_closed_deal_for_position(broker_order_id)
+        # Skip if we have no reference ticket at all.
+        if not broker_order_id and not broker_deal_id:
+            continue
+
+        # Skip if either ticket still appears in the open-positions list.
+        if broker_order_id in open_tickets or broker_deal_id in open_tickets:
+            continue
+
+        # Try the order ticket first (position_id == order ticket in hedging mode).
+        # Fall back to the deal ticket for netting-mode brokers.
+        deal = client.get_closed_deal_for_position(broker_order_id) if broker_order_id else None
+        if deal is None and broker_deal_id and broker_deal_id != broker_order_id:
+            deal = client.get_closed_deal_for_position(broker_deal_id)
         if deal is None:
             continue  # MT5 history not yet available
 
@@ -532,13 +576,14 @@ def sync_closed_positions(
         close_price = deal["price"]
         closed_at = deal["time_iso"]
 
-        # Rough pnl_r: P&L divided by initial dollar risk (entry-to-stop * qty)
+        # pnl_r: P&L divided by initial dollar risk
+        # risk = stop_distance × lots × contract_size  (contract_size was missing before)
         pnl_r: float | None = None
         try:
             entry = float(row["entry_price"])
             stop = float(row["stop_loss"])
             qty = float(row["quantity"])
-            risk_amount = abs(entry - stop) * qty
+            risk_amount = abs(entry - stop) * qty * contract_size
             if risk_amount > 0:
                 pnl_r = round(pnl / risk_amount, 3)
         except (TypeError, ValueError):
@@ -610,11 +655,18 @@ def new_zone_rows(conn: Connection, symbol: str, before_ids: set[str]) -> list[A
 
 
 def live_candidate_already_executed(conn: Connection, candidate_id: str) -> bool:
+    """Return True only when a *successful* execution request exists for this candidate.
+
+    Checking trade_ideas alone was insufficient: a failed order (status='failed')
+    still creates a trade_idea row, which permanently blocked retries on the same
+    candidate even though the order was never actually filled.
+    """
     row = conn.execute(
         """
-        SELECT id
-        FROM trade_ideas
-        WHERE id = ?
+        SELECT er.id
+        FROM trade_ideas ti
+        JOIN execution_requests er ON er.trade_idea_id = ti.id
+        WHERE ti.id = ? AND er.status = 'sent'
         """,
         (f"live-idea-{candidate_id}",),
     ).fetchone()
