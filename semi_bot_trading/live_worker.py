@@ -38,7 +38,11 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
         raise RuntimeError("MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER are required")
     credentials = MT5Credentials(env.mt5_login, env.mt5_password, env.mt5_server)
     client = MT5BrokerClient(credentials)
-    client.connect()
+
+    # MT5 may not be running yet (e.g. service starts before MT5 on reboot).
+    # Retry the connection with backoff instead of crashing immediately.
+    _connect_with_retry(client, once=once)
+
     # Initialise DB schema once at startup, not on every poll iteration.
     with connect(config.database) as conn:
         init_db(conn)
@@ -56,6 +60,32 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
             time.sleep(env.poll_seconds)
     finally:
         client.shutdown()
+
+
+def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
+    """Try to connect to MT5, retrying every 30 s for up to 10 minutes.
+
+    MT5 is often not yet running when the Windows service starts on boot.
+    Retrying avoids a crash-restart loop logged in BotWorker.err.log.
+    In once/test mode the first failure raises immediately (no waiting).
+    """
+    max_attempts = 20   # 20 × 30 s = 10 minutes
+    delay_seconds = 30
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client.connect()
+            return  # success
+        except Exception as exc:
+            if once:
+                raise
+            if attempt >= max_attempts:
+                logger.error("MT5 connect failed after %d attempts — giving up: %s", max_attempts, exc)
+                raise
+            logger.warning(
+                "MT5 connect failed (attempt %d/%d): %s — retrying in %ds",
+                attempt, max_attempts, exc, delay_seconds,
+            )
+            time.sleep(delay_seconds)
 
 
 def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient, state: LiveWorkerState) -> None:
