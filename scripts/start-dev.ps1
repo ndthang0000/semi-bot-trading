@@ -2,7 +2,8 @@ param(
   [int]$BackendPort = 8000,
   [int]$FrontendPort = 5173,
   [switch]$WithWorker,
-  [switch]$EnableExecution
+  [switch]$EnableExecution,
+  [string]$Env = ".env"
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,13 +33,13 @@ $jobs = @($backendJob, $frontendJob)
 
 if ($WithWorker) {
   $workerJob = Start-Job -Name "reaction-zone-live-worker" -ScriptBlock {
-    param($RootPath, $ExecutionEnabled)
+    param($RootPath, $ExecutionEnabled, $EnvPath)
     Set-Location $RootPath
     if ($ExecutionEnabled) {
       $env:EXECUTION_ENABLED = "true"
     }
-    python -m semi_bot_trading.cli live-worker
-  } -ArgumentList $Root, [bool]$EnableExecution
+    python -m semi_bot_trading.cli live-worker --env $EnvPath
+  } -ArgumentList $Root, [bool]$EnableExecution, $Env
   $jobs += $workerJob
 }
 

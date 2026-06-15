@@ -29,7 +29,7 @@ if ($beforeHash -eq $afterHash) {
 # ── 2. Install Python dependencies ───────────────────────────────────────────
 Write-Host ""
 Write-Host "[2/4] Installing Python dependencies..." -ForegroundColor Yellow
-pip install -e . --quiet
+pip install -e . --quiet --upgrade
 Write-Host "      Done." -ForegroundColor Green
 
 # ── 3. Build frontend ────────────────────────────────────────────────────────
@@ -37,17 +37,21 @@ Write-Host ""
 if ($SkipFrontend) {
     Write-Host "[3/4] Skipping frontend build (-SkipFrontend)." -ForegroundColor Gray
 } else {
-    # Check if frontend files changed
-    $frontendChanged = git diff "$beforeHash" "$afterHash" --name-only 2>$null | Select-String "^frontend/"
-    if ($frontendChanged -or $beforeHash -eq $afterHash) {
-        Write-Host "[3/4] Building frontend..." -ForegroundColor Yellow
-        Set-Location (Join-Path $Root "frontend")
-        npm install --silent
-        npm run build
-        Set-Location $Root
-        Write-Host "      Done." -ForegroundColor Green
+    if ($beforeHash -eq $afterHash) {
+        Write-Host "[3/4] No code changes, skipping frontend build." -ForegroundColor Gray
     } else {
-        Write-Host "[3/4] No frontend changes, skipping build." -ForegroundColor Gray
+        # Check if frontend files changed between the two commits
+        $frontendChanged = git diff "$beforeHash" "$afterHash" --name-only 2>$null | Select-String "^frontend/"
+        if ($frontendChanged) {
+            Write-Host "[3/4] Building frontend..." -ForegroundColor Yellow
+            Set-Location (Join-Path $Root "frontend")
+            npm install --silent
+            npm run build
+            Set-Location $Root
+            Write-Host "      Done." -ForegroundColor Green
+        } else {
+            Write-Host "[3/4] No frontend changes, skipping build." -ForegroundColor Gray
+        }
     }
 }
 
