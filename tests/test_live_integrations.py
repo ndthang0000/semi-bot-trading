@@ -58,6 +58,7 @@ class LiveIntegrationTest(unittest.TestCase):
                             'MT5_LOGIN="123"',
                             'MT5_PASSWORD="secret"',
                             'MT5_SERVER="Exness-Test"',
+                            'MT5_PATH="C:\\Program Files\\MetaTrader 5 EXNESS\\terminal64.exe"',
                             'MT5_SYMBOL="XAUUSDm"',
                             'EXECUTION_ENABLED="true"',
                             'LIVE_ORDER_VOLUME="0.02"',
@@ -70,6 +71,7 @@ class LiveIntegrationTest(unittest.TestCase):
             self.assertEqual(123, env.mt5_login)
             self.assertEqual("secret", env.mt5_password)
             self.assertEqual("Exness-Test", env.mt5_server)
+            self.assertEqual(r"C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe", env.mt5_path)
             self.assertEqual("XAUUSDcustom", env.mt5_symbol)
             self.assertTrue(env.execution_enabled)
             self.assertEqual(0.02, env.live_order_volume)

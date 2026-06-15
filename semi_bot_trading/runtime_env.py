@@ -13,6 +13,7 @@ class RuntimeEnv:
     mt5_login: int | None
     mt5_password: str | None
     mt5_server: str | None
+    mt5_path: str | None
     mt5_symbol: str
     mt5_magic: int
     telegram_token: str | None
@@ -55,6 +56,7 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         mt5_login=env_int("MT5_LOGIN"),
         mt5_password=env_text("MT5_PASSWORD"),
         mt5_server=env_text("MT5_SERVER"),
+        mt5_path=env_text("MT5_PATH"),
         mt5_symbol=env_text("MT5_SYMBOL", "XAUUSDm") or "XAUUSDm",
         mt5_magic=env_int("MT5_MAGIC", 260612) or 260612,
         telegram_token=env_text("TELEGRAM_TOKEN"),

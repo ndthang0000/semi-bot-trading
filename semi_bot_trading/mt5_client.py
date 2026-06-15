@@ -13,6 +13,7 @@ class MT5Credentials:
     login: int
     password: str
     server: str
+    path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -36,11 +37,16 @@ class MT5BrokerClient:
         self.credentials = credentials
 
     def connect(self) -> None:
-        ok = self.mt5.initialize(
-            login=self.credentials.login,
-            password=self.credentials.password,
-            server=self.credentials.server,
-        )
+        kwargs: dict[str, Any] = {
+            "login": self.credentials.login,
+            "password": self.credentials.password,
+            "server": self.credentials.server,
+        }
+        # Windows services often cannot rely on MetaTrader5's terminal auto-discovery.
+        # Passing terminal64.exe explicitly avoids "MetaTrader 5 x64 not found" on VPS.
+        if self.credentials.path:
+            kwargs["path"] = self.credentials.path
+        ok = self.mt5.initialize(**kwargs)
         if not ok:
             raise RuntimeError(f"MT5 initialize failed: {self.mt5.last_error()}")
 

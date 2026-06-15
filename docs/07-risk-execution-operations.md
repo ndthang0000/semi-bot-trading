@@ -238,6 +238,7 @@ Required runtime variables:
 MT5_LOGIN
 MT5_PASSWORD
 MT5_SERVER
+MT5_PATH
 MT5_SYMBOL
 EXECUTION_ENABLED
 LIVE_ORDER_VOLUME
@@ -247,6 +248,14 @@ MAX_TRADES_PER_DAY
 
 `MT5_SYMBOL` is the broker symbol, for example `XAUUSDm` on an Exness cent
 account. The local project symbol remains `XAUUSD`.
+
+`MT5_PATH` is optional for manual runs, but strongly recommended for Windows
+services on VPS because MetaTrader5 auto-discovery can fail in Session 0. Point
+it to `terminal64.exe`, not just the install folder, for example:
+
+```text
+MT5_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
+```
 
 The worker syncs only closed candles before running detectors and strategy.
 When `EXECUTION_ENABLED=false`, it still updates data and sends Telegram alerts,

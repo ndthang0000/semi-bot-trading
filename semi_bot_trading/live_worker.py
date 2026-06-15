@@ -36,7 +36,7 @@ class LiveWorkerState:
 def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -> None:
     if env.mt5_login is None or not env.mt5_password or not env.mt5_server:
         raise RuntimeError("MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER are required")
-    credentials = MT5Credentials(env.mt5_login, env.mt5_password, env.mt5_server)
+    credentials = MT5Credentials(env.mt5_login, env.mt5_password, env.mt5_server, env.mt5_path)
     client = MT5BrokerClient(credentials)
 
     # MT5 may not be running yet (e.g. service starts before MT5 on reboot).
