@@ -176,8 +176,12 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
   );
   const candleKey = useMemo(() => {
     const first = payload.layers.candles.at(0)?.time ?? "";
-    const last = payload.layers.candles.at(-1)?.time ?? "";
-    return `${payload.symbol}:${payload.timeframe}:${payload.layers.candles.length}:${first}:${last}`;
+    const lastCandle = payload.layers.candles.at(-1);
+    const lastTime = lastCandle?.time ?? "";
+    // Include last candle's close price so live-candle price updates
+    // (same open_time, different close) also trigger a chart series update.
+    const lastClose = lastCandle?.close?.toFixed(5) ?? "";
+    return `${payload.symbol}:${payload.timeframe}:${payload.layers.candles.length}:${first}:${lastTime}:${lastClose}`;
   }, [payload.layers.candles, payload.symbol, payload.timeframe]);
   const viewKey = `${payload.symbol}:${payload.timeframe}:${payload.range.limit}:${payload.range.start_index ?? "latest"}`;
   const setupStateByZone = useMemo(() => buildSetupStateByZone(payload.layers.setup_candidates), [payload.layers.setup_candidates]);

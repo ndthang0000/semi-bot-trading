@@ -73,6 +73,32 @@ def json_loads(value: str | None, default: Any) -> Any:
     return json.loads(value)
 
 
+def load_live_candle(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+) -> dict[str, Any] | None:
+    """Return the currently forming (live) candle from live_candles, or None."""
+    row = conn.execute(
+        """
+        SELECT open_time, open, high, low, close, volume
+        FROM live_candles
+        WHERE symbol = ? AND timeframe = ?
+        """,
+        (symbol, timeframe),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "time": row["open_time"],
+        "open": float(row["open"]),
+        "high": float(row["high"]),
+        "low": float(row["low"]),
+        "close": float(row["close"]),
+        "volume": float(row["volume"]) if row["volume"] is not None else None,
+    }
+
+
 def load_chart_candles(
     conn: Connection,
     symbol: str,
@@ -401,6 +427,14 @@ def build_chart_payload(
     candles = load_chart_candles(conn, symbol, timeframe, limit, start, end, start_index)
     if not candles:
         raise ValueError(f"No candles found for {symbol} {timeframe}")
+
+    # In latest mode (no historical window), append the forming candle from live_candles
+    # so the UI always shows the in-progress bar even before it closes.
+    is_latest_mode = start_index is None and start is None and end is None
+    if is_latest_mode:
+        live_candle = load_live_candle(conn, symbol, timeframe)
+        if live_candle is not None and live_candle["time"] > candles[-1]["time"]:
+            candles = [*candles, live_candle]
 
     range_start = candles[0]["time"]
     range_end = candles[-1]["time"]
