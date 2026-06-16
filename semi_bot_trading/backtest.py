@@ -111,6 +111,7 @@ def run_strategy_backtest(
     engine: str = "incremental",
     include_human_zones: bool = False,
     allowed_playbooks: set[str] | None = None,
+    allowed_zone_types: set[str] | None = None,
 ) -> BacktestResult:
     if engine == "replay":
         return run_strategy_backtest_replay(
@@ -125,6 +126,7 @@ def run_strategy_backtest(
             auto_accept=auto_accept,
             include_human_zones=include_human_zones,
             allowed_playbooks=allowed_playbooks,
+            allowed_zone_types=allowed_zone_types,
         )
     if engine != "incremental":
         raise ValueError("engine must be incremental or replay")
@@ -140,6 +142,7 @@ def run_strategy_backtest(
         auto_accept=auto_accept,
         include_human_zones=include_human_zones,
         allowed_playbooks=allowed_playbooks,
+        allowed_zone_types=allowed_zone_types,
     )
 
 
@@ -155,6 +158,7 @@ def run_strategy_backtest_replay(
     auto_accept: bool | None = None,
     include_human_zones: bool = False,
     allowed_playbooks: set[str] | None = None,
+    allowed_zone_types: set[str] | None = None,  # not yet threaded into replay engine
 ) -> BacktestResult:
     effective_spread = config.backtest.spread if spread is None else spread
     effective_slippage = config.backtest.slippage if slippage is None else slippage
@@ -256,6 +260,7 @@ def run_strategy_backtest_incremental(
     auto_accept: bool | None = None,
     include_human_zones: bool = False,
     allowed_playbooks: set[str] | None = None,
+    allowed_zone_types: set[str] | None = None,
 ) -> BacktestResult:
     effective_spread = config.backtest.spread if spread is None else spread
     effective_slippage = config.backtest.slippage if slippage is None else slippage
@@ -295,6 +300,7 @@ def run_strategy_backtest_incremental(
             effective_auto_accept,
             include_human_zones,
             allowed_playbooks,
+            allowed_zone_types,
         )
         return BacktestResult(
             trades=trades,
@@ -315,7 +321,7 @@ def run_strategy_backtest_incremental(
             engine="incremental",
         )
 
-    timeline = build_incremental_timeline(conn, config, symbol, candles, include_human_zones=include_human_zones, allowed_playbooks=allowed_playbooks)
+    timeline = build_incremental_timeline(conn, config, symbol, candles, include_human_zones=include_human_zones, allowed_playbooks=allowed_playbooks, allowed_zone_types=allowed_zone_types)
     next_available_index: dict[str, int] = {}
     zone_loss_cooldown_until: dict[str, int] = {}
     trades: list[BacktestTrade] = []
@@ -380,6 +386,7 @@ def run_incremental_backtest_chunks(
     auto_accept: bool,
     include_human_zones: bool,
     allowed_playbooks: set[str] | None = None,
+    allowed_zone_types: set[str] | None = None,
 ) -> list[BacktestTrade]:
     trades: list[BacktestTrade] = []
     next_available_index: dict[str, int] = {}
@@ -399,6 +406,7 @@ def run_incremental_backtest_chunks(
             detector_candles,
             include_human_zones=include_human_zones,
             allowed_playbooks=allowed_playbooks,
+            allowed_zone_types=allowed_zone_types,
         )
         local_eval_start = segment_start - chunk_start
         local_eval_end = segment_end - chunk_start
@@ -638,6 +646,7 @@ def build_incremental_timeline(
     strategy_candles: list[dict[str, Any]],
     include_human_zones: bool = False,
     allowed_playbooks: set[str] | None = None,
+    allowed_zone_types: set[str] | None = None,
 ) -> IncrementalBacktestTimeline:
     start = candle_decision_time(strategy_candles[0])
     end = candle_decision_time(strategy_candles[-1])
@@ -680,7 +689,13 @@ def build_incremental_timeline(
         key=lambda point: (point_confirmed_at(point), point.event_time, point.detector, point.point_type),
     )
     chart_zones: list[dict[str, Any]] = []
-    allowed_zone_types = allowed_zone_types_for_playbooks(allowed_playbooks)
+    # If caller explicitly provides allowed_zone_types, honour that override;
+    # otherwise derive from the allowed playbooks as usual.
+    allowed_zone_types = (
+        allowed_zone_types
+        if allowed_zone_types is not None
+        else allowed_zone_types_for_playbooks(allowed_playbooks)
+    )
     if include_human_zones:
         chart_zones.extend(
             zone

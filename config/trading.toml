@@ -169,6 +169,9 @@ allow_neutral_range_trade = true
 block_news_or_risk_off = true
 # Block shorts when macro trend is up and longs when macro trend is down.
 macro_gate_enabled = true
+# Separate macro gate toggle for FVG zones only.
+# Set to false to research FVG zones without macro trend filtering.
+fvg_macro_gate_enabled = true
 confluence_score_bonus = 0.08
 
 [strategy.playbooks.sr_breakout_v1]

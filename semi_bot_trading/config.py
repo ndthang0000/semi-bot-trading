@@ -189,6 +189,7 @@ class StrategyConfig:
     zone_reaction_v2_allow_neutral_range_trade: bool
     zone_reaction_v2_block_news_or_risk_off: bool
     zone_reaction_v2_macro_gate_enabled: bool
+    zone_reaction_v2_fvg_macro_gate_enabled: bool  # separate gate for FVG zones
     zone_reaction_v2_confluence_score_bonus: float
     sr_breakout_v1_enabled: bool
     sr_breakout_v1_allowed_entries: tuple[str, ...]
@@ -448,6 +449,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_allow_neutral_range_trade=bool(zone_reaction_v2.get("allow_neutral_range_trade", True)),
             zone_reaction_v2_block_news_or_risk_off=bool(zone_reaction_v2.get("block_news_or_risk_off", True)),
             zone_reaction_v2_macro_gate_enabled=bool(zone_reaction_v2.get("macro_gate_enabled", True)),
+            zone_reaction_v2_fvg_macro_gate_enabled=bool(zone_reaction_v2.get("fvg_macro_gate_enabled", True)),
             zone_reaction_v2_confluence_score_bonus=float(zone_reaction_v2.get("confluence_score_bonus", 0.08)),
             sr_breakout_v1_enabled=bool(sr_breakout_v1.get("enabled", True)),
             sr_breakout_v1_allowed_entries=tuple(

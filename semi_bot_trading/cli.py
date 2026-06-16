@@ -676,6 +676,7 @@ def cmd_backtest_strategies(args: argparse.Namespace) -> None:
     symbol = args.symbol or config.symbol
     db_path = args.db or config.database
     allowed_playbooks = parse_playbooks_arg(args.playbook)
+    allowed_zone_types = parse_zone_types_arg(getattr(args, "zone_type", None))
     with connect(db_path) as conn:
         init_db(conn)
         result = run_strategy_backtest(
@@ -691,6 +692,7 @@ def cmd_backtest_strategies(args: argparse.Namespace) -> None:
             engine=args.engine,
             include_human_zones=args.include_human_zones,
             allowed_playbooks=allowed_playbooks,
+            allowed_zone_types=allowed_zone_types,
         )
         run_id = None
         if args.persist:
@@ -734,6 +736,7 @@ def cmd_backtest_report(args: argparse.Namespace) -> None:
     symbol = args.symbol or config.symbol
     db_path = args.db or config.database
     allowed_playbooks = parse_playbooks_arg(args.playbook)
+    allowed_zone_types = parse_zone_types_arg(getattr(args, "zone_type", None))
     with connect(db_path) as conn:
         init_db(conn)
         result = run_strategy_backtest(
@@ -749,6 +752,7 @@ def cmd_backtest_report(args: argparse.Namespace) -> None:
             engine=args.engine,
             include_human_zones=args.include_human_zones,
             allowed_playbooks=allowed_playbooks,
+            allowed_zone_types=allowed_zone_types,
         )
         run_id = None
         if args.persist:
@@ -806,6 +810,22 @@ def cmd_research_report(args: argparse.Namespace) -> None:
         args.html_output.parent.mkdir(parents=True, exist_ok=True)
         args.html_output.write_text(render_research_html(rows, max_rows=args.max_rows, min_samples=args.min_samples))
         print(f"HTML report: {args.html_output}")
+
+
+def parse_zone_types_arg(values: list[str] | None) -> set[str] | None:
+    if not values:
+        return None
+    zone_types: set[str] = set()
+    for value in values:
+        zone_types.update(item.strip() for item in value.split(",") if item.strip())
+    all_known: set[str] = set()
+    for types in PLAYBOOK_ZONE_TYPES.values():
+        all_known.update(types)
+    unknown = sorted(zone_types - all_known)
+    if unknown:
+        known = ", ".join(sorted(all_known))
+        raise SystemExit(f"Unknown zone type(s): {', '.join(unknown)}. Known types: {known}")
+    return zone_types or None
 
 
 def parse_playbooks_arg(values: list[str] | None) -> set[str] | None:
@@ -1098,6 +1118,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook zone_reaction_v2.",
     )
     backtest_parser.add_argument(
+        "--zone-type",
+        action="append",
+        help="Only evaluate zones of this type. Repeat or comma-separate values, e.g. --zone-type fvg.",
+    )
+    backtest_parser.add_argument(
         "--include-human-zones",
         action="store_true",
         help="Include manually drawn historical zones. Disabled by default to avoid hindsight in bot-only backtests.",
@@ -1134,6 +1159,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--playbook",
         action="append",
         help="Only evaluate selected playbook. Repeat or comma-separate values, e.g. --playbook zone_reaction_v2.",
+    )
+    report_parser.add_argument(
+        "--zone-type",
+        action="append",
+        help="Only evaluate zones of this type. Repeat or comma-separate values, e.g. --zone-type fvg.",
     )
     report_parser.add_argument(
         "--include-human-zones",

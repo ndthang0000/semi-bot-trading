@@ -764,17 +764,23 @@ def zone_reaction_v2_status(
     # Macro trend gate: counter-macro trades had a clear negative edge in backtest
     # (resistance shorts during the 2023-2026 gold uptrend). "flat"/"unknown"
     # macro allows both directions so the gate degrades gracefully without history.
-    # FVG zones are exempt: FVG fills reverse against macro fine (PA-only edge).
-    fvg_macro_exempt = zone_type == "fvg"
-    if not context_bypass and config.zone_reaction_v2_macro_gate_enabled and not fvg_macro_exempt:
+    # FVG zones have a separate gate controlled by fvg_macro_gate_enabled in config.
+    is_fvg = zone_type == "fvg"
+    active_macro_gate = (
+        config.zone_reaction_v2_macro_gate_enabled
+        if not is_fvg
+        else config.zone_reaction_v2_fvg_macro_gate_enabled
+    )
+    if not context_bypass and active_macro_gate:
         if macro_trend == "up" and direction == "short":
             blocked.append("Macro trend up blocks Zone Reaction V2 short.")
         elif macro_trend == "down" and direction == "long":
             blocked.append("Macro trend down blocks Zone Reaction V2 long.")
         else:
             reasons.append(f"Macro trend {macro_trend} allows {direction}.")
-    elif fvg_macro_exempt:
-        reasons.append(f"FVG zone: macro trend gate skipped (macro={macro_trend}, direction={direction}).")
+    elif not active_macro_gate:
+        gate_scope = "FVG" if is_fvg else "all zones"
+        reasons.append(f"Macro trend gate disabled for {gate_scope} (macro={macro_trend}, direction={direction}).")
 
     # TEMP RESEARCH OVERRIDE:
     # The normal context gate requires bias-aligned trades and only allows
