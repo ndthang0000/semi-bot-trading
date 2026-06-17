@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config import StrategyConfig
@@ -13,6 +14,36 @@ from .helpers import (
     zone_width_atr_ratio,
 )
 from .types import PLAYBOOK_ZONE_TYPES, ReactionResult, SetupCandidate
+
+
+# ---------------------------------------------------------------------------
+# Session helpers
+# ---------------------------------------------------------------------------
+
+# London-NY overlap (12:00–17:00 UTC) has the highest gold volume/momentum.
+_LONDON_NY_START = 12
+_LONDON_NY_END = 17
+
+
+def _candle_hour_utc(candle: dict[str, Any]) -> int | None:
+    """Return the UTC hour of a candle's open_time, or None if unparseable."""
+    raw = candle.get("time") or candle.get("open_time")
+    if raw is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(raw))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.hour
+    except ValueError:
+        return None
+
+
+def _in_london_ny_session(candle: dict[str, Any]) -> bool:
+    hour = _candle_hour_utc(candle)
+    if hour is None:
+        return True  # unknown → allow rather than block
+    return _LONDON_NY_START <= hour < _LONDON_NY_END
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +367,8 @@ def evaluate_sr_breakout_v1(
         return []
 
     last = candles[-1]
+    if not _in_london_ny_session(last):
+        return []
     entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(direction, last, atr, config, zone)
     blocked: list[str] = []
     reasons = [

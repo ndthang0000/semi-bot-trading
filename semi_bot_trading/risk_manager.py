@@ -36,7 +36,7 @@ PROFILES: dict[str, AccountProfile] = {
     "personal": AccountProfile(
         name="Personal",
         risk_per_trade_pct=1.0,
-        max_daily_loss_pct=5.0,
+        max_daily_loss_pct=6.0,
         max_total_drawdown_pct=20.0,
         max_trades_per_day=10,
     ),
@@ -57,7 +57,7 @@ PROFILES: dict[str, AccountProfile] = {
 }
 
 MIN_LOT = 0.01
-MAX_LOT = 100.0
+MAX_LOT = 30.0   # hard safety cap — prevents runaway lot sizing from bad contract_size data
 
 
 @dataclass(frozen=True)
@@ -147,8 +147,20 @@ class RiskManager:
         except Exception:
             contract_size = 100.0  # safe fallback for XAUUSD
 
+        # Sanity check: contract_size < 10 for a gold symbol almost always means
+        # MT5 returned data for a cent-account or exotic symbol. Fall back to 100.
+        if contract_size < 10:
+            contract_size = 100.0
+
         raw_lot = risk_amount / (stop_distance * contract_size)
         lot_size = _clamp_lot(raw_lot)
+
+        clamped_warning = ""
+        if raw_lot > MAX_LOT:
+            clamped_warning = (
+                f" WARNING: raw_lot={raw_lot:.2f} exceeded MAX_LOT={MAX_LOT}, clamped. "
+                f"Check contract_size or balance."
+            )
 
         return RiskAssessment(
             allowed=True,
@@ -160,6 +172,7 @@ class RiskManager:
                 f"stop={stop_distance:.5f} "
                 f"contract={contract_size} "
                 f"lots={lot_size}"
+                f"{clamped_warning}"
             ),
             balance=balance,
             risk_amount=risk_amount,

@@ -224,6 +224,8 @@ def report_sections() -> list[tuple[str, DimensionFunc]]:
         ("By playbook", lambda trade: trade.playbook),
         ("By direction", lambda trade: trade.direction),
         ("By exit status", lambda trade: trade.status),
+        ("By session", signal_session),
+        ("By hour (UTC)", signal_hour),
         ("By H1 bias", lambda trade: metadata_value(trade, "h1_bias")),
         ("By H1 regime", lambda trade: metadata_value(trade, "h1_regime")),
         ("By regime overlays", lambda trade: list_value(trade, "overlays")),
@@ -350,6 +352,32 @@ def signal_year(trade: BacktestTrade) -> str:
         return str(datetime.fromisoformat(trade.signal_time).year)
     except ValueError:
         return trade.signal_time[:4] if len(trade.signal_time) >= 4 else "--"
+
+
+def signal_session(trade: BacktestTrade) -> str:
+    """Classify trade signal into XAUUSD trading sessions (UTC)."""
+    try:
+        dt = datetime.fromisoformat(trade.signal_time)
+    except ValueError:
+        return "--"
+    hour = dt.hour
+    if 0 <= hour < 7:
+        return "Asian (00-07)"
+    if 7 <= hour < 12:
+        return "London (07-12)"
+    if 12 <= hour < 17:
+        return "London-NY (12-17)"
+    if 17 <= hour < 21:
+        return "New York (17-21)"
+    return "Off-hours (21-00)"
+
+
+def signal_hour(trade: BacktestTrade) -> str:
+    try:
+        dt = datetime.fromisoformat(trade.signal_time)
+    except ValueError:
+        return "--"
+    return f"{dt.hour:02d}:00"
 
 
 def csv_cell(value: str) -> str:
