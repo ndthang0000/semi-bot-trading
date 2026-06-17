@@ -57,7 +57,7 @@ PROFILES: dict[str, AccountProfile] = {
 }
 
 MIN_LOT = 0.01
-MAX_LOT = 30.0   # hard safety cap — prevents runaway lot sizing from bad contract_size data
+MAX_LOT = 10.0   # hard safety cap — prevents runaway lot sizing from bad contract_size data
 
 
 @dataclass(frozen=True)
