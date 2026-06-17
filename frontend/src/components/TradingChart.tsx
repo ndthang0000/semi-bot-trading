@@ -1163,7 +1163,18 @@ function tradeToBox(
   if (entry === null || stop === null || takeProfit === null || !trade.opened_at) return null;
 
   const startX = chartXForTradeTime(timeScale, trade.opened_at, rangeStart, rangeEnd, candles, chartWidth);
-  const endX = chartXForTradeTime(timeScale, trade.closed_at ?? rangeEnd, rangeStart, rangeEnd, candles, chartWidth);
+  // Enforce a minimum visual width of MIN_TRADE_CANDLES candles so short trades
+  // (1–2 bars) are still visible when zoomed out. We compute the candle interval
+  // from the last two candles and extend the visual end time if needed.
+  const MIN_TRADE_CANDLES = 5;
+  const openedUnix = toUnixTime(trade.opened_at);
+  const candleInterval =
+    candles.length >= 2 ? candles[candles.length - 1].time - candles[candles.length - 2].time : 3600;
+  const closedUnix = trade.closed_at ? toUnixTime(trade.closed_at) : toUnixTime(rangeEnd);
+  const minVisualEndUnix = openedUnix + MIN_TRADE_CANDLES * candleInterval;
+  const visualEndUnix = Math.max(closedUnix, minVisualEndUnix);
+  const visualEndIso = new Date(visualEndUnix * 1000).toISOString().replace(".000Z", "Z");
+  const endX = chartXForTradeTime(timeScale, visualEndIso, rangeStart, rangeEnd, candles, chartWidth);
   if (startX === null || endX === null) return null;
 
   const x1 = Math.min(startX, endX);
