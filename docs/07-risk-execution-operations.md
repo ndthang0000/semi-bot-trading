@@ -257,7 +257,10 @@ it to `terminal64.exe`, not just the install folder, for example:
 MT5_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
 ```
 
-The worker syncs only closed candles before running detectors and strategy.
-When `EXECUTION_ENABLED=false`, it still updates data and sends Telegram alerts,
-but it does not place orders. When `EXECUTION_ENABLED=true`, the worker may send
-real market orders for eligible setup candidates through MT5.
+The worker syncs only closed candles before running detectors. Heavy detectors
+run when a new M15 candle has closed, while setup evaluation and execution
+checks run every poll cycle so human zone edits or delayed DB syncs do not
+require a worker restart. When `EXECUTION_ENABLED=false`, it still updates data
+and sends Telegram alerts, but it does not place orders. When
+`EXECUTION_ENABLED=true`, the worker may send real market orders for eligible
+setup candidates through MT5.

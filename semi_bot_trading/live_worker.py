@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from sqlite3 import Connection
@@ -44,7 +45,7 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
     _connect_with_retry(client, once=once)
 
     # Initialise DB schema once at startup, not on every poll iteration.
-    with connect(config.database) as conn:
+    with closing(connect(config.database)) as conn:
         init_db(conn)
     state = LiveWorkerState(broker_symbol=client.resolve_symbol(env.mt5_symbol, config.symbol))
     try:
@@ -91,7 +92,7 @@ def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
 def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient, state: LiveWorkerState) -> None:
     state.loop_count += 1
     broker_symbol: str = state.broker_symbol or ""
-    with connect(config.database) as conn:
+    with closing(connect(config.database)) as conn:
         # init_db is called once at startup in run_live_worker; skip here.
         sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
@@ -104,11 +105,12 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
             state.last_closed_m15 = latest_m15
-        if latest_m15 is not None and (has_new_closed_m15 or env.live_evaluate_intrabar):
-            # Closed M15 updates drive detectors.  With LIVE_EVALUATE_INTRABAR
-            # enabled, setup evaluation also runs on every poll using the latest
-            # live_candles row so a wick/touch inside the forming candle can be
-            # alerted/executed before the candle closes.
+        if latest_m15 is not None:
+            # Closed M15 updates drive detectors, but setup evaluation must run
+            # every poll. Otherwise a worker that has already processed the
+            # latest closed candle can miss a setup that becomes eligible after
+            # a human zone edit or a delayed DB sync; restarting the worker would
+            # reset last_closed_m15 and execute the same setup, which is unsafe.
             payload = build_chart_payload(
                 conn,
                 symbol=config.symbol,
@@ -121,7 +123,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             )
             queue_setup_alerts(conn, config, env, payload["layers"].get("setup_candidates", []))
             maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)
-    with connect(config.database) as conn:
+    with closing(connect(config.database)) as conn:
         send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id, environment=env.environment)
 
 
