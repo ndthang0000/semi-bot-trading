@@ -11,10 +11,10 @@ import {
 } from "lightweight-charts";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createManualZone } from "../api/chart";
+import { createManualZone, updateZoneOverride } from "../api/chart";
 import { toUnixTime } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { AddEntityKind, ChartPayload, PriceZone, SetupCandidate, StructurePoint, TradeOrder, ZoneTypeVisibility } from "../types";
+import type { AddEntityKind, ChartPayload, PriceZone, SetupCandidate, StructurePoint, TradeOrder, ZoneTradeMode, ZoneTypeVisibility } from "../types";
 
 type TradingChartProps = {
   payload: ChartPayload;
@@ -538,12 +538,42 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
     [priceFromClientY, timeFromClientX, updateDraftZone],
   );
 
+  const persistDraggedZoneOverride = useCallback(
+    async (zone: PriceZone) => {
+      try {
+        const updated = await updateZoneOverride(zone.id, {
+          price_low: zone.price_low,
+          price_high: zone.price_high,
+          visual_start: zone.visual_start,
+          visual_end: zone.visual_end,
+          weight: zone.weight,
+          confidence: zone.confidence,
+          status: zone.status === "disabled" ? "disabled" : "active",
+          no_expiry: defaultNoExpiryForZone(zone),
+          reason: "chart drag resize/move",
+          trade_modes: defaultTradeModesForZone(zone),
+        });
+        updateDraftZone(updated, { preserveViewport: false });
+        onEntityCreated();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not save zone drag.";
+        setDrawError(message);
+      }
+    },
+    [onEntityCreated, updateDraftZone],
+  );
+
   const finishZoneDrag = useCallback(() => {
-    if (!zoneDragRef.current) return;
+    const drag = zoneDragRef.current;
+    if (!drag) return;
+    const draftZone = draftZoneRef.current?.id === drag.zone.id ? draftZoneRef.current : null;
     zoneDragRef.current = null;
     stopOverlayInteractionSync();
     scheduleOverlayRecalc();
-  }, [scheduleOverlayRecalc, stopOverlayInteractionSync]);
+    if (draftZone) {
+      void persistDraggedZoneOverride(draftZone);
+    }
+  }, [persistDraggedZoneOverride, scheduleOverlayRecalc, stopOverlayInteractionSync]);
 
   const clearSelection = useCallback(() => {
     if (addEntityKindRef.current) return;
@@ -1869,6 +1899,24 @@ function buildScaleAnchorData(candles: CandleDatum[]): Array<{ time: CandleDatum
     { time: previousTime, value: last.close + halfRange },
     { time: last.time, value: last.close - halfRange },
   ];
+}
+
+function defaultNoExpiryForZone(zone: PriceZone): boolean {
+  if (zone.metadata.human_adjusted === true || zone.source === "human" || zone.source === "mixed") {
+    return zone.valid_until === null;
+  }
+  return true;
+}
+
+function defaultTradeModesForZone(zone: PriceZone): ZoneTradeMode[] {
+  const raw = zone.metadata.trade_modes;
+  if (Array.isArray(raw)) {
+    return raw.filter((mode): mode is ZoneTradeMode => mode === "reject" || mode === "internal_reject" || mode === "breakout");
+  }
+  if (zone.type === "fvg") return ["reject", "internal_reject"];
+  if (zone.type === "consolidation") return ["breakout"];
+  if (zone.type === "support" || zone.type === "resistance") return ["reject"];
+  return [];
 }
 
 function chartTimeToUnix(time: unknown): number | null {
