@@ -1209,7 +1209,10 @@ function NumberField({
 }
 
 function defaultNoExpiry(zone: PriceZone): boolean {
-  return zone.valid_until === null && zone.metadata.human_adjusted === true;
+  if (zone.metadata.human_adjusted === true || zone.source === "human" || zone.source === "mixed") {
+    return zone.valid_until === null;
+  }
+  return true;
 }
 
 const TRADE_MODE_OPTIONS: Array<{ value: ZoneTradeMode; label: string }> = [
