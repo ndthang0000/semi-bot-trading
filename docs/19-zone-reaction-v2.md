@@ -84,7 +84,7 @@ zone_loss_cooldown_candles = 12
 Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 
 - Default theo zone type: `support`/`resistance` = `["reject"]`, `fvg` = `["reject", "internal_reject"]`.
-- Human co the set explicit `trade_modes` cho zone tren UI. List explicit vua gioi han family duoc trade, vua **bypass toan bo context gate** (bias/regime/news/macro trend) cho family do — thesis cua human thang bot context. Cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR, stop limit) van ap dung.
+- Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR, stop limit) van ap dung.
 - He qua: bot SR zone khong con trade `internal_reject` theo default; muon internal reject tren SR zone cu the thi human set `trade_modes = ["reject", "internal_reject"]`.
 - Metadata candidate ghi `context_bypass` va `trade_modes` de debug.
 

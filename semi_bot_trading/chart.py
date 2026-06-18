@@ -285,6 +285,20 @@ def load_chart_zones(
     return zones
 
 
+def merge_zones_by_id(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for zone in group:
+            zone_id = str(zone.get("id") or "")
+            if zone_id and zone_id in seen:
+                continue
+            if zone_id:
+                seen.add(zone_id)
+            merged.append(zone)
+    return merged
+
+
 def load_chart_contexts(conn: Connection, symbol: str) -> dict[str, dict[str, dict[str, Any]]]:
     rows = conn.execute(
         """
@@ -450,12 +464,22 @@ def build_chart_payload(
                 contexts.setdefault(macro_timeframe, {})["macro_trend"] = live_macro
     setup_candidates: list[dict[str, Any]] = []
     if strategy_config is not None:
-        strategy_candles = load_chart_candles(conn, symbol, strategy_config.timeframe, 240, end=range_end)
+        candidate_zone_groups = [zones]
+        if effective_structure_timeframe != timeframe:
+            candidate_zone_groups.append(
+                load_chart_zones(conn, symbol, effective_structure_timeframe, range_start, range_end, active_only=active_zones_only)
+            )
+        candidate_zones = merge_zones_by_id(*candidate_zone_groups)
+        # Latest chart mode should evaluate setup candidates from the latest closed
+        # strategy candle, not from the H1 chart range end. Otherwise M15 touches
+        # after the current H1 candle opens are invisible until the next H1 close.
+        strategy_end = None if is_latest_mode else range_end
+        strategy_candles = load_chart_candles(conn, symbol, strategy_config.timeframe, 240, end=strategy_end)
         context_candles = load_chart_candles(conn, symbol, effective_structure_timeframe, 240, end=range_end)
         if strategy_candles:
             setup_candidates = build_setup_candidates(
                 symbol=symbol,
-                zones=zones,
+                zones=candidate_zones,
                 contexts=contexts,
                 candles=strategy_candles,
                 structure_points=load_chart_structure(

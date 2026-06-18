@@ -172,6 +172,15 @@ def zone_has_explicit_trade_mode(zone: dict[str, Any], mode: str) -> bool:
     return isinstance(raw, list) and mode in {str(item) for item in raw}
 
 
+def zone_is_human_thesis(zone: dict[str, Any]) -> bool:
+    metadata = zone.get("metadata") if isinstance(zone.get("metadata"), dict) else {}
+    return (
+        str(zone.get("source")) in {"human", "mixed"}
+        or metadata.get("human_created") is True
+        or metadata.get("human_adjusted") is True
+    )
+
+
 def zone_allows_breakout(zone: dict[str, Any], config: StrategyConfig) -> bool:
     if zone_has_explicit_trade_mode(zone, "breakout"):
         return True

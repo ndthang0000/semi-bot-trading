@@ -194,7 +194,7 @@ def sr_breakout_retest_reaction(
     low = float(last["low"])
     close = float(last["close"])
     if direction == "long":
-        retested = low <= zone_high + buffer
+        retested = low <= zone_high + buffer and high >= zone_low
         if retested and close > zone_high:
             return reaction_v2(
                 "retest_breakout",
@@ -209,6 +209,16 @@ def sr_breakout_retest_reaction(
                     "state_machine_path": "BREAKOUT_CONFIRMED -> WAITING_RETEST -> RETEST_CONFIRMED -> PREPARE_ENTRY",
                 },
             )
+        if retested and close < zone_low:
+            return reaction_v2(
+                "far",
+                "long",
+                True,
+                last,
+                ["Broken resistance retest failed; H1 closed back below the zone."],
+                buffer,
+                {"entry_model": "failed_retest", "breakout_candle_time": breakout_candle.get("time")},
+            )
         if retested:
             return reaction_v2(
                 "waiting_retest",
@@ -220,7 +230,7 @@ def sr_breakout_retest_reaction(
                 {"entry_model": "wait_retest", "breakout_candle_time": breakout_candle.get("time")},
             )
     else:
-        retested = high >= zone_low - buffer
+        retested = high >= zone_low - buffer and low <= zone_high
         if retested and close < zone_low:
             return reaction_v2(
                 "retest_breakout",
@@ -234,6 +244,16 @@ def sr_breakout_retest_reaction(
                     "breakout_candle_time": breakout_candle.get("time"),
                     "state_machine_path": "BREAKOUT_CONFIRMED -> WAITING_RETEST -> RETEST_CONFIRMED -> PREPARE_ENTRY",
                 },
+            )
+        if retested and close > zone_high:
+            return reaction_v2(
+                "far",
+                "short",
+                True,
+                last,
+                ["Broken support retest failed; H1 closed back above the zone."],
+                buffer,
+                {"entry_model": "failed_retest", "breakout_candle_time": breakout_candle.get("time")},
             )
         if retested:
             return reaction_v2(

@@ -22,6 +22,7 @@ from .helpers import (
     trigger_types_for_ids,
     unique_ids,
     zone_has_explicit_trade_mode,
+    zone_is_human_thesis,
     zone_mid,
     zone_touch_count,
     zone_trade_modes,
@@ -498,13 +499,13 @@ def evaluate_zone_reaction_v2(
     if direction not in {"long", "short"}:
         return []
 
-    # trade_modes governs which reaction families a zone may trade. Defaults come
-    # from the zone type; an explicit human list both restricts the families and
-    # bypasses every context gate (bias/regime/news/macro) for the ones it names.
+    # trade_modes governs which reaction families a zone may trade. Human-created
+    # or human-adjusted zones bypass context gates for the allowed family: the
+    # thesis is explicit even when the UI uses the zone-type default trade modes.
     required_mode = "internal_reject" if reaction.state == "internal_reject" else "reject"
     if required_mode not in zone_trade_modes(zone):
         return []
-    context_bypass = zone_has_explicit_trade_mode(zone, required_mode)
+    context_bypass = zone_has_explicit_trade_mode(zone, required_mode) or zone_is_human_thesis(zone)
 
     trigger_ids = trigger_points_for_direction(structure_points, direction, as_of, not_before=reaction.candle_time)
     structure_trigger_ids = trigger_points_for_direction(
@@ -681,7 +682,7 @@ def zone_reaction_v2_status(
         # Human explicitly opted this zone into the reaction family, so every
         # context gate (bias/regime/news/macro) is bypassed: the human thesis
         # outranks bot context. Signal-quality conditions still apply.
-        reasons.append("Human trade mode bypasses all context gates including macro trend.")
+        reasons.append("Human zone/trade mode bypasses all context gates including macro trend.")
     if not context_bypass and config.zone_reaction_v2_block_news_or_risk_off and regime in {"news", "risk_off"}:
         blocked.append(f"Regime {regime} blocks Zone Reaction V2.")
 

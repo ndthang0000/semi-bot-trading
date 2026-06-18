@@ -265,6 +265,30 @@ class StrategyTest(unittest.TestCase):
         self.assertTrue(candidates[0]["metadata"]["context_bypass"])
         self.assertIn("bypasses all context gates", " ".join(candidates[0]["reason"]))
 
+    def test_human_created_zone_with_default_reject_mode_bypasses_macro_gate(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        support["source"] = "human"
+        support["metadata"] = {"human_created": True}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertTrue(candidates[0]["metadata"]["context_bypass"])
+        self.assertIn("bypasses all context gates", " ".join(candidates[0]["reason"]))
+
     def test_explicit_trade_modes_without_reject_disable_reject(self) -> None:
         candles = [
             candle("00:00", 110, 112, 108, 111),
@@ -1111,10 +1135,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_far_breakout_waits_for_retest(self) -> None:
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 108, 98, 106.5),
+            candle("09:00", 96, 98, 94, 97),
+            candle("10:00", 97, 99, 95, 98),
+            candle("11:00", 98, 100, 96, 99),
+            candle("12:00", 99, 108, 98, 106.5),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1137,11 +1161,11 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_retest_after_far_breakout_is_eligible(self) -> None:
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 108, 98, 106.5),
-            candle("05:00", 106.5, 107, 101.5, 103.2),
+            candle("09:00", 96, 98, 94, 97),
+            candle("10:00", 97, 99, 95, 98),
+            candle("11:00", 98, 100, 96, 99),
+            candle("12:00", 99, 108, 98, 106.5),
+            candle("13:00", 106.5, 107, 101.5, 103.2),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1161,6 +1185,30 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("retest_breakout", candidates[0]["zone_reaction_state"])
         self.assertEqual("retest_next_h1_open", candidates[0]["metadata"]["entry_model"])
+
+    def test_sr_breakout_v1_long_retest_fails_when_close_back_below_resistance_zone(self) -> None:
+        context_candles = [
+            candle("09:00", 96, 98, 94, 97),
+            candle("10:00", 97, 99, 95, 98),
+            candle("11:00", 98, 100, 96, 99),
+            candle("12:00", 99, 108, 98, 106.5),
+            candle("13:00", 106.5, 107, 99.5, 99.8),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            CONFIG,
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual([], candidates)
 
     def test_sr_breakout_v1_human_breakout_allows_unknown_macro(self) -> None:
         context_candles = [
