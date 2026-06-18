@@ -139,7 +139,7 @@ Rule:
 ### 11. Human override
 
 - Default expiry: 4H.
-- Human có thể set no-expiry.
+- Price zones không còn no-expiry; mọi bot/human zone đều có expiry mặc định.
 - Hệ thống chỉ một user, không cần multi-profile/user permission trong MVP.
 - Nếu bot invalidate vùng human chỉnh, bot chỉ tắt effective zone sau khi human override hết hạn hoặc human revoke.
 - Không cần human lock zone.

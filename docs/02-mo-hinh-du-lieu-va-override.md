@@ -89,7 +89,7 @@ price_zone:
   metadata: json
 ```
 
-`start_time` là thời điểm vùng được hình thành trên chart. `end_time` là điểm kết thúc visual của vùng trên chart. Với vùng còn active, `end_time` có thể là `null` và UI sẽ kéo vùng tới candle hiện tại. Khi vùng bị phá cấu trúc, full mitigation, expiry hoặc bị human disable, hệ thống set `end_time` để zone dừng tại đúng thời điểm đó.
+`start_time` là thời điểm vùng được hình thành trên chart. `end_time` là điểm kết thúc visual của vùng trên chart. Price zone active không được kéo vô hạn: mọi zone bot/human đều phải có `valid_until`, và khi hết hạn hệ thống set `end_time = valid_until`. Khi vùng bị phá cấu trúc, full mitigation, expiry hoặc bị human disable, hệ thống set `end_time` để zone dừng tại đúng thời điểm đó.
 
 `valid_from/valid_until` biểu diễn hiệu lực logic của vùng. Trong đa số trường hợp `valid_from = start_time` và `valid_until = end_time`, nhưng tách riêng hai field giúp xử lý tình huống human override, replay hoặc vùng vẫn được hiển thị lịch sử dù không còn được strategy dùng.
 
@@ -100,6 +100,7 @@ Decision:
 - Chiều dài ngang của zone trên UI là tín hiệu quan trọng: nó cho thấy vùng còn valid tới đâu trong thời gian.
 - Vùng bắt đầu khi pattern/structure tạo thành.
 - Vùng kết thúc khi structure phá vỡ/invalidation xảy ra, hoặc khi full mitigation/expiry/human disable theo rule.
+- Price zone không có no-expiry. FVG/OB dùng max active days theo detector; SR/manual/zone khác mặc định 24h nếu không có expiry riêng.
 - Vùng gần nhất thường được cộng freshness score, nhưng vẫn cần score bằng confluence, timeframe và phản ứng giá.
 
 ### Structure Point
@@ -189,7 +190,7 @@ override:
   status: active | expired | revoked | superseded
 ```
 
-Mặc định `expires_at` là sau 4H nếu human không chọn. Human được phép chọn override không expiry, nhưng UI phải hiển thị rõ trạng thái này.
+Mặc định `expires_at` là sau 4H nếu human không chọn. Price-zone override không được no-expiry; context override no-expiry là quyết định riêng nếu cần.
 
 ## Effective Value Rule
 

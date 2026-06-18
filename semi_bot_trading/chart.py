@@ -217,6 +217,8 @@ def load_chart_zones(
     params: list[Any] = [symbol, timeframe, end, end, start]
     if active_only:
         clauses.append("(status = 'active' OR (end_time IS NOT NULL AND end_time > ?))")
+        clauses.append("(status != 'active' OR valid_until > ?)")
+        params.append(end)
         params.append(end)
 
     rows = conn.execute(

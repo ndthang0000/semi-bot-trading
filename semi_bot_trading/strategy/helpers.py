@@ -192,11 +192,18 @@ def zone_trade_disabled_after_sweep(zone: dict[str, Any]) -> bool:
     return bool(isinstance(metadata, dict) and metadata.get("trade_disabled_after_sweep"))
 
 
+def zone_valid_at(zone: dict[str, Any], as_of: str) -> bool:
+    valid_until = zone.get("valid_until")
+    return isinstance(valid_until, str) and valid_until > as_of
+
+
 def zone_eligible_for_zone_reaction_v2(
     zone: dict[str, Any],
     candles: list[dict[str, Any]],
     config: StrategyConfig,
 ) -> bool:
+    if not candles or not zone_valid_at(zone, str(candles[-1]["time"])):
+        return False
     status = str(zone.get("status"))
     if status == "active":
         return True
@@ -221,6 +228,8 @@ def zone_eligible_for_sr_breakout_v1(
     candles: list[dict[str, Any]],
     config: StrategyConfig,
 ) -> bool:
+    if candles and str(zone.get("status")) == "active" and not zone_valid_at(zone, str(candles[-1]["time"])):
+        return False
     if str(zone.get("type")) not in PLAYBOOK_ZONE_TYPES["sr_breakout_v1"]:
         return False
     if not zone_allows_breakout(zone, config):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -11,6 +12,35 @@ from semi_bot_trading.db import connect, init_db
 
 
 class ApiTest(unittest.TestCase):
+    def test_init_db_backfills_old_null_valid_until_zone_as_expired(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                insert_legacy_null_expiry_zone(conn, created_at="2026-01-01T00:00:00+00:00")
+                conn.commit()
+                init_db(conn)
+                row = conn.execute("SELECT * FROM price_zones WHERE id = 'legacy-null'").fetchone()
+
+        self.assertEqual(row["status"], "expired")
+        self.assertIsNotNone(row["valid_until"])
+        self.assertEqual(row["end_time"], row["valid_until"])
+
+    def test_init_db_backfills_recent_null_valid_until_zone_as_active(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            created_at = (datetime.now(UTC) - timedelta(hours=1)).replace(microsecond=0).isoformat()
+            with connect(db_path) as conn:
+                init_db(conn)
+                insert_legacy_null_expiry_zone(conn, created_at=created_at)
+                conn.commit()
+                init_db(conn)
+                row = conn.execute("SELECT * FROM price_zones WHERE id = 'legacy-null'").fetchone()
+
+        self.assertEqual(row["status"], "active")
+        self.assertIsNotNone(row["valid_until"])
+        self.assertEqual(row["end_time"], row["valid_until"])
+
     def test_chart_endpoint_returns_payload(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -247,15 +277,15 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["price_low"], 1991.5)
         self.assertEqual(payload["price_high"], 1994.5)
         self.assertEqual(payload["visual_start"], "2026-01-01T00:15:00+00:00")
-        self.assertEqual(payload["visual_end"], "2026-01-01T00:30:00+00:00")
         self.assertEqual(payload["weight"], 0.91)
         self.assertEqual(payload["confidence"], 0.88)
         self.assertEqual(payload["source"], "mixed")
-        self.assertEqual(payload["valid_until"], None)
+        self.assertIsNotNone(payload["valid_until"])
+        self.assertEqual(payload["visual_end"], payload["valid_until"])
         self.assertEqual(override_count, 1)
         self.assertEqual(zone["source"], "mixed")
         self.assertEqual(zone["start_time"], "2026-01-01T00:15:00+00:00")
-        self.assertEqual(zone["end_time"], "2026-01-01T00:30:00+00:00")
+        self.assertEqual(zone["end_time"], payload["valid_until"])
 
     def test_disabled_zone_without_end_uses_latest_candle_time(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -277,7 +307,6 @@ class ApiTest(unittest.TestCase):
                     "weight": 0.7,
                     "confidence": 0.8,
                     "status": "disabled",
-                    "no_expiry": False,
                 },
             )
 
@@ -308,7 +337,6 @@ class ApiTest(unittest.TestCase):
                     "visual_end": "2026-01-01T00:15:00+00:00",
                     "weight": 0.72,
                     "confidence": 0.9,
-                    "no_expiry": True,
                     "reason": "manual replay note",
                 },
             )
@@ -324,6 +352,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["source"], "human")
         self.assertEqual(payload["detector"], "human_manual_v1")
         self.assertEqual(payload["weight"], 0.72)
+        self.assertIsNotNone(payload["valid_until"])
         self.assertEqual(payload["metadata"]["human_created"], True)
         self.assertEqual(zone_count, 1)
         self.assertEqual(override_count, 1)
@@ -472,12 +501,29 @@ def seed_zone(db_path: Path) -> None:
                 effective_confidence, effective_weight, status, source, metadata_json
             )
             VALUES ('z1', 'XAUUSD', 'M15', 'sr_v1', 'support', 'bullish', 1990, 1995,
-                    '2026-01-01T00:00:00+00:00', NULL, '2026-01-01T00:00:00+00:00',
-                    NULL, NULL, NULL, '2026-01-01T00:00:00+00:00',
+                    '2026-01-01T00:00:00+00:00', '2027-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00',
+                    '2027-01-01T00:00:00+00:00', NULL, NULL, '2026-01-01T00:00:00+00:00',
                     0.8, 0.7, 0.8, 0.7, 'active', 'bot', '{}')
             """
         )
         conn.commit()
+
+
+def insert_legacy_null_expiry_zone(conn, created_at: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO price_zones (
+            id, symbol, timeframe, detector, zone_type, direction, price_low, price_high,
+            start_time, end_time, valid_from, valid_until, invalidated_at,
+            invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
+            effective_confidence, effective_weight, status, source, metadata_json, created_at, updated_at
+        )
+        VALUES ('legacy-null', 'XAUUSD', 'H1', 'human_manual_v1', 'support', 'bullish', 1990, 1995,
+                ?, NULL, ?, NULL, NULL, NULL, ?,
+                0.8, 0.7, 0.8, 0.7, 'active', 'human', '{}', ?, ?)
+        """,
+        (created_at, created_at, created_at, created_at, created_at),
+    )
 
 
 def seed_trade(db_path: Path) -> None:

@@ -89,8 +89,8 @@ def seed_chart_data(conn) -> None:
             effective_confidence, effective_weight, status, source, metadata_json
         )
         VALUES ('z1', 'XAUUSD', 'M15', 'sr_v1', 'support', 'bullish', 1990, 1995,
-                '2026-01-01T00:00:00+00:00', NULL, '2026-01-01T00:00:00+00:00',
-                NULL, NULL, NULL, '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00', '2027-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00',
+                '2027-01-01T00:00:00+00:00', NULL, NULL, '2026-01-01T00:00:00+00:00',
                 0.8, 0.7, 0.8, 0.7, 'active', 'bot', ?)
         """,
         (json.dumps({"touch_count": 2}),),

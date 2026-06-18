@@ -443,7 +443,6 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
         confidence: preview.confidence,
         status: "active",
         client_kind: draw.kind,
-        no_expiry: true,
         reason: `manual ${manualZoneSpec(draw.kind).label} drawn on chart`,
       });
       updateDrawPreview(null);
@@ -549,7 +548,6 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
           weight: zone.weight,
           confidence: zone.confidence,
           status: zone.status === "disabled" ? "disabled" : "active",
-          no_expiry: defaultNoExpiryForZone(zone),
           reason: "chart drag resize/move",
           trade_modes: defaultTradeModesForZone(zone),
         });
@@ -1899,13 +1897,6 @@ function buildScaleAnchorData(candles: CandleDatum[]): Array<{ time: CandleDatum
     { time: previousTime, value: last.close + halfRange },
     { time: last.time, value: last.close - halfRange },
   ];
-}
-
-function defaultNoExpiryForZone(zone: PriceZone): boolean {
-  if (zone.metadata.human_adjusted === true || zone.source === "human" || zone.source === "mixed") {
-    return zone.valid_until === null;
-  }
-  return true;
 }
 
 function defaultTradeModesForZone(zone: PriceZone): ZoneTradeMode[] {

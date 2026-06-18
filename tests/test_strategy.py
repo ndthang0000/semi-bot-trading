@@ -36,7 +36,7 @@ def zone(zone_type: str, direction: str, low: float, high: float, zone_id: str =
         "visual_start": "2026-01-01T00:00:00+00:00",
         "visual_end": None,
         "valid_from": "2026-01-01T00:00:00+00:00",
-        "valid_until": None,
+        "valid_until": "2027-01-01T00:00:00+00:00",
         "invalidated_at": None,
         "invalidated_by_structure_point_id": None,
         "detected_at": "2026-01-01T00:00:00+00:00",
@@ -288,6 +288,28 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertTrue(candidates[0]["metadata"]["context_bypass"])
         self.assertIn("bypasses all context gates", " ".join(candidates[0]["reason"]))
+
+    def test_expired_human_zone_does_not_trade(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        support["source"] = "human"
+        support["metadata"] = {"human_created": True, "trade_modes": ["reject"]}
+        support["valid_until"] = "2026-01-01T00:20:00+00:00"
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual([], candidates)
 
     def test_explicit_trade_modes_without_reject_disable_reject(self) -> None:
         candles = [

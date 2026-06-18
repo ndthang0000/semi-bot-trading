@@ -958,7 +958,6 @@ function ZoneEditor({
   const [confidence, setConfidence] = useState(String(zone.confidence));
   const [status, setStatus] = useState<"active" | "disabled">(zone.status === "disabled" ? "disabled" : "active");
   const [tradeModes, setTradeModes] = useState<ZoneTradeMode[]>(defaultTradeModes(zone));
-  const [noExpiry, setNoExpiry] = useState(defaultNoExpiry(zone));
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -970,7 +969,6 @@ function ZoneEditor({
     setConfidence(String(zone.confidence));
     setStatus(zone.status === "disabled" ? "disabled" : "active");
     setTradeModes(defaultTradeModes(zone));
-    setNoExpiry(defaultNoExpiry(zone));
     setReason("");
     setError(null);
   }, [zone]);
@@ -982,7 +980,6 @@ function ZoneEditor({
     setConfidence(String(zone.confidence));
     setStatus(zone.status === "disabled" ? "disabled" : "active");
     setTradeModes(defaultTradeModes(zone));
-    setNoExpiry(defaultNoExpiry(zone));
     setReason("");
     setError(null);
   };
@@ -1016,7 +1013,6 @@ function ZoneEditor({
         weight: parsedWeight,
         confidence: parsedConfidence,
         status,
-        no_expiry: noExpiry,
         reason: reason.trim() || undefined,
         trade_modes: tradeModes,
       });
@@ -1030,7 +1026,7 @@ function ZoneEditor({
     } finally {
       setIsSaving(false);
     }
-  }, [confidence, noExpiry, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
+  }, [confidence, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
 
   const deleteZone = useCallback(async () => {
     if (isSaving) return;
@@ -1078,6 +1074,7 @@ function ZoneEditor({
         <Detail label="Source" value={zone.source} />
         <Detail label="Start" value={compactTime(zone.visual_start)} />
         <Detail label="End" value={compactTime(zone.visual_end)} />
+        <Detail label="Expires" value={compactTime(zone.valid_until)} />
         <Detail label="Touches" value={String(zone.metadata.touch_count_total ?? zone.metadata.touch_count ?? "--")} />
       </div>
 
@@ -1098,16 +1095,6 @@ function ZoneEditor({
           <option value="active">active</option>
           <option value="disabled">disabled</option>
         </select>
-      </label>
-
-      <label className="flex items-center gap-2 text-xs text-slate-400">
-        <input
-          checked={noExpiry}
-          className="accent-cyan-400"
-          type="checkbox"
-          onChange={(event) => setNoExpiry(event.target.checked)}
-        />
-        No expiry
       </label>
 
       <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/50 p-3">
@@ -1206,13 +1193,6 @@ function NumberField({
       />
     </label>
   );
-}
-
-function defaultNoExpiry(zone: PriceZone): boolean {
-  if (zone.metadata.human_adjusted === true || zone.source === "human" || zone.source === "mixed") {
-    return zone.valid_until === null;
-  }
-  return true;
 }
 
 const TRADE_MODE_OPTIONS: Array<{ value: ZoneTradeMode; label: string }> = [

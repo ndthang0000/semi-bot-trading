@@ -135,7 +135,6 @@ Frontend React/Vite chạy ở `http://127.0.0.1:5173`, dùng TradingView Lightw
    - 1h.
    - Until session end.
    - Until invalidated.
-   - No expiry.
    - Custom.
 7. Save override.
 8. UI cập nhật effective zone realtime.

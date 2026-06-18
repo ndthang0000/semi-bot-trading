@@ -23,7 +23,7 @@ from .auth import (
 from .chart import build_chart_payload, trade_order_row_to_chart
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
-from .db import connect, init_db
+from .db import connect, default_price_zone_expiry, init_db
 from .replay_chart import build_realtime_replay_payload
 from .runtime_env import load_runtime_env
 from .strategy import PLAYBOOK_ZONE_TYPES
@@ -55,7 +55,6 @@ class ZoneOverrideRequest(BaseModel):
     weight: float = Field(ge=0, le=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
     status: str = "active"
-    no_expiry: bool = False
     expires_at: str | None = None
     reason: str | None = None
     trade_modes: list[str] | None = None
@@ -74,7 +73,6 @@ class ZoneCreateRequest(BaseModel):
     confidence: float = Field(default=1.0, ge=0, le=1)
     status: str = "active"
     client_kind: str | None = None
-    no_expiry: bool = True
     expires_at: str | None = None
     reason: str | None = None
 
@@ -586,7 +584,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 raise HTTPException(status_code=422, detail=f"Unknown trade mode(s): {', '.join(unknown_modes)}")
 
         now = utc_now_iso()
-        expires_at = resolve_override_expiry(now, request.no_expiry, request.expires_at)
         with connect(config.database) as conn:
             init_db(conn)
             row = conn.execute(
@@ -600,13 +597,14 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
 
+            expires_at = resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], request.expires_at)
             before = zone_row_to_chart(row)
             override_id = str(uuid.uuid4())
             confidence = request.confidence if request.confidence is not None else float(row["effective_confidence"])
             fields_set = request.model_fields_set if hasattr(request, "model_fields_set") else request.__fields_set__
             start_time = request.visual_start if "visual_start" in fields_set and request.visual_start else row["start_time"]
             requested_end_time = request.visual_end if "visual_end" in fields_set else row["end_time"]
-            end_time = requested_end_time
+            end_time = expires_at if request.status == "active" else requested_end_time
             if request.status == "disabled":
                 end_time = requested_end_time or latest_candle_time(conn, row["symbol"], row["timeframe"]) or now
             try:
@@ -654,7 +652,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                         {
                             "before": before,
                             "after": after_patch,
-                            "no_expiry": request.no_expiry,
                         },
                         sort_keys=True,
                     ),
@@ -718,9 +715,9 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         symbol = request.symbol or config.symbol
         timeframe = request.timeframe.upper()
         now = utc_now_iso()
-        expires_at = resolve_override_expiry(now, request.no_expiry, request.expires_at)
+        expires_at = resolve_price_zone_expiry(now, request.zone_type, timeframe, request.expires_at)
         start_time = request.visual_start
-        end_time = request.visual_end
+        end_time = expires_at if request.status == "active" else request.visual_end
         if request.status == "disabled":
             end_time = end_time or latest_candle_time_for_create(symbol, timeframe, config.database) or now
         try:
@@ -804,7 +801,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                                 "source": "human",
                                 "valid_until": valid_until,
                             },
-                            "no_expiry": request.no_expiry,
                         },
                         sort_keys=True,
                     ),
@@ -1094,6 +1090,13 @@ def resolve_override_expiry(now_iso: str, no_expiry: bool, expires_at: str | Non
         return expires_at
     now = datetime.fromisoformat(now_iso)
     return (now + timedelta(hours=4)).replace(microsecond=0).isoformat()
+
+
+def resolve_price_zone_expiry(now_iso: str, zone_type: str, timeframe: str, expires_at: str | None) -> str:
+    if expires_at:
+        return expires_at
+    now = datetime.fromisoformat(now_iso)
+    return (now + default_price_zone_expiry(zone_type, timeframe)).replace(microsecond=0).isoformat()
 
 
 def json_loads(value: str | None, default: Any) -> Any:

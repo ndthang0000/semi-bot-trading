@@ -130,7 +130,7 @@ export type ZoneOverrideInput = {
   weight: number;
   confidence?: number;
   status: "active" | "disabled";
-  no_expiry: boolean;
+  expires_at?: string | null;
   reason?: string;
   trade_modes?: ZoneTradeMode[];
 };
@@ -148,7 +148,7 @@ export type ZoneCreateInput = {
   confidence: number;
   status: "active" | "disabled";
   client_kind?: string;
-  no_expiry: boolean;
+  expires_at?: string | null;
   reason?: string;
 };
 

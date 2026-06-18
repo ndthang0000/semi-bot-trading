@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -315,6 +317,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "structure_points", "status", "TEXT NOT NULL DEFAULT 'confirmed'")
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "backtest_runs", "engine", "TEXT NOT NULL DEFAULT 'incremental'")
+    backfill_price_zone_expiry(conn)
+    expire_price_zones(conn)
     conn.commit()
 
 
@@ -329,3 +333,125 @@ def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, d
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 raise
+
+
+def backfill_price_zone_expiry(conn: sqlite3.Connection) -> None:
+    """Give legacy active zones a finite validity window.
+
+    Older human/manual zones could keep valid_until NULL forever. That is unsafe
+    for live strategy evaluation, so init_db performs a small idempotent backfill.
+    """
+    now = datetime.now(UTC)
+    rows = conn.execute(
+        """
+        SELECT id, timeframe, zone_type, start_time, detected_at, created_at,
+               updated_at, end_time, metadata_json
+        FROM price_zones
+        WHERE status = 'active'
+          AND valid_until IS NULL
+        """
+    ).fetchall()
+    for row in rows:
+        base = first_parseable_datetime(
+            row["updated_at"],
+            row["created_at"],
+            row["detected_at"],
+            row["start_time"],
+        ) or now
+        expiry = base + default_price_zone_expiry(row["zone_type"], row["timeframe"])
+        expiry_iso = expiry.replace(microsecond=0).isoformat()
+        metadata = json_loads(row["metadata_json"], {})
+        metadata["expired_rule"] = "default_expiry_backfill"
+        metadata["default_expiry_backfill"] = {
+            "base_time": base.replace(microsecond=0).isoformat(),
+            "zone_type": row["zone_type"],
+            "timeframe": row["timeframe"],
+        }
+        status = "expired" if expiry <= now else "active"
+        end_time = row["end_time"] or expiry_iso
+        if status == "expired":
+            end_time = expiry_iso
+        conn.execute(
+            """
+            UPDATE price_zones
+            SET valid_until = ?,
+                end_time = ?,
+                status = ?,
+                metadata_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (expiry_iso, end_time, status, json.dumps(metadata, sort_keys=True), row["id"]),
+        )
+
+
+def expire_price_zones(conn: sqlite3.Connection) -> None:
+    now = datetime.now(UTC)
+    rows = conn.execute(
+        """
+        SELECT id, valid_until, metadata_json
+        FROM price_zones
+        WHERE status = 'active'
+          AND valid_until IS NOT NULL
+        """
+    ).fetchall()
+    for row in rows:
+        try:
+            expiry = parse_datetime_utc(str(row["valid_until"]))
+        except ValueError:
+            continue
+        if expiry > now:
+            continue
+        metadata = json_loads(row["metadata_json"], {})
+        metadata["expired_rule"] = metadata.get("expired_rule") or "valid_until"
+        metadata["expired_at"] = row["valid_until"]
+        conn.execute(
+            """
+            UPDATE price_zones
+            SET status = 'expired',
+                end_time = COALESCE(end_time, valid_until),
+                metadata_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (json.dumps(metadata, sort_keys=True), row["id"]),
+        )
+
+
+def default_price_zone_expiry(zone_type: str, timeframe: str) -> timedelta:
+    zone = zone_type.lower()
+    tf = timeframe.upper()
+    if zone == "fvg":
+        return timedelta(days=1 if tf == "M15" else 2)
+    if zone == "order_block":
+        return timedelta(days=2 if tf == "M15" else 3)
+    return timedelta(hours=24)
+
+
+def first_parseable_datetime(*values: object) -> datetime | None:
+    for value in values:
+        if not value:
+            continue
+        try:
+            return parse_datetime_utc(str(value))
+        except ValueError:
+            continue
+    return None
+
+
+def parse_datetime_utc(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def json_loads(value: str | None, default: dict[str, object]) -> dict[str, object]:
+    if not value:
+        return default
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return default
+    return parsed if isinstance(parsed, dict) else default
