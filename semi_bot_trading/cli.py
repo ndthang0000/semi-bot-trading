@@ -666,7 +666,8 @@ def cmd_live_worker(args: argparse.Namespace) -> None:
     env = load_runtime_env(args.env)
     print(
         f"Starting live worker local_symbol={config.symbol} broker_symbol={env.mt5_symbol} "
-        f"execution_enabled={env.execution_enabled} poll_seconds={env.poll_seconds}"
+        f"execution_enabled={env.execution_enabled} poll_seconds={env.poll_seconds} "
+        f"intrabar={env.live_evaluate_intrabar}"
     )
     run_live_worker(config, env, once=args.once)
 

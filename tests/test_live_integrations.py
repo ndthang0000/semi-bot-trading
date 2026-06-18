@@ -62,6 +62,7 @@ class LiveIntegrationTest(unittest.TestCase):
                             'MT5_SYMBOL="XAUUSDm"',
                             'EXECUTION_ENABLED="true"',
                             'LIVE_ORDER_VOLUME="0.02"',
+                            'LIVE_EVALUATE_INTRABAR="true"',
                         ]
                     )
                 )
@@ -75,6 +76,7 @@ class LiveIntegrationTest(unittest.TestCase):
             self.assertEqual("XAUUSDcustom", env.mt5_symbol)
             self.assertTrue(env.execution_enabled)
             self.assertEqual(0.02, env.live_order_volume)
+            self.assertTrue(env.live_evaluate_intrabar)
         finally:
             if previous_symbol is None:
                 os.environ.pop("MT5_SYMBOL", None)

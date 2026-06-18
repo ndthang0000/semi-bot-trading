@@ -176,6 +176,8 @@ class StrategyConfig:
     zone_reaction_v2_min_stop_price: float
     zone_reaction_v2_min_stop_atr: float
     zone_reaction_v2_max_stop_distance: float
+    zone_reaction_v2_reject_wide_stop_fallback: str
+    zone_reaction_v2_reject_atr_stop: float
     zone_reaction_v2_require_trigger_for_fakeout: bool
     zone_reaction_v2_fakeout_max_reaction_depth_atr: float
     zone_reaction_v2_internal_reject_enabled: bool
@@ -420,6 +422,10 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_min_stop_price=float(zone_reaction_v2.get("min_stop_price", 4.0)),
             zone_reaction_v2_min_stop_atr=float(zone_reaction_v2.get("min_stop_atr", 1.2)),
             zone_reaction_v2_max_stop_distance=float(zone_reaction_v2.get("max_stop_distance", 30.0)),
+            zone_reaction_v2_reject_wide_stop_fallback=str(
+                zone_reaction_v2.get("reject_wide_stop_fallback", "atr")
+            ).lower(),
+            zone_reaction_v2_reject_atr_stop=float(zone_reaction_v2.get("reject_atr_stop", 1.2)),
             zone_reaction_v2_require_trigger_for_fakeout=bool(zone_reaction_v2.get("require_trigger_for_fakeout", True)),
             zone_reaction_v2_fakeout_max_reaction_depth_atr=float(
                 zone_reaction_v2.get("fakeout_max_reaction_depth_atr", 1.5)

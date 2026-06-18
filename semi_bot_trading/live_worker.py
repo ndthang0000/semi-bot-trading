@@ -97,11 +97,18 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
-        if latest_m15 is not None and latest_m15 != state.last_closed_m15:
+        has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
+        if has_new_closed_m15:
             before_zone_ids = current_zone_ids(conn, config.symbol)
             run_live_detectors(conn, config, config.symbol)
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
+            state.last_closed_m15 = latest_m15
+        if latest_m15 is not None and (has_new_closed_m15 or env.live_evaluate_intrabar):
+            # Closed M15 updates drive detectors.  With LIVE_EVALUATE_INTRABAR
+            # enabled, setup evaluation also runs on every poll using the latest
+            # live_candles row so a wick/touch inside the forming candle can be
+            # alerted/executed before the candle closes.
             payload = build_chart_payload(
                 conn,
                 symbol=config.symbol,
@@ -114,7 +121,6 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             )
             queue_setup_alerts(conn, config, env, payload["layers"].get("setup_candidates", []))
             maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)
-            state.last_closed_m15 = latest_m15
     with connect(config.database) as conn:
         send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id, environment=env.environment)
 

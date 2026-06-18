@@ -23,6 +23,7 @@ class RuntimeEnv:
     max_open_positions_per_symbol: int
     max_trades_per_day: int
     poll_seconds: float
+    live_evaluate_intrabar: bool
     chart_url_base: str
     # Risk management
     account_profile: str          # "personal" | "ftmo_challenge" | "the5ers"
@@ -68,6 +69,7 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         max_open_positions_per_symbol=env_int("MAX_OPEN_POSITIONS_PER_SYMBOL", 1) or 1,
         max_trades_per_day=env_int("MAX_TRADES_PER_DAY", 10) or 10,
         poll_seconds=env_float("LIVE_POLL_SECONDS", 15.0) or 15.0,
+        live_evaluate_intrabar=env_bool("LIVE_EVALUATE_INTRABAR", False),
         chart_url_base=env_text("CHART_URL_BASE", "http://127.0.0.1:5173") or "http://127.0.0.1:5173",
         account_profile=env_text("ACCOUNT_PROFILE", "personal") or "personal",
         risk_per_trade_pct=env_float("RISK_PER_TRADE_PCT"),

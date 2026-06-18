@@ -57,6 +57,8 @@ stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.2
 max_stop_distance = 35.0
+reject_wide_stop_fallback = "atr"
+reject_atr_stop = 1.2
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
 internal_reject_enabled = true
@@ -233,7 +235,20 @@ Sau khi tinh stop, bot chan setup neu stop distance qua lon:
 max_stop_distance = 35.0 gia
 ```
 
-Neu `abs(entry - stop_loss) > 40.0`, setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`. Rule nay tranh cac lenh co SL qua rong lam target 2R qua xa va kho danh gia edge.
+Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Neu wick-stop van qua rong va:
+
+```toml
+reject_wide_stop_fallback = "atr"
+```
+
+bot dung ATR stop:
+
+```text
+long:  stop = entry - max(min_stop_distance, reject_atr_stop * ATR_H1)
+short: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_H1)
+```
+
+ATR_H1 o day la ATR cua context timeframe H1 duoc truyen vao strategy. Neu khong co context candles, bot fallback ve ATR cua timeframe dang evaluate. Khoang stop fallback nay la lop cuoi cung nen **khong bi cap boi `max_stop_distance`**; `max_stop_distance` chi la nguong kich hoat fallback tu zone/reaction-wick sang ATR stop. Dat `reject_wide_stop_fallback = "block"` de quay lai hanh vi strict: setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`.
 
 Rieng `retest_reject` va `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 
@@ -245,6 +260,16 @@ short internal_reject: stop = reaction_high + 0.2 ATR
 ```
 
 Sau do van ap dung `min_stop_distance`. Cach nay tranh truong hop zone SR/FVG rat rong lam SL bi day ve dau kia cua zone.
+
+## Live Intrabar Evaluation
+
+Live worker luu nen MT5 cuoi cung vao bang `live_candles` thay vi ghi vao bang nen da dong. Detector SR/FVG/structure van chi cap nhat khi co M15 dong nen moi. Neu muon bot nhin thay wick touch/reject trong nen dang chay, bat:
+
+```text
+LIVE_EVALUATE_INTRABAR=true
+```
+
+Khi bat, worker se build setup candidates moi poll bang live candle moi nhat. Dieu nay giup ghi nhan touch som hon, nhung cung co nghia live execution co the vao lenh truoc khi nen M15 dong. Khi de `false`, bot chi evaluate setup khi co M15 dong nen moi.
 
 ## Backtest Zone Loss Cooldown
 

@@ -104,6 +104,9 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_fakeout_max_atr=0.5,
     zone_reaction_v2_reject_body_min_ratio=1.5,
     zone_reaction_v2_reject_avg_body_period=20,
+    zone_reaction_v2_reject_pinbar_enabled=True,
+    zone_reaction_v2_reject_pinbar_wick_body_ratio=2.0,
+    zone_reaction_v2_reject_pinbar_min_wick_ratio=0.55,
     zone_reaction_v2_slow_min_bars=3,
     zone_reaction_v2_slow_max_bars=8,
     zone_reaction_v2_slow_body_max_ratio=0.8,
@@ -117,6 +120,8 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_min_stop_price=4.0,
     zone_reaction_v2_min_stop_atr=1.2,
     zone_reaction_v2_max_stop_distance=30.0,
+    zone_reaction_v2_reject_wide_stop_fallback="atr",
+    zone_reaction_v2_reject_atr_stop=1.2,
     zone_reaction_v2_require_trigger_for_fakeout=True,
     zone_reaction_v2_fakeout_max_reaction_depth_atr=1.5,
     zone_reaction_v2_internal_reject_enabled=True,
@@ -130,6 +135,7 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_allow_neutral_range_trade=True,
     zone_reaction_v2_block_news_or_risk_off=True,
     zone_reaction_v2_macro_gate_enabled=True,
+    zone_reaction_v2_fvg_macro_gate_enabled=True,
     zone_reaction_v2_confluence_score_bonus=0.08,
     sr_breakout_v1_enabled=True,
     sr_breakout_v1_allowed_entries=("breakout_close", "retest_breakout"),
@@ -625,7 +631,34 @@ class StrategyTest(unittest.TestCase):
             candle("00:00", 108, 109, 107, 108),
             candle("00:15", 108, 108.5, 107.5, 108.1),
             candle("00:30", 106, 106.5, 97, 98),
-            candle("00:45", 98, 106.2, 60, 103),
+            candle("00:45", 98, 111, 60, 109),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 105, 107)],
+            contexts("bearish", "trending"),
+            candles,
+            [],
+            replace(CONFIG, zone_reaction_v2_reject_wide_stop_fallback="block"),
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
+
+    def test_zone_reaction_v2_wide_reject_stop_can_fallback_to_atr(self) -> None:
+        candles = [
+            candle("00:00", 108, 109, 107, 108),
+            candle("00:15", 108, 108.5, 107.5, 108.1),
+            candle("00:30", 106, 106.5, 97, 98),
+            candle("00:45", 98, 111, 60, 109),
+        ]
+        context_candles = [
+            candle("2024-01-01 00:00:00", 100, 160, 100, 150),
+            candle("2024-01-01 01:00:00", 150, 210, 150, 200),
+            candle("2024-01-01 02:00:00", 200, 260, 200, 250),
+            candle("2024-01-01 03:00:00", 250, 310, 250, 300),
         ]
 
         candidates = build_setup_candidates(
@@ -636,10 +669,12 @@ class StrategyTest(unittest.TestCase):
             [],
             CONFIG,
             allowed_playbooks={"zone_reaction_v2"},
+            context_candles=context_candles,
         )
 
-        self.assertEqual("blocked", candidates[0]["status"])
-        self.assertIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertGreater(candidates[0]["entry"] - candidates[0]["stop_loss"], CONFIG.zone_reaction_v2_max_stop_distance)
 
     def test_zone_reaction_v2_detects_slow_reaction(self) -> None:
         candles = [

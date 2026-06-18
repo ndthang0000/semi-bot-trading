@@ -487,6 +487,7 @@ def evaluate_zone_reaction_v2(
     config: StrategyConfig,
     as_of: str,
     macro_trend: str = "unknown",
+    stop_fallback_atr: float | None = None,
 ) -> list[SetupCandidate]:
     if not config.zone_reaction_v2_enabled:
         return []
@@ -558,7 +559,17 @@ def evaluate_zone_reaction_v2(
         context_bypass=context_bypass,
         zone_type=str(zone.get("type", "")),
     )
-    entry, stop, take_profit, rr = compute_zone_reaction_v2_levels(zone, direction, reaction, last_close, atr, config)
+    level_metadata: dict[str, Any] = {}
+    entry, stop, take_profit, rr = compute_zone_reaction_v2_levels(
+        zone,
+        direction,
+        reaction,
+        last_close,
+        atr,
+        config,
+        stop_fallback_atr=stop_fallback_atr,
+        level_metadata=level_metadata,
+    )
     stop_distance = abs(entry - stop) if entry is not None and stop is not None else None
     if reaction.state != "approaching":
         # Approaching zones stay "watching": entry/stop are placeholders until the
@@ -570,6 +581,7 @@ def evaluate_zone_reaction_v2(
             stop_distance is not None
             and config.zone_reaction_v2_max_stop_distance > 0
             and stop_distance > config.zone_reaction_v2_max_stop_distance
+            and level_metadata.get("stop_source") != "atr_fallback"
         ):
             blocked.append(
                 f"Stop distance {stop_distance:.2f} exceeds Zone Reaction V2 maximum "
@@ -628,6 +640,12 @@ def evaluate_zone_reaction_v2(
             "price_action_trigger_ids": price_action_trigger_ids,
             "price_action_trigger_types": price_action_trigger_types,
             "atr": round(atr, 5),
+            "stop_fallback_atr": level_metadata.get("stop_fallback_atr"),
+            "stop_fallback_atr_multiplier": level_metadata.get("stop_fallback_atr_multiplier"),
+            "stop_distance": round(stop_distance, 5) if stop_distance is not None else None,
+            "stop_source": level_metadata.get("stop_source"),
+            "reject_stop_mode": config.zone_reaction_v2_reject_stop_mode,
+            "reject_wide_stop_fallback": config.zone_reaction_v2_reject_wide_stop_fallback,
             "reaction_v2": reaction.state,
             "state_machine": zone_reaction_v2_state_machine(reaction, status, blocked, bool(trigger_ids)),
             "confluence_count": confluence["confluence_count"],
@@ -873,8 +891,11 @@ def compute_zone_reaction_v2_levels(
     last_close: float,
     atr: float,
     config: StrategyConfig,
+    stop_fallback_atr: float | None = None,
+    level_metadata: dict[str, Any] | None = None,
 ) -> tuple[float | None, float | None, list[float], float | None]:
     metadata = reaction.metadata
+    level_metadata = level_metadata if level_metadata is not None else {}
     zone_low = float(zone["price_low"])
     zone_high = float(zone["price_high"])
     reaction_low = float(metadata.get("reaction_low", zone_low))
@@ -892,6 +913,8 @@ def compute_zone_reaction_v2_levels(
     wick_stop_states = {"retest_reject", "internal_reject"}
     if config.zone_reaction_v2_reject_stop_mode == "reaction_wick":
         wick_stop_states = wick_stop_states | {"reject"}
+    stop_source = "reaction_wick" if reaction.state in wick_stop_states else "zone"
+    fallback_atr = stop_fallback_atr if stop_fallback_atr is not None else atr
     if direction == "long":
         wick_natural_stop = reaction_low - buffer
         zone_natural_stop = min(zone_low, reaction_low) - buffer
@@ -899,8 +922,13 @@ def compute_zone_reaction_v2_levels(
         stop = round(min(natural_stop, entry - min_stop_distance), 5)
         if _should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(min(wick_natural_stop, entry - min_stop_distance), 5)
+            stop_source = "reaction_wick"
+        if _should_fallback_reject_stop_to_atr(reaction, config, entry, stop):
+            stop = round(entry - _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
+            stop_source = "atr_fallback"
         risk = entry - stop
         if risk <= 0:
+            _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
             return entry, stop, [], None
         take_profit = [round(entry + risk * target_rr, 5)]
     else:
@@ -910,11 +938,32 @@ def compute_zone_reaction_v2_levels(
         stop = round(max(natural_stop, entry + min_stop_distance), 5)
         if _should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(max(wick_natural_stop, entry + min_stop_distance), 5)
+            stop_source = "reaction_wick"
+        if _should_fallback_reject_stop_to_atr(reaction, config, entry, stop):
+            stop = round(entry + _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
+            stop_source = "atr_fallback"
         risk = stop - entry
         if risk <= 0:
+            _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
             return entry, stop, [], None
         take_profit = [round(entry - risk * target_rr, 5)]
+    _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
     return entry, stop, take_profit, round(target_rr, 4)
+
+
+def _write_level_metadata(
+    level_metadata: dict[str, Any],
+    stop_source: str,
+    stop_fallback_atr: float,
+    config: StrategyConfig,
+) -> None:
+    level_metadata.update(
+        {
+            "stop_source": stop_source,
+            "stop_fallback_atr": round(stop_fallback_atr, 5),
+            "stop_fallback_atr_multiplier": config.zone_reaction_v2_reject_atr_stop,
+        }
+    )
 
 
 def _should_fallback_reject_stop_to_wick(
@@ -929,6 +978,27 @@ def _should_fallback_reject_stop_to_wick(
         and config.zone_reaction_v2_max_stop_distance > 0
         and abs(entry - zone_mode_stop) > config.zone_reaction_v2_max_stop_distance
     )
+
+
+def _should_fallback_reject_stop_to_atr(
+    reaction: ReactionResult,
+    config: StrategyConfig,
+    entry: float,
+    current_stop: float,
+) -> bool:
+    return (
+        reaction.state == "reject"
+        and config.zone_reaction_v2_reject_wide_stop_fallback == "atr"
+        and config.zone_reaction_v2_max_stop_distance > 0
+        and abs(entry - current_stop) > config.zone_reaction_v2_max_stop_distance
+    )
+
+
+def _reject_atr_stop_distance(atr: float, min_stop_distance: float, config: StrategyConfig) -> float:
+    # ATR fallback is the final safety layer for overly wide classic reject
+    # stops. It intentionally is not capped by max_stop_distance; that threshold
+    # only decides when to switch away from zone/reaction-wick stops.
+    return max(min_stop_distance, atr * config.zone_reaction_v2_reject_atr_stop)
 
 
 # ---------------------------------------------------------------------------
@@ -977,3 +1047,4 @@ def zone_confluence_metadata(
 
 step_done = _step_done
 should_fallback_reject_stop_to_wick = _should_fallback_reject_stop_to_wick
+should_fallback_reject_stop_to_atr = _should_fallback_reject_stop_to_atr
