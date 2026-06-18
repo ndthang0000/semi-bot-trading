@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, replace
 from sqlite3 import Connection
+from typing import Any
 
 
 SR_DETECTOR = "sr_v2"
@@ -1035,18 +1036,21 @@ def replace_price_zones(
     detector: str,
     zones: list[PriceZone],
 ) -> int:
+    protected_ids = protected_price_zone_ids(conn, symbol, timeframe, detector)
     if detector == SR_DETECTOR:
         placeholders = ", ".join("?" for _ in (SR_DETECTOR, *LEGACY_SR_DETECTORS))
-        conn.execute(
-            f"DELETE FROM price_zones WHERE symbol = ? AND timeframe = ? AND detector IN ({placeholders})",
-            (symbol, timeframe, SR_DETECTOR, *LEGACY_SR_DETECTORS),
-        )
+        query = f"DELETE FROM price_zones WHERE symbol = ? AND timeframe = ? AND detector IN ({placeholders})"
+        params: list[Any] = [symbol, timeframe, SR_DETECTOR, *LEGACY_SR_DETECTORS]
     else:
-        conn.execute(
-            "DELETE FROM price_zones WHERE symbol = ? AND timeframe = ? AND detector = ?",
-            (symbol, timeframe, detector),
-        )
-    if zones:
+        query = "DELETE FROM price_zones WHERE symbol = ? AND timeframe = ? AND detector = ?"
+        params = [symbol, timeframe, detector]
+    if protected_ids:
+        protected_placeholders = ", ".join("?" for _ in protected_ids)
+        query += f" AND id NOT IN ({protected_placeholders})"
+        params.extend(sorted(protected_ids))
+    conn.execute(query, params)
+    insert_zones = [zone for zone in zones if zone.id not in protected_ids]
+    if insert_zones:
         conn.executemany(
             """
             INSERT INTO price_zones (
@@ -1083,11 +1087,50 @@ def replace_price_zones(
                     zone.source,
                     json.dumps(zone.metadata, sort_keys=True),
                 )
-                for zone in zones
+                for zone in insert_zones
             ],
         )
     conn.commit()
-    return len(zones)
+    return len(insert_zones) + len(protected_ids)
+
+
+def protected_price_zone_ids(conn: Connection, symbol: str, timeframe: str, detector: str) -> set[str]:
+    """Rows touched by a human must survive bot detector/materializer refreshes.
+
+    Detector commands replace bot output wholesale. Without this guard, a bot FVG
+    edited by the user becomes source=mixed, then the next detect/materialize run
+    deletes that row and inserts the original bot geometry again.
+    """
+
+    if detector == SR_DETECTOR:
+        placeholders = ", ".join("?" for _ in (SR_DETECTOR, *LEGACY_SR_DETECTORS))
+        rows = conn.execute(
+            f"""
+            SELECT id, source, metadata_json
+            FROM price_zones
+            WHERE symbol = ? AND timeframe = ? AND detector IN ({placeholders})
+            """,
+            (symbol, timeframe, SR_DETECTOR, *LEGACY_SR_DETECTORS),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, source, metadata_json
+            FROM price_zones
+            WHERE symbol = ? AND timeframe = ? AND detector = ?
+            """,
+            (symbol, timeframe, detector),
+        ).fetchall()
+
+    protected: set[str] = set()
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        if row["source"] != "bot" or metadata.get("human_adjusted") is True or metadata.get("human_created") is True:
+            protected.add(str(row["id"]))
+    return protected
 
 
 def detect_and_store_support_resistance_zones(

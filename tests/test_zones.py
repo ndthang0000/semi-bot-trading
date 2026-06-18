@@ -1,17 +1,87 @@
 from __future__ import annotations
 
+from tempfile import TemporaryDirectory
 import unittest
+from pathlib import Path
 
+from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.zones import (
     CandleSlice,
+    PriceZone,
     SwingPoint,
     apply_lifecycle_to_zones,
     apply_lifecycle_to_zone,
     detect_support_resistance_zones,
+    replace_price_zones,
 )
 
 
 class ZoneDetectorTest(unittest.TestCase):
+    def test_replace_price_zones_preserves_human_adjusted_bot_zone(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.execute(
+                    """
+                    INSERT INTO price_zones (
+                        id, symbol, timeframe, detector, zone_type, direction,
+                        price_low, price_high, start_time, end_time, valid_from, valid_until,
+                        invalidated_at, invalidated_by_structure_point_id, detected_at,
+                        bot_confidence, bot_weight, effective_confidence, effective_weight,
+                        status, source, metadata_json
+                    )
+                    VALUES (
+                        'fvg-1', 'XAUUSD', 'H1', 'fvg_v1', 'fvg', 'bearish',
+                        100, 110, '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                        '2026-01-01T00:00:00+00:00', NULL, NULL, NULL,
+                        '2026-01-01T00:00:00+00:00', 0.8, 0.7, 0.9, 0.9,
+                        'active', 'mixed', '{"human_adjusted": true}'
+                    )
+                    """
+                )
+                conn.commit()
+
+                count = replace_price_zones(
+                    conn,
+                    "XAUUSD",
+                    "H1",
+                    "fvg_v1",
+                    [
+                        PriceZone(
+                            symbol="XAUUSD",
+                            timeframe="H1",
+                            detector="fvg_v1",
+                            zone_type="fvg",
+                            direction="bearish",
+                            price_low=90,
+                            price_high=120,
+                            start_time="2026-01-01T00:00:00+00:00",
+                            end_time="2026-01-03T00:00:00+00:00",
+                            valid_from="2026-01-01T00:00:00+00:00",
+                            valid_until=None,
+                            invalidated_at=None,
+                            invalidated_by_structure_point_id=None,
+                            detected_at="2026-01-01T00:00:00+00:00",
+                            bot_confidence=0.8,
+                            bot_weight=0.7,
+                            effective_confidence=0.8,
+                            effective_weight=0.7,
+                            status="active",
+                            source="bot",
+                            metadata={},
+                        )
+                    ],
+                )
+                row = conn.execute("SELECT * FROM price_zones WHERE id = 'fvg-1'").fetchone()
+                row_count = conn.execute("SELECT COUNT(*) AS count FROM price_zones").fetchone()["count"]
+
+        self.assertEqual(1, count)
+        self.assertEqual(1, row_count)
+        self.assertEqual("mixed", row["source"])
+        self.assertEqual(100, row["price_low"])
+        self.assertEqual(110, row["price_high"])
+
     def test_clusters_support_and_resistance_from_swings(self) -> None:
         swings = [
             SwingPoint("h1", "HH", 2010, "2026-01-01T00:00:00+00:00", "high"),
