@@ -1036,7 +1036,8 @@ def replace_price_zones(
     detector: str,
     zones: list[PriceZone],
 ) -> int:
-    protected_ids = protected_price_zone_ids(conn, symbol, timeframe, detector)
+    protected_rows = protected_price_zone_rows(conn, symbol, timeframe, detector)
+    protected_ids = {str(row["id"]) for row in protected_rows}
     if detector == SR_DETECTOR:
         placeholders = ", ".join("?" for _ in (SR_DETECTOR, *LEGACY_SR_DETECTORS))
         query = f"DELETE FROM price_zones WHERE symbol = ? AND timeframe = ? AND detector IN ({placeholders})"
@@ -1049,7 +1050,11 @@ def replace_price_zones(
         query += f" AND id NOT IN ({protected_placeholders})"
         params.extend(sorted(protected_ids))
     conn.execute(query, params)
-    insert_zones = [zone for zone in zones if zone.id not in protected_ids]
+    insert_zones = [
+        zone
+        for zone in zones
+        if zone.id not in protected_ids and not overlaps_protected_human_zone(zone, protected_rows)
+    ]
     if insert_zones:
         conn.executemany(
             """
@@ -1095,18 +1100,25 @@ def replace_price_zones(
 
 
 def protected_price_zone_ids(conn: Connection, symbol: str, timeframe: str, detector: str) -> set[str]:
+    return {str(row["id"]) for row in protected_price_zone_rows(conn, symbol, timeframe, detector)}
+
+
+def protected_price_zone_rows(conn: Connection, symbol: str, timeframe: str, detector: str) -> list[Any]:
     """Rows touched by a human must survive bot detector/materializer refreshes.
 
     Detector commands replace bot output wholesale. Without this guard, a bot FVG
     edited by the user becomes source=mixed, then the next detect/materialize run
-    deletes that row and inserts the original bot geometry again.
+    deletes that row and inserts the original bot geometry again. We keep the
+    rows, and also suppress near-identical generated bot rows because PriceZone.id
+    includes price boundaries; shrinking a FVG can otherwise change the bot ID and
+    show a duplicate that looks like the human edit was overwritten.
     """
 
     if detector == SR_DETECTOR:
         placeholders = ", ".join("?" for _ in (SR_DETECTOR, *LEGACY_SR_DETECTORS))
         rows = conn.execute(
             f"""
-            SELECT id, source, metadata_json
+            SELECT id, detector, zone_type, price_low, price_high, start_time, source, metadata_json
             FROM price_zones
             WHERE symbol = ? AND timeframe = ? AND detector IN ({placeholders})
             """,
@@ -1115,22 +1127,42 @@ def protected_price_zone_ids(conn: Connection, symbol: str, timeframe: str, dete
     else:
         rows = conn.execute(
             """
-            SELECT id, source, metadata_json
+            SELECT id, detector, zone_type, price_low, price_high, start_time, source, metadata_json
             FROM price_zones
             WHERE symbol = ? AND timeframe = ? AND detector = ?
             """,
             (symbol, timeframe, detector),
         ).fetchall()
 
-    protected: set[str] = set()
+    protected: list[Any] = []
     for row in rows:
         try:
             metadata = json.loads(row["metadata_json"] or "{}")
         except json.JSONDecodeError:
             metadata = {}
         if row["source"] != "bot" or metadata.get("human_adjusted") is True or metadata.get("human_created") is True:
-            protected.add(str(row["id"]))
+            protected.append(row)
     return protected
+
+
+def overlaps_protected_human_zone(zone: PriceZone, protected_rows: list[Any]) -> bool:
+    """Avoid re-inserting the bot version of a zone a human already adjusted."""
+
+    for row in protected_rows:
+        same_detector = row["detector"] == zone.detector or (
+            zone.detector == SR_DETECTOR and row["detector"] in LEGACY_SR_DETECTORS
+        )
+        if not same_detector or row["zone_type"] != zone.zone_type:
+            continue
+        if row["start_time"] == zone.start_time:
+            return True
+        protected_low = float(row["price_low"])
+        protected_high = float(row["price_high"])
+        price_overlap = max(0.0, min(zone.price_high, protected_high) - max(zone.price_low, protected_low))
+        smaller_width = max(0.0, min(zone.price_high - zone.price_low, protected_high - protected_low))
+        if smaller_width > 0 and price_overlap / smaller_width >= 0.8:
+            return True
+    return False
 
 
 def detect_and_store_support_resistance_zones(
