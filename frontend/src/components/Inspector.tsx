@@ -961,6 +961,21 @@ function ZoneEditor({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const isDirty = useMemo(() => {
+    const low = Number(priceLow);
+    const high = Number(priceHigh);
+    const parsedWeight = Number(weight);
+    const parsedConfidence = Number(confidence);
+    return (
+      low !== zone.price_low ||
+      high !== zone.price_high ||
+      parsedWeight !== zone.weight ||
+      parsedConfidence !== zone.confidence ||
+      status !== (zone.status === "disabled" ? "disabled" : "active") ||
+      !sameTradeModes(tradeModes, defaultTradeModes(zone)) ||
+      reason.trim().length > 0
+    );
+  }, [confidence, priceHigh, priceLow, reason, status, tradeModes, weight, zone]);
 
   useEffect(() => {
     setPriceLow(String(zone.price_low));
@@ -1001,6 +1016,10 @@ function ZoneEditor({
       setError("Confidence must be between 0 and 1.");
       return;
     }
+    if (!isDirty) {
+      showToast("success", "Zone is already up to date.");
+      return;
+    }
 
     setIsSaving(true);
     setError(null);
@@ -1010,6 +1029,7 @@ function ZoneEditor({
         price_high: high,
         visual_start: zone.visual_start,
         visual_end: zone.visual_end,
+        expires_at: zone.visual_end,
         weight: parsedWeight,
         confidence: parsedConfidence,
         status,
@@ -1026,7 +1046,7 @@ function ZoneEditor({
     } finally {
       setIsSaving(false);
     }
-  }, [confidence, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
+  }, [confidence, isDirty, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
 
   const deleteZone = useCallback(async () => {
     if (isSaving) return;
@@ -1143,7 +1163,7 @@ function ZoneEditor({
         <button
           className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-400/60 bg-cyan-400/15 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
-          disabled={isSaving}
+          disabled={isSaving || !isDirty}
           onClick={save}
         >
           <Save size={14} />
@@ -1211,6 +1231,12 @@ function defaultTradeModes(zone: PriceZone): ZoneTradeMode[] {
   if (zone.type === "consolidation") return ["breakout"];
   if (zone.type === "support" || zone.type === "resistance") return ["reject"];
   return [];
+}
+
+function sameTradeModes(first: ZoneTradeMode[], second: ZoneTradeMode[]): boolean {
+  if (first.length !== second.length) return false;
+  const normalized = new Set(first);
+  return second.every((mode) => normalized.has(mode));
 }
 
 function filterImportantZoneList(

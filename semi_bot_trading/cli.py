@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
+import subprocess
+import sys
 from pathlib import Path
 
 from .backtest import persist_backtest_result, run_strategy_backtest
@@ -59,6 +62,10 @@ def add_common_config_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_common_env_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--env", type=Path, default=Path(".env"), help="Runtime .env path. Default: .env")
+
+
 def resolve_db_path(args: argparse.Namespace) -> Path:
     if args.db is not None:
         return args.db
@@ -86,6 +93,43 @@ def parse_incremental_zone_detectors(raw_value: str | None) -> set[str]:
         valid = ", ".join(sorted(INCREMENTAL_ZONE_DETECTOR_ALIASES))
         raise SystemExit(f"Invalid detector(s): {', '.join(invalid)}. Valid values: {valid}")
     return detectors
+
+
+def git_value(*args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def cmd_version(args: argparse.Namespace) -> None:
+    from .runtime_env import load_runtime_env
+
+    config = load_config(args.config)
+    env = load_runtime_env(args.env)
+    commit = git_value("rev-parse", "--short", "HEAD")
+    branch = git_value("rev-parse", "--abbrev-ref", "HEAD")
+    status = git_value("status", "--porcelain")
+    dirty = "unknown" if status == "unknown" else ("yes" if status else "no")
+    print(f"commit: {commit}")
+    print(f"branch: {branch}")
+    print(f"dirty: {dirty}")
+    print(f"python: {sys.version.split()[0]} ({platform.platform()})")
+    print(f"config: {config.path}")
+    print(f"database: {config.database}")
+    print(f"symbol: {config.symbol}")
+    print(f"mt5_symbol: {env.mt5_symbol}")
+    print(f"execution_enabled: {env.execution_enabled}")
+    print(f"live_poll_seconds: {env.poll_seconds}")
+    print(f"live_evaluate_intrabar: {env.live_evaluate_intrabar}")
+    print(f"environment: {env.environment}")
 
 
 def cmd_init_db(args: argparse.Namespace) -> None:
@@ -857,6 +901,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="semi-bot")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    version_parser = subparsers.add_parser(
+        "version",
+        help="Print code version, git state, config, and runtime environment summary.",
+    )
+    add_common_config_arg(version_parser)
+    add_common_env_arg(version_parser)
+    version_parser.set_defaults(func=cmd_version)
+
     init_parser = subparsers.add_parser("init-db", help="Create or update the SQLite schema.")
     add_common_config_arg(init_parser)
     add_common_db_arg(init_parser)
@@ -1251,7 +1303,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Queue and send a Telegram system test message using .env credentials.",
     )
     add_common_config_arg(telegram_test_parser)
-    telegram_test_parser.add_argument("--env", type=Path, default=Path(".env"))
+    add_common_env_arg(telegram_test_parser)
     telegram_test_parser.add_argument("--message-key", default="default")
     telegram_test_parser.set_defaults(func=cmd_telegram_test)
 
@@ -1260,7 +1312,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sync closed candles from MT5, refresh detectors, send Telegram alerts, and optionally auto-execute.",
     )
     add_common_config_arg(live_worker_parser)
-    live_worker_parser.add_argument("--env", type=Path, default=Path(".env"))
+    add_common_env_arg(live_worker_parser)
     live_worker_parser.add_argument("--once", action="store_true", help="Run one iteration and exit.")
     live_worker_parser.set_defaults(func=cmd_live_worker)
 

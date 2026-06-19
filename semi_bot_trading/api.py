@@ -597,13 +597,40 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
 
-            expires_at = resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], request.expires_at)
-            before = zone_row_to_chart(row)
-            override_id = str(uuid.uuid4())
-            confidence = request.confidence if request.confidence is not None else float(row["effective_confidence"])
             fields_set = request.model_fields_set if hasattr(request, "model_fields_set") else request.__fields_set__
             start_time = request.visual_start if "visual_start" in fields_set and request.visual_start else row["start_time"]
             requested_end_time = request.visual_end if "visual_end" in fields_set else row["end_time"]
+            expiry_input = request.expires_at
+            if request.status == "active" and expiry_input is None and "visual_end" in fields_set:
+                expiry_input = requested_end_time
+            current_metadata = json_loads(row["metadata_json"], {})
+            request_modes = sorted(set(request.trade_modes)) if request.trade_modes is not None else None
+            current_modes = sorted(
+                mode
+                for mode in current_metadata.get("trade_modes", [])
+                if mode in {"reject", "internal_reject", "breakout"}
+            )
+            requested_status = request.status
+            current_status = "disabled" if row["status"] == "disabled" else "active"
+            confidence = request.confidence if request.confidence is not None else float(row["effective_confidence"])
+            reason_text = (request.reason or "").strip()
+            no_material_change = (
+                not reason_text
+                and abs(float(row["price_low"]) - request.price_low) < 0.00001
+                and abs(float(row["price_high"]) - request.price_high) < 0.00001
+                and start_time == row["start_time"]
+                and requested_end_time == row["end_time"]
+                and abs(float(row["effective_weight"]) - request.weight) < 0.00001
+                and abs(float(row["effective_confidence"]) - confidence) < 0.00001
+                and requested_status == current_status
+                and (request_modes is None or request_modes == current_modes)
+            )
+            if no_material_change:
+                return zone_row_to_chart(row)
+
+            expires_at = resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], expiry_input)
+            before = zone_row_to_chart(row)
+            override_id = str(uuid.uuid4())
             end_time = expires_at if request.status == "active" else requested_end_time
             if request.status == "disabled":
                 end_time = requested_end_time or latest_candle_time(conn, row["symbol"], row["timeframe"]) or now
@@ -615,7 +642,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             if end_dt is not None and start_dt >= end_dt:
                 raise HTTPException(status_code=422, detail="visual_start must be before visual_end")
             valid_until = end_time if request.status == "disabled" else expires_at
-            metadata = json_loads(row["metadata_json"], {})
+            metadata = current_metadata
             if request.trade_modes is not None:
                 metadata["trade_modes"] = sorted(set(request.trade_modes))
             metadata.update(
@@ -715,7 +742,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
         symbol = request.symbol or config.symbol
         timeframe = request.timeframe.upper()
         now = utc_now_iso()
-        expires_at = resolve_price_zone_expiry(now, request.zone_type, timeframe, request.expires_at)
+        expiry_input = request.expires_at
+        if request.status == "active" and expiry_input is None:
+            expiry_input = request.visual_end
+        expires_at = resolve_price_zone_expiry(now, request.zone_type, timeframe, expiry_input)
         start_time = request.visual_start
         end_time = expires_at if request.status == "active" else request.visual_end
         if request.status == "disabled":
