@@ -381,6 +381,56 @@ def load_chart_trades(
     return [trade_order_row_to_chart(row) for row in rows]
 
 
+def load_live_traded_candidate_refs(conn: Connection, symbol: str) -> tuple[set[str], set[str]]:
+    rows = conn.execute(
+        """
+        SELECT trade_orders.metadata_json, trade_ideas.context_snapshot_json
+        FROM trade_orders
+        JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
+        WHERE trade_orders.symbol = ?
+          AND trade_orders.source = 'live'
+          AND trade_orders.opened_at IS NOT NULL
+        """,
+        (symbol,),
+    ).fetchall()
+    candidate_ids: set[str] = set()
+    zone_ids: set[str] = set()
+    for row in rows:
+        metadata = json_loads(row["metadata_json"], {})
+        candidate_id = metadata.get("candidate_id")
+        if candidate_id:
+            candidate_ids.add(str(candidate_id))
+        candidate_metadata = metadata.get("candidate_metadata")
+        if isinstance(candidate_metadata, dict):
+            zone_id = candidate_metadata.get("primary_zone_id")
+            if zone_id:
+                zone_ids.add(str(zone_id))
+        snapshot = json_loads(row["context_snapshot_json"], {})
+        candidate = snapshot.get("candidate")
+        if isinstance(candidate, dict):
+            snapshot_candidate_id = candidate.get("id")
+            if snapshot_candidate_id:
+                candidate_ids.add(str(snapshot_candidate_id))
+            snapshot_zone_id = candidate.get("primary_zone_id")
+            if snapshot_zone_id:
+                zone_ids.add(str(snapshot_zone_id))
+    return candidate_ids, zone_ids
+
+
+def filter_traded_setup_candidates(conn: Connection, symbol: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not candidates:
+        return candidates
+    traded_candidate_ids, traded_zone_ids = load_live_traded_candidate_refs(conn, symbol)
+    if not traded_candidate_ids and not traded_zone_ids:
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("id")) not in traded_candidate_ids
+        and str(candidate.get("primary_zone_id")) not in traded_zone_ids
+    ]
+
+
 def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
     result = {
         "id": row["id"],
@@ -496,6 +546,7 @@ def build_chart_payload(
                 allowed_playbooks=allowed_playbooks,
                 context_candles=context_candles,
             )
+            setup_candidates = filter_traded_setup_candidates(conn, symbol, setup_candidates)
     return {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,

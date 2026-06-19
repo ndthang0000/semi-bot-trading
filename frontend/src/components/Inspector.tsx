@@ -58,7 +58,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   }, [toast]);
 
   return (
-    <aside className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900">
+    <aside className="relative grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900">
       {toast ? <Toast toast={toast} onClose={() => setToast(null)} /> : null}
       <div className="border-b border-ink-700 p-3">
         <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1">
@@ -223,7 +223,7 @@ function TradesTab({
   };
 
   return (
-    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
+    <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
       <div className="mb-3 grid gap-3">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
           <History size={14} />
@@ -559,16 +559,16 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
       {visibleCandidates.length === 0 ? (
         <div className="rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500">No active setup candidates</div>
       ) : (
-        <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
-          <div className="grid gap-3">
+        <div className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain pr-1">
+          <div className="grid min-w-0 gap-3">
             {Object.entries(grouped).map(([status, items]) =>
               items.length > 0 ? (
-                <div key={status} className="grid gap-1.5">
+                <div key={status} className="grid min-w-0 gap-1.5">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{statusLabel(status)}</div>
                   {items.map((candidate) => (
                     <div
                       key={candidate.id}
-                      className={`rounded-md border p-3 text-left transition ${
+                      className={`min-w-0 overflow-hidden rounded-md border p-3 text-left transition ${
                         focusedCandidateId === candidate.id
                           ? "ring-1 ring-cyan-300"
                           : ""
@@ -582,19 +582,19 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
                         focusCandidate(candidate);
                       }}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-semibold text-slate-100">{playbookLabel(candidate.playbook)}</span>
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{playbookLabel(candidate.playbook)}</span>
                         <span className={candidate.direction === "long" ? "text-xs text-emerald-300" : "text-xs text-rose-300"}>
                           {candidate.direction}
                         </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
+                      <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
                         <span>score {candidate.score.toFixed(2)}</span>
                         <span>{candidate.zone_reaction_state}</span>
                         {candidate.risk_reward ? <span>RR {candidate.risk_reward.toFixed(2)}</span> : null}
                       </div>
                       {candidate.entry && candidate.stop_loss ? (
-                        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                        <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
                           <span>Entry {price(candidate.entry)}</span>
                           <span>SL {price(candidate.stop_loss)}</span>
                           {candidate.take_profit[0] ? <span>TP {price(candidate.take_profit[0])}</span> : null}
@@ -604,7 +604,7 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
                         {(candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--")}
                       </div>
                       <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
-                      <div className="mt-2 flex flex-wrap gap-1">
+                      <div className="mt-2 flex min-w-0 flex-wrap gap-1">
                         <SetupAction
                           label={watchedIds.has(candidate.id) ? "Watching" : "Watch"}
                           onClick={() =>
@@ -1367,9 +1367,9 @@ type StateMachineStep = {
 function StateMachine({ steps, compact = false }: { steps: StateMachineStep[]; compact?: boolean }) {
   if (steps.length === 0) return null;
   return (
-    <div className={compact ? "mt-2 flex flex-wrap gap-1" : "grid gap-1"}>
+    <div className={compact ? "mt-2 flex min-w-0 flex-wrap gap-1" : "grid min-w-0 gap-1"}>
       {!compact ? <div className="text-xs text-slate-500">State machine</div> : null}
-      <div className="flex flex-wrap gap-1">
+      <div className="flex min-w-0 flex-wrap gap-1 overflow-hidden">
         {steps.map((step) => (
           <span
             key={step.key}

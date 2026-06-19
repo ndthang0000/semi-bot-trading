@@ -502,8 +502,13 @@ def execute_candidate(
                 json.dumps(
                     {
                         "candidate_id": candidate["id"],
+                        "candidate_metadata": candidate.get("metadata") or {},
+                        "entry_signal": candidate.get("entry"),
                         "broker_order_id": broker_order_id,
                         "broker_deal_id": broker_deal_id,
+                        "playbook": candidate.get("playbook"),
+                        "primary_zone_id": candidate.get("primary_zone_id"),
+                        "zone_reaction_state": candidate.get("zone_reaction_state"),
                     },
                     sort_keys=True,
                 ),
