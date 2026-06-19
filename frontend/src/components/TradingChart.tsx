@@ -138,6 +138,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
   const [drawPreviewZone, setDrawPreviewZone] = useState<PriceZone | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean } | null>(null);
   const scheduledRecalcRef = useRef<number | null>(null);
   const interactionRecalcRef = useRef<number | null>(null);
   const wheelStopRef = useRef<number | null>(null);
@@ -271,6 +272,15 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
     setSwingDots(visibleSwings);
     setTradeBoxes(trades);
+
+    const priceY = series.priceToCoordinate(lastCandle.close);
+    if (typeof priceY === "number" && priceY >= 0 && priceY <= height) {
+      setCandleLabel({
+        priceY,
+        scaleWidth: chart.priceScale("right").width(),
+        isUp: lastCandle.close >= lastCandle.open,
+      });
+    }
   }, []);
 
   const scheduleOverlayRecalc = useCallback(() => {
@@ -1143,6 +1153,62 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
           );
         })}
       </div>
+      {candleLabel !== null && !payload.replay?.enabled ? (
+        <CandleCountdown
+          timeframe={payload.timeframe}
+          priceY={candleLabel.priceY}
+          scaleWidth={candleLabel.scaleWidth}
+          isUp={candleLabel.isUp}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const TIMEFRAME_SECONDS: Record<string, number> = { M15: 900, H1: 3600 };
+
+function CandleCountdown({
+  timeframe,
+  priceY,
+  scaleWidth,
+  isUp,
+}: {
+  timeframe: string;
+  priceY: number;
+  scaleWidth: number;
+  isUp: boolean;
+}) {
+  const tfSecs = TIMEFRAME_SECONDS[timeframe] ?? 3600;
+
+  const calc = () => {
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const rem = tfSecs - (nowSecs % tfSecs);
+    return rem === tfSecs ? 0 : rem; // show 00:00 at the moment of close
+  };
+
+  const [secs, setSecs] = useState(calc);
+
+  useEffect(() => {
+    const id = setInterval(() => setSecs(calc()), 1000);
+    return () => clearInterval(id);
+  }, [tfSecs]);
+
+  const mm = Math.floor(secs / 60).toString().padStart(2, "0");
+  const ss = (secs % 60).toString().padStart(2, "0");
+  const bg = isUp ? "#2fbd85" : "#e35d68";
+
+  return (
+    <div
+      className="pointer-events-none absolute z-20 flex items-center justify-center font-mono text-[11px] font-semibold text-white"
+      style={{
+        right: 0,
+        top: priceY + 10,
+        width: scaleWidth,
+        height: 20,
+        backgroundColor: bg,
+      }}
+    >
+      {mm}:{ss}
     </div>
   );
 }
