@@ -25,6 +25,8 @@ class RuntimeEnv:
     poll_seconds: float
     live_evaluate_intrabar: bool
     chart_url_base: str
+    # Account identity — human-readable label shown in dashboard; unique per MT5 account
+    account_label: str            # e.g. "Exness Personal", "FTMO Challenge #1"
     # Risk management
     account_profile: str          # "personal" | "ftmo_challenge" | "the5ers"
     risk_per_trade_pct: float | None  # % of balance per trade; None → use profile default
@@ -71,6 +73,7 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         poll_seconds=env_float("LIVE_POLL_SECONDS", 15.0) or 15.0,
         live_evaluate_intrabar=env_bool("LIVE_EVALUATE_INTRABAR", False),
         chart_url_base=env_text("CHART_URL_BASE", "http://127.0.0.1:5173") or "http://127.0.0.1:5173",
+        account_label=env_text("ACCOUNT_LABEL", "Default") or "Default",
         account_profile=env_text("ACCOUNT_PROFILE", "personal") or "personal",
         risk_per_trade_pct=env_float("RISK_PER_TRADE_PCT"),
         secret_key=env_text("SECRET_KEY", "") or "",

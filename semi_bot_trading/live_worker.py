@@ -89,11 +89,54 @@ def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
             time.sleep(delay_seconds)
 
 
+def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient) -> None:
+    """Upsert the latest MT5 account metrics into account_snapshots (one row per label)."""
+    try:
+        info = client.get_account_info()
+    except Exception:
+        logger.warning("Could not fetch MT5 account info for snapshot", exc_info=True)
+        return
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO account_snapshots
+            (account_label, broker, login, server, balance, equity, margin, free_margin, profit, currency, snapshot_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account_label) DO UPDATE SET
+            broker      = excluded.broker,
+            login       = excluded.login,
+            server      = excluded.server,
+            balance     = excluded.balance,
+            equity      = excluded.equity,
+            margin      = excluded.margin,
+            free_margin = excluded.free_margin,
+            profit      = excluded.profit,
+            currency    = excluded.currency,
+            snapshot_at = excluded.snapshot_at
+        """,
+        (
+            env.account_label,
+            env.mt5_server,
+            env.mt5_login,
+            env.mt5_server,
+            info["balance"],
+            info["equity"],
+            info["margin"],
+            info["free_margin"],
+            info["profit"],
+            info["currency"],
+            now,
+        ),
+    )
+    conn.commit()
+
+
 def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient, state: LiveWorkerState) -> None:
     state.loop_count += 1
     broker_symbol: str = state.broker_symbol or ""
     with closing(connect(config.database)) as conn:
         # init_db is called once at startup in run_live_worker; skip here.
+        snapshot_account(conn, env, client)
         sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
@@ -500,16 +543,7 @@ def execute_candidate(
                 volume,
                 now,
                 json.dumps(
-                    {
-                        "candidate_id": candidate["id"],
-                        "candidate_metadata": candidate.get("metadata") or {},
-                        "entry_signal": candidate.get("entry"),
-                        "broker_order_id": broker_order_id,
-                        "broker_deal_id": broker_deal_id,
-                        "playbook": candidate.get("playbook"),
-                        "primary_zone_id": candidate.get("primary_zone_id"),
-                        "zone_reaction_state": candidate.get("zone_reaction_state"),
-                    },
+                    _build_trade_metadata(candidate, broker_order_id, broker_deal_id, now),
                     sort_keys=True,
                 ),
                 now,
@@ -733,3 +767,56 @@ def live_trade_count_today(conn: Connection, symbol: str) -> int:
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def _build_trade_metadata(
+    candidate: dict[str, Any],
+    broker_order_id: str,
+    broker_deal_id: str,
+    now: str,
+) -> dict[str, Any]:
+    """Build enriched metadata_json for a trade_orders row.
+
+    Top-level shortcut keys (macro_trend, zone_type, etc.) are extracted from
+    the candidate so they can be queried via json_extract without going two
+    levels deep.
+    """
+    cm: dict[str, Any] = candidate.get("metadata") or {}
+    return {
+        # --- broker linkage ---
+        "candidate_id": candidate["id"],
+        "candidate_metadata": cm,
+        "entry_signal": candidate.get("entry"),
+        "broker_order_id": broker_order_id,
+        "broker_deal_id": broker_deal_id,
+        "playbook": candidate.get("playbook"),
+        "primary_zone_id": candidate.get("primary_zone_id"),
+        "zone_reaction_state": candidate.get("zone_reaction_state"),
+        # --- top-level shortcuts for dashboard queries ---
+        "session": trading_session(now),
+        "macro_trend": cm.get("macro_trend", "unknown"),
+        "zone_type": cm.get("zone_type", "unknown"),
+        "zone_source": cm.get("zone_source", "unknown"),
+        "zone_detector": cm.get("zone_detector", "unknown"),
+        "atr": cm.get("atr"),
+        "h1_bias": cm.get("h1_bias", "unknown"),
+        "h1_regime": cm.get("h1_regime", "unknown"),
+        "confluence_count": cm.get("confluence_count"),
+    }
+
+
+def trading_session(iso_time: str) -> str:
+    """Return the trading session name for a UTC ISO timestamp."""
+    try:
+        h = datetime.fromisoformat(iso_time.replace("Z", "+00:00")).hour
+    except Exception:
+        return "unknown"
+    if h < 7:
+        return "Asian"
+    if h < 12:
+        return "London"
+    if h < 17:
+        return "London-NY"
+    if h < 21:
+        return "New York"
+    return "Off-hours"

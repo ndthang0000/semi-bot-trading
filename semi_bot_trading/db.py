@@ -297,6 +297,23 @@ CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash
 ON auth_refresh_tokens(token_hash);
+
+-- One row per account label: upserted by the worker each cycle.
+-- account_label is the human-readable name (e.g. "Exness Personal", "FTMO Challenge").
+-- Designed for multi-account: future workers for other accounts INSERT their own label.
+CREATE TABLE IF NOT EXISTS account_snapshots (
+    account_label TEXT PRIMARY KEY,
+    broker        TEXT,
+    login         INTEGER,
+    server        TEXT,
+    balance       REAL,
+    equity        REAL,
+    margin        REAL,
+    free_margin   REAL,
+    profit        REAL,
+    currency      TEXT NOT NULL DEFAULT 'USD',
+    snapshot_at   TEXT NOT NULL
+);
 """
 
 

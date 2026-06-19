@@ -342,11 +342,46 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 "count": len(times),
             }
 
+    @app.get("/api/accounts")
+    def get_accounts(_: str = Depends(require_auth)) -> dict[str, Any]:
+        """Return latest account snapshot for every connected MT5 account.
+
+        Response is always a list so the frontend is multi-account-ready from day one.
+        Each worker instance upserts its own row keyed by ACCOUNT_LABEL.
+        """
+        with connect(config.database) as conn:
+            rows = conn.execute(
+                """
+                SELECT account_label, broker, login, server,
+                       balance, equity, margin, free_margin, profit, currency, snapshot_at
+                FROM account_snapshots
+                ORDER BY account_label
+                """
+            ).fetchall()
+        return {
+            "accounts": [
+                {
+                    "label":       row["account_label"],
+                    "broker":      row["broker"],
+                    "login":       row["login"],
+                    "server":      row["server"],
+                    "balance":     row["balance"],
+                    "equity":      row["equity"],
+                    "margin":      row["margin"],
+                    "free_margin": row["free_margin"],
+                    "profit":      row["profit"],
+                    "currency":    row["currency"],
+                    "snapshot_at": row["snapshot_at"],
+                }
+                for row in rows
+            ]
+        }
+
     @app.get("/api/trades")
     def trades(
         symbol: str = Query(default=None),
         timeframe: str = Query(default="H1"),
-        limit: int = Query(default=200, ge=1, le=1000),
+        limit: int = Query(default=200, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
         playbooks: str | None = None,
         status: str | None = None,
@@ -419,9 +454,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             if trade_id_search:
                 where.append("(trade_orders.id LIKE ? OR trade_orders.trade_idea_id LIKE ?)")
                 params.extend([f"%{trade_id_search}%", f"%{trade_id_search}%"])
-        if backtest is not None:
-            where.append("json_extract(trade_orders.metadata_json, '$.backtest') = ?")
-            params.append(1 if backtest else 0)
+        if backtest is True:
+            where.append("trade_orders.source = 'backtest'")
+        elif backtest is False:
+            where.append("trade_orders.source = 'live'")
 
         order_by = {
             "opened_at_desc": "trade_orders.opened_at DESC",
