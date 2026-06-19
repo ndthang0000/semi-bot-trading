@@ -158,6 +158,8 @@ def format_alert_message(alert: AlertEvent) -> str:
         return _fmt_setup(alert)
     if et == "execution_event":
         return _fmt_execution(alert)
+    if et == "new_swing":
+        return _fmt_swing(alert)
     return _fmt_generic(alert)
 
 
@@ -224,6 +226,38 @@ def _fmt_zone(alert: AlertEvent) -> str:
     if chart:
         lines.append(str(chart))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Swing point alert
+# ---------------------------------------------------------------------------
+
+_SWING_ICON: dict[str, str] = {
+    "HH": "[HH]",
+    "LH": "[LH]",
+    "HL": "[HL]",
+    "LL": "[LL]",
+    "swing_high": "[SH]",
+    "swing_low": "[SL]",
+}
+
+
+def _fmt_swing(alert: AlertEvent) -> str:
+    p = alert.payload
+    swing = p.get("swing") or {}
+    point_type = str(swing.get("point_type", "?"))
+    swing_type = str(swing.get("swing_type", ""))
+    price = swing.get("price", "?")
+    event_time = str(swing.get("event_time", ""))[:16].replace("T", " ")
+
+    is_high = swing_type == "high"
+    icon = _SWING_ICON.get(point_type, "[SW]")
+    direction = "High" if is_high else "Low"
+    sym_tf = "[" + alert.symbol + " " + alert.timeframe + "]"
+    return "\n".join([
+        sym_tf + " " + icon + " Swing " + direction,
+        "Price: " + str(price) + "  At: " + event_time,
+    ])
 
 
 # ---------------------------------------------------------------------------

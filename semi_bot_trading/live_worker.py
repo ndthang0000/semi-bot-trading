@@ -21,7 +21,7 @@ from .price_action import detect_and_store_price_action_patterns
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
 from .smc_zones import detect_and_store_smc_zones
-from .structure import detect_and_store_break_structure, detect_and_store_swing_structure
+from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
 
 logger = logging.getLogger(__name__)
@@ -183,10 +183,62 @@ def sync_mt5_candles(conn: Connection, config: AppConfig, client: MT5BrokerClien
         upsert_live_candle(conn, live_candle)
 
 
+def _load_swing_ids(conn: Connection, symbol: str, timeframe: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT id FROM structure_points WHERE symbol = ? AND timeframe = ? AND detector = ?",
+        (symbol, timeframe, SWING_DETECTOR),
+    ).fetchall()
+    return {row["id"] for row in rows}
+
+
+def _queue_new_swing_alerts(
+    conn: Connection, config: AppConfig, symbol: str, timeframe: str, new_ids: set[str]
+) -> None:
+    placeholders = ",".join("?" * len(new_ids))
+    rows = conn.execute(
+        f"""
+        SELECT id, point_type, price, event_time, metadata_json
+        FROM structure_points
+        WHERE symbol = ? AND timeframe = ? AND detector = ?
+        AND id IN ({placeholders})
+        """,
+        (symbol, timeframe, SWING_DETECTOR, *new_ids),
+    ).fetchall()
+    for row in rows:
+        meta = json.loads(row["metadata_json"])
+        swing_type = str(meta.get("swing_type", ""))   # "high" | "low"
+        point_type = str(row["point_type"])             # HH | LH | HL | LL | swing_high | swing_low
+        price = round(float(row["price"]), 5)
+        event_time = str(row["event_time"])
+        queue_alert(
+            conn,
+            symbol=symbol,
+            timeframe=timeframe,
+            event_type="new_swing",
+            severity="info",
+            entity_ids=[str(row["id"])],
+            payload={
+                "swing": {
+                    "id": str(row["id"]),
+                    "point_type": point_type,
+                    "swing_type": swing_type,
+                    "price": price,
+                    "event_time": event_time,
+                },
+            },
+            dedupe_key=f"new-swing:{row['id']}",
+        )
+
+
 def run_live_detectors(conn: Connection, config: AppConfig, symbol: str) -> None:
     for timeframe in (config.bias.timeframe, config.strategy.timeframe):
         swing_config = config.swing_for(timeframe)
+        before_ids = _load_swing_ids(conn, symbol, timeframe)
         detect_and_store_swing_structure(conn, symbol, timeframe, swing_config.window, swing_config.tolerance)
+        after_ids = _load_swing_ids(conn, symbol, timeframe)
+        new_ids = after_ids - before_ids
+        if new_ids:
+            _queue_new_swing_alerts(conn, config, symbol, timeframe, new_ids)
         detect_and_store_break_structure(conn, symbol, timeframe, config.breaks.close_break_buffer)
 
     detect_and_store_bias(
