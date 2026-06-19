@@ -425,7 +425,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_reject_wide_stop_fallback=str(
                 zone_reaction_v2.get("reject_wide_stop_fallback", "atr")
             ).lower(),
-            zone_reaction_v2_reject_atr_stop=float(zone_reaction_v2.get("reject_atr_stop", 1.5)),
+            zone_reaction_v2_reject_atr_stop=float(zone_reaction_v2.get("reject_atr_stop", 1.8)),
             zone_reaction_v2_require_trigger_for_fakeout=bool(zone_reaction_v2.get("require_trigger_for_fakeout", True)),
             zone_reaction_v2_fakeout_max_reaction_depth_atr=float(
                 zone_reaction_v2.get("fakeout_max_reaction_depth_atr", 1.5)

@@ -56,6 +56,11 @@ from .sr_breakout_v1 import (
     sr_breakout_retest_reaction,
     sr_breakout_v1_state_machine,
 )
+from .zone_reaction_levels import (
+    compute_zone_reaction_v2_levels,
+    should_fallback_reject_stop_to_atr,
+    should_fallback_reject_stop_to_wick,
+)
 from .types import (
     BEARISH_BREAKS,
     BEARISH_PA,
@@ -71,11 +76,9 @@ from .zone_reaction_v2 import (
     breakout_retest_reaction,
     classify_consolidation_reaction_v2,
     classify_zone_reaction_v2,
-    compute_zone_reaction_v2_levels,
     evaluate_zone_reaction_v2,
     promote_internal_reject_if_confirmed,
     score_zone_reaction_v2,
-    should_fallback_reject_stop_to_wick,
     slow_reaction_direction,
     step_done,
     zone_confluence_metadata,
@@ -109,7 +112,8 @@ __all__ = [
     "promote_internal_reject_if_confirmed", "evaluate_zone_reaction_v2",
     "zone_reaction_v2_status", "zone_reaction_v2_state_machine", "step_done",
     "score_zone_reaction_v2", "compute_zone_reaction_v2_levels",
-    "should_fallback_reject_stop_to_wick", "zone_confluence_metadata",
+    "should_fallback_reject_stop_to_wick", "should_fallback_reject_stop_to_atr",
+    "zone_confluence_metadata",
     # sr_breakout_v1
     "sr_breakout_direction", "classify_sr_breakout_v1",
     "sr_breakout_retest_reaction", "compute_sr_breakout_v1_levels",

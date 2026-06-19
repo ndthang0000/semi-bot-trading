@@ -58,7 +58,7 @@ min_stop_price = 4.0
 min_stop_atr = 1.2
 max_stop_distance = 30.0
 reject_wide_stop_fallback = "atr"
-reject_atr_stop = 1.6
+reject_atr_stop = 1.8
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
 internal_reject_enabled = true
@@ -257,7 +257,7 @@ long FVG:  stop = entry - max(min_stop_distance, reject_atr_stop * ATR_M15)
 short FVG: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_M15)
 ```
 
-Mac dinh `reject_atr_stop = 1.6`, nen FVG rong khong bi bo lo chi vi SL bi neo vao dau kia cua zone.
+Mac dinh `reject_atr_stop = 1.8`, nen FVG rong khong bi bo lo chi vi SL bi neo vao dau kia cua zone.
 
 Rieng `retest_reject` va `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 
