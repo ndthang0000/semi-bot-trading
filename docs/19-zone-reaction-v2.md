@@ -56,9 +56,9 @@ rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.2
-max_stop_distance = 35.0
+max_stop_distance = 30.0
 reject_wide_stop_fallback = "atr"
-reject_atr_stop = 1.2
+reject_atr_stop = 1.6
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
 internal_reject_enabled = true
@@ -232,7 +232,7 @@ Voi XAUUSD H1/M15, rule nay tranh cac lenh co SL qua chat nhu 0.6-3 gia, la nhom
 Sau khi tinh stop, bot chan setup neu stop distance qua lon:
 
 ```text
-max_stop_distance = 35.0 gia
+max_stop_distance = 30.0 gia
 ```
 
 Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Neu wick-stop van qua rong va:
@@ -244,11 +244,20 @@ reject_wide_stop_fallback = "atr"
 bot dung ATR stop:
 
 ```text
-long:  stop = entry - max(min_stop_distance, reject_atr_stop * ATR_H1)
-short: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_H1)
+long:  stop = entry - max(min_stop_distance, reject_atr_stop * ATR_M15)
+short: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_M15)
 ```
 
-ATR_H1 o day la ATR cua context timeframe H1 duoc truyen vao strategy. Neu khong co context candles, bot fallback ve ATR cua timeframe dang evaluate. Khoang stop fallback nay la lop cuoi cung nen **khong bi cap boi `max_stop_distance`**; `max_stop_distance` chi la nguong kich hoat fallback tu zone/reaction-wick sang ATR stop. Dat `reject_wide_stop_fallback = "block"` de quay lai hanh vi strict: setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`.
+ATR_M15 o day la ATR cua timeframe entry/runtime. Khoang stop fallback nay la lop cuoi cung nen **khong bi cap boi `max_stop_distance`**; `max_stop_distance` chi la nguong kich hoat fallback tu zone/reaction-wick sang ATR stop. Dat `reject_wide_stop_fallback = "block"` de quay lai hanh vi strict: setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`.
+
+Voi FVG, neu stop theo full zone/reaction wick vuot `max_stop_distance` va `reject_wide_stop_fallback = "atr"`, bot fallback truc tiep ve ATR cua timeframe entry (M15 trong runtime hien tai):
+
+```text
+long FVG:  stop = entry - max(min_stop_distance, reject_atr_stop * ATR_M15)
+short FVG: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_M15)
+```
+
+Mac dinh `reject_atr_stop = 1.6`, nen FVG rong khong bi bo lo chi vi SL bi neo vao dau kia cua zone.
 
 Rieng `retest_reject` va `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 

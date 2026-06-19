@@ -8,6 +8,7 @@ from semi_bot_trading.strategy import (
     ReactionResult,
     build_setup_candidates,
     classify_zone_reaction_v2,
+    compute_sr_breakout_v1_levels,
     compute_zone_reaction_v2_levels,
 )
 
@@ -121,7 +122,7 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_min_stop_atr=1.2,
     zone_reaction_v2_max_stop_distance=30.0,
     zone_reaction_v2_reject_wide_stop_fallback="atr",
-    zone_reaction_v2_reject_atr_stop=1.2,
+    zone_reaction_v2_reject_atr_stop=1.6,
     zone_reaction_v2_require_trigger_for_fakeout=True,
     zone_reaction_v2_fakeout_max_reaction_depth_atr=1.5,
     zone_reaction_v2_internal_reject_enabled=True,
@@ -147,7 +148,7 @@ CONFIG = StrategyConfig(
     sr_breakout_v1_sl_mode="atr",
     sr_breakout_v1_sl_zone_buffer_atr=0.2,
     sr_breakout_v1_sl_min_atr=0.6,
-    sr_breakout_v1_sl_atr=1.2,
+    sr_breakout_v1_sl_atr=1.5,
     sr_breakout_v1_rr=2.0,
     sr_breakout_v1_max_stop_distance=60.0,
 )
@@ -693,7 +694,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("blocked", candidates[0]["status"])
         self.assertIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
 
-    def test_zone_reaction_v2_wide_reject_stop_can_fallback_to_atr(self) -> None:
+    def test_zone_reaction_v2_wide_reject_stop_can_fallback_to_m15_atr(self) -> None:
         candles = [
             candle("00:00", 108, 109, 107, 108),
             candle("00:15", 108, 108.5, 107.5, 108.1),
@@ -720,7 +721,40 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
-        self.assertGreater(candidates[0]["entry"] - candidates[0]["stop_loss"], CONFIG.zone_reaction_v2_max_stop_distance)
+        self.assertEqual(candidates[0]["metadata"]["atr"], candidates[0]["metadata"]["stop_fallback_atr"])
+        expected_distance = max(
+            CONFIG.zone_reaction_v2_min_stop_price,
+            candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
+        )
+        self.assertAlmostEqual(expected_distance, candidates[0]["entry"] - candidates[0]["stop_loss"], places=4)
+
+    def test_zone_reaction_v2_wide_fvg_stop_falls_back_to_m15_atr(self) -> None:
+        candles = [
+            candle("00:00", 112, 113, 111, 112),
+            candle("00:15", 112, 113, 111, 112),
+            candle("00:30", 110, 111, 80, 90),
+            candle("00:45", 90, 120, 88, 115),
+        ]
+        fvg = zone("fvg", "bullish", 80, 107)
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [fvg],
+            contexts("bullish", "ranging"),
+            candles,
+            [point("pinbar_bullish", "up", "00:45")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertEqual(candidates[0]["metadata"]["atr"], candidates[0]["metadata"]["stop_fallback_atr"])
+        expected_distance = max(
+            CONFIG.zone_reaction_v2_min_stop_price,
+            candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
+        )
+        self.assertAlmostEqual(expected_distance, candidates[0]["entry"] - candidates[0]["stop_loss"], places=4)
 
     def test_zone_reaction_v2_detects_slow_reaction(self) -> None:
         candles = [
@@ -1050,6 +1084,21 @@ class StrategyTest(unittest.TestCase):
         # below the broken edge (102) instead.
         self.assertLess(candidates[0]["stop_loss"], wick_candidates[0]["stop_loss"])
         self.assertLess(wick_candidates[0]["stop_loss"], 102)
+
+    def test_sr_breakout_v1_stop_can_use_m15_atr(self) -> None:
+        entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(
+            "long",
+            candle("13:00", 100, 110, 99, 105),
+            atr=20,
+            config=CONFIG,
+            zone=zone("resistance", "bearish", 100, 102),
+            stop_atr=10,
+        )
+
+        self.assertEqual(105, entry)
+        self.assertEqual(90, stop)
+        self.assertEqual([135], take_profit)
+        self.assertEqual(2.0, rr)
 
     def test_sr_breakout_v1_disabled_entry_stays_waiting(self) -> None:
         from dataclasses import replace

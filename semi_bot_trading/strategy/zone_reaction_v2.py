@@ -927,6 +927,10 @@ def compute_zone_reaction_v2_levels(
         if _should_fallback_reject_stop_to_atr(reaction, config, entry, stop):
             stop = round(entry - _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
+        if _should_fallback_fvg_stop_to_atr(zone, config, entry, stop):
+            fallback_atr = atr
+            stop = round(entry - _reject_atr_stop_distance(atr, min_stop_distance, config), 5)
+            stop_source = "atr_fallback"
         risk = entry - stop
         if risk <= 0:
             _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
@@ -942,6 +946,10 @@ def compute_zone_reaction_v2_levels(
             stop_source = "reaction_wick"
         if _should_fallback_reject_stop_to_atr(reaction, config, entry, stop):
             stop = round(entry + _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
+            stop_source = "atr_fallback"
+        if _should_fallback_fvg_stop_to_atr(zone, config, entry, stop):
+            fallback_atr = atr
+            stop = round(entry + _reject_atr_stop_distance(atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
         risk = stop - entry
         if risk <= 0:
@@ -989,6 +997,20 @@ def _should_fallback_reject_stop_to_atr(
 ) -> bool:
     return (
         reaction.state == "reject"
+        and config.zone_reaction_v2_reject_wide_stop_fallback == "atr"
+        and config.zone_reaction_v2_max_stop_distance > 0
+        and abs(entry - current_stop) > config.zone_reaction_v2_max_stop_distance
+    )
+
+
+def _should_fallback_fvg_stop_to_atr(
+    zone: dict[str, Any],
+    config: StrategyConfig,
+    entry: float,
+    current_stop: float,
+) -> bool:
+    return (
+        str(zone.get("type")) == "fvg"
         and config.zone_reaction_v2_reject_wide_stop_fallback == "atr"
         and config.zone_reaction_v2_max_stop_distance > 0
         and abs(entry - current_stop) > config.zone_reaction_v2_max_stop_distance

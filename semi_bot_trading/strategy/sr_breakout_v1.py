@@ -278,16 +278,18 @@ def compute_sr_breakout_v1_levels(
     atr: float,
     config: StrategyConfig,
     zone: dict[str, Any] | None = None,
+    stop_atr: float | None = None,
 ) -> tuple[float | None, float | None, list[float], float | None]:
     entry = round(float(signal_candle["close"]), 5)
     rr = config.sr_breakout_v1_rr
-    stop_distance = atr * config.sr_breakout_v1_sl_atr
+    effective_stop_atr = stop_atr if stop_atr is not None else atr
+    stop_distance = effective_stop_atr * config.sr_breakout_v1_sl_atr
     if config.sr_breakout_v1_sl_mode == "zone_edge" and zone is not None:
         # Structural stop: the broken edge flips role (resistance -> support),
         # so invalidation is a close back through that edge plus a buffer.
         # A floor keeps the stop from collapsing when entry hugs the edge.
-        edge_buffer = atr * config.sr_breakout_v1_sl_zone_buffer_atr
-        min_distance = atr * config.sr_breakout_v1_sl_min_atr
+        edge_buffer = effective_stop_atr * config.sr_breakout_v1_sl_zone_buffer_atr
+        min_distance = effective_stop_atr * config.sr_breakout_v1_sl_min_atr
         if direction == "long":
             natural = float(zone["price_high"]) - edge_buffer
             stop_distance = max(entry - natural, min_distance)
@@ -366,6 +368,7 @@ def evaluate_sr_breakout_v1(
     zone: dict[str, Any],
     candles: list[dict[str, Any]],
     atr: float,
+    stop_atr: float | None,
     macro_trend: str,
     bias: str,
     regime: str,
@@ -389,7 +392,7 @@ def evaluate_sr_breakout_v1(
     last = candles[-1]
     if not _in_london_ny_session(last):
         return []
-    entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(direction, last, atr, config, zone)
+    entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(direction, last, atr, config, zone, stop_atr=stop_atr)
     blocked: list[str] = []
     reasons = [
         "SR Breakout V1 uses H1 close outside support/resistance.",
@@ -454,6 +457,8 @@ def evaluate_sr_breakout_v1(
             "h1_regime": regime,
             "macro_trend": macro_trend,
             "atr": round(atr, 5),
+            "stop_atr": round(stop_atr, 5) if stop_atr is not None else round(atr, 5),
+            "stop_atr_multiplier": config.sr_breakout_v1_sl_atr,
             "entry_model": reaction.metadata.get("entry_model"),
             "breakout_close_distance_atr": reaction.metadata.get("breakout_close_distance_atr"),
             "context_bypass": context_bypass,

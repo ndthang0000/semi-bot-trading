@@ -55,8 +55,10 @@ Entry:
 
 Stop loss:
 
-- Long: `entry - 1.2 * ATR_H1`
-- Short: `entry + 1.2 * ATR_H1`
+- Long: `entry - 1.5 * ATR_M15`
+- Short: `entry + 1.5 * ATR_M15`
+
+ATR_H1 van duoc dung cho dieu kien breakout/retest, nhung rieng SL dung ATR_M15 entry-timeframe de khong bi keo qua rong.
 
 Take profit:
 
@@ -65,7 +67,7 @@ Take profit:
 Risk filters:
 
 - Khong dung min stop `4.0` cua `zone_reaction_v2`.
-- Block setup neu stop distance > `max_stop_distance`, default `60` gia.
+- Block setup neu stop distance > `max_stop_distance`, default `40` gia.
 
 ## Config
 
@@ -76,7 +78,7 @@ allow_bot_sr_breakout = false
 breakout_buffer_atr = 0.15
 market_entry_max_distance_atr = 0.5
 retest_max_bars = 8
-sl_atr = 1.2
+sl_atr = 1.5
 rr = 2.5
 max_stop_distance = 60.0
 ```
