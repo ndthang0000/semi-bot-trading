@@ -608,7 +608,7 @@ def sync_closed_positions(
     """
     rows = conn.execute(
         """
-        SELECT id, entry_price, stop_loss, quantity, metadata_json
+        SELECT id, side, entry_price, stop_loss, quantity, metadata_json
         FROM trade_orders
         WHERE symbol = ? AND status = 'filled' AND source = 'live'
         """,
@@ -653,17 +653,46 @@ def sync_closed_positions(
         close_price = deal["price"]
         closed_at = deal["time_iso"]
 
-        # pnl_r: P&L divided by initial dollar risk
-        # risk = stop_distance × lots × contract_size  (contract_size was missing before)
+        # pnl_r: P&L divided by initial dollar risk.
+        #
+        # We derive the implied contract size from the deal itself rather than
+        # trusting broker config (trade_contract_size from MT5 can be 1 on some
+        # brokers for XAUUSDm, making the risk amount 100× too small).
+        #
+        # deal["profit"] = price_delta_in_direction × qty × contract_size
+        # → implied_cs   = deal["profit"] / (price_delta × qty)
+        # → risk_amount  = stop_distance  × qty × implied_cs
         pnl_r: float | None = None
         try:
             entry = float(row["entry_price"])
-            stop = float(row["stop_loss"])
-            qty = float(row["quantity"])
-            risk_amount = abs(entry - stop) * qty * contract_size
+            stop  = float(row["stop_loss"])
+            qty   = float(row["quantity"])
+            close_px = float(deal["price"])
+            side = str(row["side"])  # "buy" or "sell"
+
+            # Directional price delta (positive when trade goes in intended direction)
+            direction_sign = 1.0 if side == "buy" else -1.0
+            price_delta = (close_px - entry) * direction_sign
+
+            # Infer contract size from the deal's own profit figure.
+            # deal["profit"] is the raw directional P&L (swap/commission separate).
+            raw_profit = float(deal.get("profit_raw", deal["profit"]))
+            if abs(price_delta) > 1e-9 and qty > 0 and abs(raw_profit) > 1e-6:
+                implied_cs = raw_profit / (price_delta * qty)
+            else:
+                implied_cs = contract_size  # fall back to MT5 reported value
+
+            logger.debug(
+                "pnl_r calc | side=%s entry=%.5f close=%.5f stop=%.5f qty=%.4f "
+                "mt5_cs=%.1f implied_cs=%.1f raw_profit=%.4f pnl=%.4f",
+                side, entry, close_px, stop, qty, contract_size, implied_cs, raw_profit, pnl,
+            )
+
+            stop_distance = abs(entry - stop)
+            risk_amount = stop_distance * qty * abs(implied_cs)
             if risk_amount > 0:
                 pnl_r = round(pnl / risk_amount, 3)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, ZeroDivisionError):
             pass
 
         conn.execute(
