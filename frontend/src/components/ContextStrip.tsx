@@ -41,7 +41,6 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const bias = biasContext?.effective_value ?? "--";
   const regime = regimeContext?.effective_value ?? "--";
   const overlays = readOverlays(regimeContext?.metadata.overlays);
-  const structureTimeframe = payload?.layers.structure_timeframe ?? "--";
   const priceChange = readCurrentPriceChange(payload);
 
   return (
@@ -54,7 +53,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
         onEdit={() => setEditing("regime")}
       />
       <MacroTrendCard context={macroContext} />
-      <ContextCard label="Structure" value={structureTimeframe} />
+      <AtrCard atr={payload?.layers.atr} />
       <ContextCard label="Range" value={payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--"} />
 
       {editing && h1?.[editing] ? (
@@ -69,6 +68,28 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
         />
       ) : null}
     </section>
+  );
+}
+
+function AtrCard({ atr }: { atr: ChartPayload["layers"]["atr"] | undefined }) {
+  const h1 = atr?.H1;
+  const m15 = atr?.M15;
+  const period = h1?.period ?? m15?.period ?? 14;
+
+  return (
+    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2" title={`Average True Range (${period})`}>
+      <div className="text-xs text-slate-500">ATR({period})</div>
+      <div className="mt-1 grid grid-cols-2 gap-2 text-[11px] leading-tight">
+        <div>
+          <div className="text-slate-500">H1</div>
+          <div className="font-semibold text-slate-100">{formatAtrValue(h1?.value)}</div>
+        </div>
+        <div>
+          <div className="text-slate-500">M15</div>
+          <div className="font-semibold text-slate-100">{formatAtrValue(m15?.value)}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -425,4 +446,8 @@ function readCurrentPriceChange(payload: ChartPayload | undefined): { currentPri
     currentPrice: last.close,
     changePercent: ((last.close - dayOpen) / dayOpen) * 100,
   };
+}
+
+function formatAtrValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
 }

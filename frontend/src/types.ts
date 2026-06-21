@@ -32,6 +32,12 @@ export type ChartCandle = {
   volume: number | null;
 };
 
+export type AtrSnapshot = {
+  period: number;
+  value: number | null;
+  as_of: string | null;
+};
+
 export type StructurePoint = {
   id: string;
   time: string;
@@ -167,6 +173,7 @@ export type ChartPayload = {
     structure_timeframe: string;
     zones: PriceZone[];
     contexts: Record<string, Record<string, MarketContext>>;
+    atr: Record<string, AtrSnapshot>;
     trades: TradeOrder[];
     setup_candidates: SetupCandidate[];
   };

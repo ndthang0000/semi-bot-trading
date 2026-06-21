@@ -7,6 +7,7 @@ from typing import Any
 
 from .context import score_macro_trend
 from .strategy import build_setup_candidates
+from .zones import CandleSlice, latest_atr
 
 
 CHART_PAYLOAD_VERSION = 1
@@ -97,6 +98,37 @@ def load_live_candle(
         "close": float(row["close"]),
         "volume": float(row["volume"]) if row["volume"] is not None else None,
     }
+
+
+def build_atr_snapshot(
+    conn: Connection,
+    symbol: str,
+    timeframes: list[str],
+    period: int = 14,
+    end: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for timeframe in timeframes:
+        candles = load_chart_candles(conn, symbol, timeframe, period + 2, end=end)
+        atr_value = latest_atr(
+            [
+                CandleSlice(
+                    open_time=candle["time"],
+                    high=candle["high"],
+                    low=candle["low"],
+                    close=candle["close"],
+                    open=candle["open"],
+                )
+                for candle in candles
+            ],
+            period=period,
+        )
+        result[timeframe] = {
+            "period": period,
+            "value": round(float(atr_value), 5) if atr_value is not None else None,
+            "as_of": candles[-1]["time"] if candles else None,
+        }
+    return result
 
 
 def load_chart_candles(
@@ -565,6 +597,7 @@ def build_chart_payload(
             "structure_timeframe": effective_structure_timeframe,
             "zones": zones,
             "contexts": contexts,
+            "atr": build_atr_snapshot(conn, symbol, ["H1", "M15"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
         },
