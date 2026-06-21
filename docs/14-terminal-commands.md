@@ -396,6 +396,8 @@ python -m semi_bot_trading.cli backtest-report \
   --html-output var/reports/zone_reaction_v2.html
 ```
 
+Tren macOS/Linux nen dung dau `/` cho `--html-output`. CLI co normalize path kieu Windows nhu `var\reports\file.html`, va ca case zsh nuot dau `\` thanh `varreportsfile.html`, de report van duoc ghi vao `var/reports/`.
+
 Backtest SR Breakout V1:
 
 ```bash

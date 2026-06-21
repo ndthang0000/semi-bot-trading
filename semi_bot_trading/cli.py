@@ -44,6 +44,34 @@ INCREMENTAL_ZONE_DETECTOR_ALIASES = {
 }
 
 
+def normalize_report_output_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+
+    raw = str(path)
+    if "\\" in raw:
+        return Path(raw.replace("\\", "/"))
+
+    # macOS/zsh can swallow unquoted Windows separators, turning
+    # `var\reports\foo.html` into `varreportsfoo.html`. Recover the common
+    # report-output typo so generated HTML lands in the expected folder.
+    if path.parent == Path(".") and path.name.startswith("varreports"):
+        filename = path.name.removeprefix("varreports")
+        if filename:
+            return Path("var") / "reports" / filename
+
+    return path
+
+
+def write_html_report(path: Path | None, html: str) -> None:
+    output_path = normalize_report_output_path(path)
+    if output_path is None:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html)
+    print(f"HTML report: {output_path}")
+
+
 def add_common_db_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--db",
@@ -760,10 +788,7 @@ def cmd_backtest_strategies(args: argparse.Namespace) -> None:
     print(f"Lookahead guard: {result.lookahead_guard}")
     if run_id:
         print(f"Persisted backtest run: {run_id}")
-    if args.html_output:
-        args.html_output.parent.mkdir(parents=True, exist_ok=True)
-        args.html_output.write_text(render_backtest_html(result, max_rows=args.max_rows))
-        print(f"HTML report: {args.html_output}")
+    write_html_report(args.html_output, render_backtest_html(result, max_rows=args.max_rows))
     rows = result.summary_by_playbook()
     if not rows:
         print("No eligible strategy trades found.")
@@ -810,10 +835,7 @@ def cmd_backtest_report(args: argparse.Namespace) -> None:
     print(render_backtest_report(result, max_rows=args.max_rows))
     if run_id:
         print(f"Persisted backtest run: {run_id}")
-    if args.html_output:
-        args.html_output.parent.mkdir(parents=True, exist_ok=True)
-        args.html_output.write_text(render_backtest_html(result, max_rows=args.max_rows))
-        print(f"HTML report: {args.html_output}")
+    write_html_report(args.html_output, render_backtest_html(result, max_rows=args.max_rows))
 
 
 def cmd_research_events(args: argparse.Namespace) -> None:
@@ -851,10 +873,7 @@ def cmd_research_events(args: argparse.Namespace) -> None:
 def cmd_research_report(args: argparse.Namespace) -> None:
     rows = read_research_csv(args.input)
     print(render_research_report(rows, max_rows=args.max_rows, min_samples=args.min_samples))
-    if args.html_output:
-        args.html_output.parent.mkdir(parents=True, exist_ok=True)
-        args.html_output.write_text(render_research_html(rows, max_rows=args.max_rows, min_samples=args.min_samples))
-        print(f"HTML report: {args.html_output}")
+    write_html_report(args.html_output, render_research_html(rows, max_rows=args.max_rows, min_samples=args.min_samples))
 
 
 def parse_zone_types_arg(values: list[str] | None) -> set[str] | None:

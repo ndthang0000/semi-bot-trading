@@ -175,6 +175,28 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("reject", candidates[0]["zone_reaction_state"])
 
+    def test_active_sr_zone_without_expiry_is_tradeable(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        support["valid_until"] = None
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("support", candidates[0]["metadata"]["zone_type"])
+
     def test_price_near_zone_emits_approaching_watch_state(self) -> None:
         candles = [
             candle("00:00", 110, 111, 109, 110),

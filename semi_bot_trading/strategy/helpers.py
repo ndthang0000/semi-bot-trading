@@ -194,6 +194,12 @@ def zone_trade_disabled_after_sweep(zone: dict[str, Any]) -> bool:
 
 def zone_valid_at(zone: dict[str, Any], as_of: str) -> bool:
     valid_until = zone.get("valid_until")
+    # SR zones generated in point-in-time backtests do not carry a fixed
+    # expiry; lifecycle status is the source of truth for whether they are
+    # still tradeable. FVG/OB zones usually have valid_until because their
+    # expiry/mitigation window is time-bounded.
+    if valid_until in (None, ""):
+        return True
     return isinstance(valid_until, str) and valid_until > as_of
 
 
