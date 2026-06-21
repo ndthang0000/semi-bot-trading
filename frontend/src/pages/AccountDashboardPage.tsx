@@ -55,8 +55,10 @@ interface TradesResponse {
 // Data fetching
 // ---------------------------------------------------------------------------
 
+const ACCOUNT_TRADES_LIMIT = 1000;
+
 async function fetchAllTrades(): Promise<TradeOrder[]> {
-  const res = await authFetch("/api/trades?limit=2000&backtest=false");
+  const res = await authFetch(`/api/trades?limit=${ACCOUNT_TRADES_LIMIT}&backtest=false`);
   if (!res.ok) throw new Error("Failed to fetch trades");
   const data: TradesResponse = await res.json();
   return data.trades ?? [];

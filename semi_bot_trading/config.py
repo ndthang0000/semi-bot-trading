@@ -192,6 +192,7 @@ class StrategyConfig:
     zone_reaction_v2_block_news_or_risk_off: bool
     zone_reaction_v2_macro_gate_enabled: bool
     zone_reaction_v2_fvg_macro_gate_enabled: bool  # separate gate for FVG zones
+    zone_reaction_v2_fvg_max_trades_per_zone: int
     zone_reaction_v2_confluence_score_bonus: float
     sr_breakout_v1_enabled: bool
     sr_breakout_v1_allowed_entries: tuple[str, ...]
@@ -420,7 +421,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_rr_minimum=float(zone_reaction_v2.get("rr_minimum", 2.0)),
             zone_reaction_v2_stop_buffer_atr=float(zone_reaction_v2.get("stop_buffer_atr", 0.2)),
             zone_reaction_v2_min_stop_price=float(zone_reaction_v2.get("min_stop_price", 4.0)),
-            zone_reaction_v2_min_stop_atr=float(zone_reaction_v2.get("min_stop_atr", 1.2)),
+            zone_reaction_v2_min_stop_atr=float(zone_reaction_v2.get("min_stop_atr", 1.5)),
             zone_reaction_v2_max_stop_distance=float(zone_reaction_v2.get("max_stop_distance", 30.0)),
             zone_reaction_v2_reject_wide_stop_fallback=str(
                 zone_reaction_v2.get("reject_wide_stop_fallback", "atr")
@@ -456,6 +457,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_block_news_or_risk_off=bool(zone_reaction_v2.get("block_news_or_risk_off", True)),
             zone_reaction_v2_macro_gate_enabled=bool(zone_reaction_v2.get("macro_gate_enabled", True)),
             zone_reaction_v2_fvg_macro_gate_enabled=bool(zone_reaction_v2.get("fvg_macro_gate_enabled", True)),
+            zone_reaction_v2_fvg_max_trades_per_zone=int(zone_reaction_v2.get("fvg_max_trades_per_zone", 2)),
             zone_reaction_v2_confluence_score_bonus=float(zone_reaction_v2.get("confluence_score_bonus", 0.08)),
             sr_breakout_v1_enabled=bool(sr_breakout_v1.get("enabled", True)),
             sr_breakout_v1_allowed_entries=tuple(

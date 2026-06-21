@@ -55,7 +55,7 @@ retest_max_bars = 8
 rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
-min_stop_atr = 1.2
+min_stop_atr = 1.5
 max_stop_distance = 30.0
 reject_wide_stop_fallback = "atr"
 reject_atr_stop = 1.8
@@ -71,6 +71,7 @@ internal_reject_deep_fvg_fill_ratio = 0.8
 internal_reject_min_sr_penetration_atr = 0.3
 allow_neutral_range_trade = true
 block_news_or_risk_off = true
+fvg_max_trades_per_zone = 2
 confluence_score_bonus = 0.08
 
 [backtest]
@@ -224,7 +225,7 @@ Sau do stop duoc noi rong neu risk qua nho:
 
 ```text
 min_stop_distance = max(min_stop_price, min_stop_atr * ATR_M15)
-default = max(4.0 gia, 1.2 * ATR_M15)
+default = max(4.0 gia, 1.6 * ATR_M15)
 ```
 
 Voi XAUUSD H1/M15, rule nay tranh cac lenh co SL qua chat nhu 0.6-3 gia, la nhom trade backtest dang co ket qua rat kem.
@@ -258,6 +259,16 @@ short FVG: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_M15)
 ```
 
 Mac dinh `reject_atr_stop = 1.8`, nen FVG rong khong bi bo lo chi vi SL bi neo vao dau kia cua zone.
+
+### FVG Trade Count Cap
+
+Mot FVG co the cho phan ung tot lan dau, nhung cac lan fill/retest sau thuong nhieu nhieu hon. De tranh bot lap lai qua nhieu lenh tren cung mot FVG, backtest/live executor gioi han:
+
+```toml
+fvg_max_trades_per_zone = 2
+```
+
+Nghia la moi `primary_zone_id` co `zone_type = fvg` chi duoc accept toi da 2 trade. Candidate thu 3 tro di bi bo qua truoc khi chon best setup. Backtest dem in-memory trong tung run; live worker dem cac `trade_orders.source = live` da luu trong DB. Set `0` de tat gioi han nay khi can research full sample.
 
 Rieng `retest_reject` va `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 

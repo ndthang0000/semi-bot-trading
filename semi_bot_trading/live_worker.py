@@ -440,6 +440,12 @@ def maybe_execute_candidates(
     if live_trade_count_today(conn, config.symbol) >= env.max_trades_per_day:
         return
     eligible = [candidate for candidate in candidates if candidate.get("status") == "eligible"]
+    eligible = candidates_after_live_fvg_trade_count(
+        conn,
+        config.symbol,
+        eligible,
+        config.strategy.zone_reaction_v2_fvg_max_trades_per_zone,
+    )
     if not eligible:
         return
     candidate = sorted(eligible, key=lambda item: float(item.get("score") or 0.0), reverse=True)[0]
@@ -844,6 +850,53 @@ def live_trade_count_today(conn: Connection, symbol: str) -> int:
         (symbol, day_prefix),
     ).fetchone()
     return int(row["count"])
+
+
+def candidates_after_live_fvg_trade_count(
+    conn: Connection,
+    symbol: str,
+    candidates: list[dict[str, Any]],
+    max_trades_per_zone: int,
+) -> list[dict[str, Any]]:
+    if max_trades_per_zone <= 0:
+        return candidates
+
+    filtered: list[dict[str, Any]] = []
+    for candidate in candidates:
+        zone_id = str(candidate.get("primary_zone_id") or "")
+        if candidate_zone_type(candidate) != "fvg" or not zone_id:
+            filtered.append(candidate)
+            continue
+        if live_fvg_trade_count_for_zone(conn, symbol, zone_id) < max_trades_per_zone:
+            filtered.append(candidate)
+    return filtered
+
+
+def live_fvg_trade_count_for_zone(conn: Connection, symbol: str, zone_id: str) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM trade_orders
+        WHERE symbol = ?
+          AND source = 'live'
+          AND json_extract(metadata_json, '$.primary_zone_id') = ?
+          AND COALESCE(
+                json_extract(metadata_json, '$.candidate_metadata.zone_type'),
+                json_extract(metadata_json, '$.zone_type')
+              ) = 'fvg'
+        """,
+        (symbol, zone_id),
+    ).fetchone()
+    return int(row["count"] or 0)
+
+
+def candidate_zone_type(candidate: dict[str, Any]) -> str | None:
+    metadata = candidate.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("zone_type"):
+        return str(metadata["zone_type"])
+    if candidate.get("zone_type"):
+        return str(candidate["zone_type"])
+    return None
 
 
 def utc_now_iso() -> str:

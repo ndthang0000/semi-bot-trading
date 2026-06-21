@@ -7,7 +7,9 @@ from tempfile import TemporaryDirectory
 from semi_bot_trading.backtest import (
     BacktestResult,
     BacktestTrade,
+    apply_fvg_trade_count,
     apply_zone_loss_cooldown,
+    candidates_after_fvg_trade_count,
     candidates_after_zone_loss_cooldown,
     exit_on_candle,
     load_backtest_candles,
@@ -134,6 +136,23 @@ class BacktestTest(unittest.TestCase):
         apply_zone_loss_cooldown(cooldown, backtest_trade(primary_zone_id="zone-a", pnl_r=2.0), exit_index=10, cooldown_candles=12)
 
         self.assertEqual({}, cooldown)
+
+    def test_fvg_trade_count_blocks_third_trade_for_same_zone(self) -> None:
+        counts: dict[str, int] = {}
+        fvg_candidate = {"primary_zone_id": "zone-a", "metadata": {"zone_type": "fvg"}}
+        support_candidate = {"primary_zone_id": "zone-a", "metadata": {"zone_type": "support"}}
+        fvg_trade = backtest_trade(primary_zone_id="zone-a", pnl_r=2.0)
+        fvg_trade.metadata["candidate_metadata"] = {"zone_type": "fvg"}
+
+        apply_fvg_trade_count(counts, fvg_trade, max_trades_per_zone=2)
+        self.assertEqual([fvg_candidate], candidates_after_fvg_trade_count([fvg_candidate], counts, max_trades_per_zone=2))
+
+        apply_fvg_trade_count(counts, fvg_trade, max_trades_per_zone=2)
+        self.assertEqual([], candidates_after_fvg_trade_count([fvg_candidate], counts, max_trades_per_zone=2))
+        self.assertEqual(
+            [support_candidate],
+            candidates_after_fvg_trade_count([support_candidate], counts, max_trades_per_zone=2),
+        )
 
     def test_persisted_backtest_trade_is_visible_in_chart_payload(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -153,7 +153,7 @@ reject_stop_mode = "zone"
 rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
-min_stop_atr = 1.2
+min_stop_atr = 1.5
 max_stop_distance = 30.0
 # If both full-zone and reaction-wick stops are too wide, use 1.8x entry-timeframe
 # ATR (M15 in runtime) as the final stop layer instead of blocking. This fallback may exceed
@@ -178,6 +178,8 @@ macro_gate_enabled = true
 # Separate macro gate toggle for FVG zones only.
 # Set to false to research FVG zones without macro trend filtering.
 fvg_macro_gate_enabled = true
+# Cap accepted trades per FVG zone. 0 disables the cap.
+fvg_max_trades_per_zone = 2
 confluence_score_bonus = 0.08
 
 [strategy.playbooks.sr_breakout_v1]

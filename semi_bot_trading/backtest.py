@@ -188,6 +188,8 @@ def run_strategy_backtest_replay(
     replay_start = candle_decision_time(candles[0])
     next_available_index: dict[str, int] = {}
     zone_loss_cooldown_until: dict[str, int] = {}
+    fvg_trade_counts: dict[str, int] = {}
+    fvg_max_trades_per_zone = config.strategy.zone_reaction_v2_fvg_max_trades_per_zone
     trades: list[BacktestTrade] = []
     for signal_index in range(effective_warmup, len(candles) - 1):
         signal_time = candle_decision_time(candles[signal_index])
@@ -211,6 +213,7 @@ def run_strategy_backtest_replay(
                 if candidate["status"] == "eligible"
             ]
         candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, signal_index)
+        candidates = candidates_after_fvg_trade_count(candidates, fvg_trade_counts, fvg_max_trades_per_zone)
         best_by_playbook = best_candidates_by_playbook(candidates)
         for candidate in best_by_playbook:
             playbook = str(candidate["playbook"])
@@ -229,6 +232,7 @@ def run_strategy_backtest_replay(
             trades.append(trade)
             exit_index = candle_index_by_time(candles, trade.exit_time)
             next_available_index[playbook] = max(exit_index + 1, signal_index + 1)
+            apply_fvg_trade_count(fvg_trade_counts, trade, fvg_max_trades_per_zone)
             apply_zone_loss_cooldown(zone_loss_cooldown_until, trade, exit_index, zone_loss_cooldown_candles)
 
     return BacktestResult(
@@ -324,6 +328,8 @@ def run_strategy_backtest_incremental(
     timeline = build_incremental_timeline(conn, config, symbol, candles, include_human_zones=include_human_zones, allowed_playbooks=allowed_playbooks, allowed_zone_types=allowed_zone_types)
     next_available_index: dict[str, int] = {}
     zone_loss_cooldown_until: dict[str, int] = {}
+    fvg_trade_counts: dict[str, int] = {}
+    fvg_max_trades_per_zone = config.strategy.zone_reaction_v2_fvg_max_trades_per_zone
     trades: list[BacktestTrade] = []
     for signal_index in range(effective_warmup, len(candles) - 1):
         signal_time = candle_decision_time(candles[signal_index])
@@ -334,6 +340,7 @@ def run_strategy_backtest_incremental(
         candidate_zones = rank_active_zones(timeline.zones_at(signal_time), last_close)
         candidates = [candidate for candidate in timeline.setup_candidates_at(signal_time, signal_index, candidate_zones) if candidate["status"] == "eligible"]
         candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, signal_index)
+        candidates = candidates_after_fvg_trade_count(candidates, fvg_trade_counts, fvg_max_trades_per_zone)
         best_by_playbook = best_candidates_by_playbook(candidates)
         for candidate in best_by_playbook:
             playbook = str(candidate["playbook"])
@@ -352,6 +359,7 @@ def run_strategy_backtest_incremental(
             trades.append(trade)
             exit_index = candle_index_by_time(candles, trade.exit_time)
             next_available_index[playbook] = max(exit_index + 1, signal_index + 1)
+            apply_fvg_trade_count(fvg_trade_counts, trade, fvg_max_trades_per_zone)
             apply_zone_loss_cooldown(zone_loss_cooldown_until, trade, exit_index, zone_loss_cooldown_candles)
 
     return BacktestResult(
@@ -392,6 +400,8 @@ def run_incremental_backtest_chunks(
     next_available_index: dict[str, int] = {}
     zone_loss_cooldown_until: dict[str, int] = {}
     zone_loss_cooldown_candles = config.backtest.zone_loss_cooldown_candles
+    fvg_trade_counts: dict[str, int] = {}
+    fvg_max_trades_per_zone = config.strategy.zone_reaction_v2_fvg_max_trades_per_zone
     segment_start = warmup_candles
     while segment_start < len(candles) - 1:
         segment_end = min(len(candles) - 1, segment_start + INCREMENTAL_CHUNK_SIZE)
@@ -426,6 +436,7 @@ def run_incremental_backtest_chunks(
                 if candidate["status"] == "eligible"
             ]
             candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, global_signal_index)
+            candidates = candidates_after_fvg_trade_count(candidates, fvg_trade_counts, fvg_max_trades_per_zone)
             for candidate in best_candidates_by_playbook(candidates):
                 playbook = str(candidate["playbook"])
                 if global_signal_index < next_available_index.get(playbook, 0):
@@ -436,6 +447,7 @@ def run_incremental_backtest_chunks(
                 trades.append(trade)
                 local_exit_index = candle_index_by_time(chunk_candles, trade.exit_time)
                 next_available_index[playbook] = max(chunk_start + local_exit_index + 1, global_signal_index + 1)
+                apply_fvg_trade_count(fvg_trade_counts, trade, fvg_max_trades_per_zone)
                 apply_zone_loss_cooldown(
                     zone_loss_cooldown_until,
                     trade,
@@ -472,6 +484,45 @@ def apply_zone_loss_cooldown(
         zone_loss_cooldown_until.get(trade.primary_zone_id, 0),
         exit_index + 1 + cooldown_candles,
     )
+
+
+def candidates_after_fvg_trade_count(
+    candidates: list[dict[str, Any]],
+    fvg_trade_counts: dict[str, int],
+    max_trades_per_zone: int,
+) -> list[dict[str, Any]]:
+    if max_trades_per_zone <= 0 or not fvg_trade_counts:
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if not (
+            candidate_zone_type(candidate) == "fvg"
+            and str(candidate.get("primary_zone_id") or "") in fvg_trade_counts
+            and fvg_trade_counts[str(candidate.get("primary_zone_id") or "")] >= max_trades_per_zone
+        )
+    ]
+
+
+def apply_fvg_trade_count(
+    fvg_trade_counts: dict[str, int],
+    trade: BacktestTrade,
+    max_trades_per_zone: int,
+) -> None:
+    if max_trades_per_zone <= 0 or not trade.primary_zone_id:
+        return
+    candidate_metadata = trade.metadata.get("candidate_metadata") if isinstance(trade.metadata, dict) else {}
+    if isinstance(candidate_metadata, dict) and candidate_metadata.get("zone_type") == "fvg":
+        fvg_trade_counts[trade.primary_zone_id] = fvg_trade_counts.get(trade.primary_zone_id, 0) + 1
+
+
+def candidate_zone_type(candidate: dict[str, Any]) -> str | None:
+    metadata = candidate.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("zone_type"):
+        return str(metadata["zone_type"])
+    if candidate.get("zone_type"):
+        return str(candidate["zone_type"])
+    return None
 
 
 @dataclass
