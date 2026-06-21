@@ -3,7 +3,14 @@ from __future__ import annotations
 from sqlite3 import Connection
 from typing import Any
 
-from .chart import CHART_PAYLOAD_VERSION, build_atr_snapshot, load_chart_candles, load_chart_trades, load_chart_zones
+from .chart import (
+    CHART_PAYLOAD_VERSION,
+    build_atr_snapshot,
+    build_rsi_snapshot,
+    load_chart_candles,
+    load_chart_trades,
+    load_chart_zones,
+)
 from .config import AppConfig
 from .context import percentile_rank, rolling_average, score_bias_from_structure, score_macro_trend, true_ranges
 from .price_action import detect_price_action_patterns
@@ -203,6 +210,7 @@ def build_realtime_replay_payload(
             "zones": chart_zones,
             "contexts": contexts,
             "atr": build_atr_snapshot(conn, symbol, ["H1", "M15"], period=14, end=range_end),
+            "rsi": build_rsi_snapshot(conn, symbol, ["H1"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
         },

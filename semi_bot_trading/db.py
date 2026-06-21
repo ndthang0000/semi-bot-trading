@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS trade_orders (
     source TEXT NOT NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(trade_idea_id) REFERENCES trade_ideas(id)
 );
 
@@ -334,6 +335,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "structure_points", "status", "TEXT NOT NULL DEFAULT 'confirmed'")
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "backtest_runs", "engine", "TEXT NOT NULL DEFAULT 'incremental'")
+    ensure_column(conn, "trade_orders", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
     backfill_price_zone_expiry(conn)
     expire_price_zones(conn)
     conn.commit()

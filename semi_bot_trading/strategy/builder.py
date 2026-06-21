@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from ..config import StrategyConfig
+from ..indicators import latest_rsi_snapshot
 from ..zones import latest_atr
 from .helpers import (
     allowed_zone_types_for_playbooks,
@@ -110,6 +112,13 @@ def build_setup_candidates(
     if allowed_playbooks is not None:
         candidates = [candidate for candidate in candidates if candidate.playbook in allowed_playbooks]
 
+    rsi_metadata = _h1_rsi_metadata(context_timeframe, context_candles)
+    if rsi_metadata:
+        candidates = [
+            replace(candidate, metadata={**candidate.metadata, **rsi_metadata})
+            for candidate in candidates
+        ]
+
     ranked = sorted(candidates, key=lambda item: (status_rank(item.status), item.score), reverse=True)
     selected: list[SetupCandidate] = []
     eligible_count = 0
@@ -131,3 +140,15 @@ def build_setup_candidates(
         selected.append(candidate)
 
     return [candidate.to_chart() for candidate in selected]
+
+
+def _h1_rsi_metadata(context_timeframe: str, context_candles: list[dict[str, Any]] | None) -> dict[str, Any]:
+    if context_timeframe != "H1" or not context_candles:
+        return {}
+    snapshot = latest_rsi_snapshot(context_candles, period=14, slope_periods=(3, 5))
+    return {
+        "rsi_h1": snapshot.get("value"),
+        "rsi_h1_slope_3": snapshot.get("slope_3"),
+        "rsi_h1_slope_5": snapshot.get("slope_5"),
+        "rsi_h1_as_of": snapshot.get("as_of"),
+    }

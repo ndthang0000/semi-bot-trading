@@ -311,6 +311,17 @@ Confluence khong bat buoc. Neu zone dang xet overlap/gan voi zone hop le khac tr
 - `confluence_types`
 - `confluence_score_bonus`
 
+## Research Telemetry
+
+Strategy hien dang luu them RSI H1 vao metadata de phuc vu thong ke sau nay, chua dung RSI de filter entry:
+
+- `rsi_h1`: RSI Wilder period 14 tren H1 closed candles tai thoi diem signal.
+- `rsi_h1_slope_3`: `rsi_h1` hien tai tru RSI H1 cua 3 nen H1 truoc.
+- `rsi_h1_slope_5`: `rsi_h1` hien tai tru RSI H1 cua 5 nen H1 truoc.
+- `rsi_h1_as_of`: H1 candle time duoc dung de tinh RSI.
+
+Replay/backtest truyen point-in-time H1 candles vao strategy engine, nen cac field nay khong duoc tinh bang candle tuong lai. UI cung hien thi box `RSI(14)` tren context strip de human doc nhanh RSI H1 va slope 3/5.
+
 ## Commands
 
 Backtest rieng Zone Reaction V2:

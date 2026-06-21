@@ -6,6 +6,7 @@ from sqlite3 import Connection
 from typing import Any
 
 from .context import score_macro_trend
+from .indicators import latest_rsi_snapshot
 from .strategy import build_setup_candidates
 from .zones import CandleSlice, latest_atr
 
@@ -128,6 +129,22 @@ def build_atr_snapshot(
             "value": round(float(atr_value), 5) if atr_value is not None else None,
             "as_of": candles[-1]["time"] if candles else None,
         }
+    return result
+
+
+def build_rsi_snapshot(
+    conn: Connection,
+    symbol: str,
+    timeframes: list[str],
+    period: int = 14,
+    slope_periods: tuple[int, ...] = (3, 5),
+    end: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    limit = period + max(slope_periods, default=0) + 5
+    for timeframe in timeframes:
+        candles = load_chart_candles(conn, symbol, timeframe, limit, end=end)
+        result[timeframe] = latest_rsi_snapshot(candles, period=period, slope_periods=slope_periods)
     return result
 
 
@@ -598,6 +615,7 @@ def build_chart_payload(
             "zones": zones,
             "contexts": contexts,
             "atr": build_atr_snapshot(conn, symbol, ["H1", "M15"], period=14, end=range_end),
+            "rsi": build_rsi_snapshot(conn, symbol, ["H1"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
         },

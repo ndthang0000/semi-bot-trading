@@ -38,6 +38,14 @@ export type AtrSnapshot = {
   as_of: string | null;
 };
 
+export type RsiSnapshot = {
+  period: number;
+  value: number | null;
+  slope_3: number | null;
+  slope_5: number | null;
+  as_of: string | null;
+};
+
 export type StructurePoint = {
   id: string;
   time: string;
@@ -174,6 +182,7 @@ export type ChartPayload = {
     zones: PriceZone[];
     contexts: Record<string, Record<string, MarketContext>>;
     atr: Record<string, AtrSnapshot>;
+    rsi: Record<string, RsiSnapshot>;
     trades: TradeOrder[];
     setup_candidates: SetupCandidate[];
   };

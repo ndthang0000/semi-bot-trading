@@ -6,7 +6,7 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from sqlite3 import Connection
 from typing import Any
 
@@ -34,6 +34,21 @@ class LiveWorkerState:
     loop_count: int = 0
 
 
+@dataclass(frozen=True)
+class ExecutionPricingPlan:
+    order_type: str
+    entry_price: float
+    stop_loss: float
+    take_profit: list[float]
+    current_price: float
+    signal_entry: float
+    signal_stop_loss: float
+    signal_take_profit: list[float]
+    drift: float
+    adverse_drift: float
+    drift_action: str
+
+
 def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -> None:
     if env.mt5_login is None or not env.mt5_password or not env.mt5_server:
         raise RuntimeError("MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER are required")
@@ -58,9 +73,29 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
                 logger.exception("Live iteration error — retrying next cycle")
             if once:
                 return
-            time.sleep(env.poll_seconds)
+            time.sleep(_seconds_until_next_poll(env.poll_at_seconds, fallback_seconds=env.poll_seconds))
     finally:
         client.shutdown()
+
+
+def _seconds_until_next_poll(poll_at_seconds: tuple[int, ...], *, fallback_seconds: float) -> float:
+    """Sleep until the next configured second mark, e.g. :01, :16, :45.
+
+    The fallback keeps old deployments working if LIVE_POLL_AT_SECONDS is
+    intentionally cleared or invalidated before env parsing.
+    """
+    if not poll_at_seconds:
+        return max(float(fallback_seconds), 0.1)
+    marks = tuple(sorted({second for second in poll_at_seconds if 0 <= second <= 59}))
+    if not marks:
+        return max(float(fallback_seconds), 0.1)
+    now = datetime.now()
+    for second in marks:
+        target = now.replace(second=second, microsecond=0)
+        if target > now:
+            return max((target - now).total_seconds(), 0.1)
+    target = (now + timedelta(minutes=1)).replace(second=marks[0], microsecond=0)
+    return max((target - now).total_seconds(), 0.1)
 
 
 def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
@@ -435,6 +470,25 @@ def maybe_execute_candidates(
 ) -> None:
     if not env.execution_enabled:
         return
+    # Bug #5: broker_symbol is resolved at startup; if resolution failed the
+    # string is empty.  Executing against an empty symbol would query wrong
+    # prices and place orders on a random/default instrument.
+    if not broker_symbol:
+        logger.warning("maybe_execute_candidates: broker_symbol is empty — skipping execution")
+        return
+    # Spread guard: wide spreads (e.g. during news) mean any fill will be at a
+    # significantly worse price than the signal. Skip the whole cycle and retry
+    # on the next poll; the candidate stays eligible and drift logic handles any
+    # price movement that occurred during the wait.
+    if env.max_spread_price > 0:
+        current_spread = client.get_current_spread(broker_symbol)
+        if current_spread > env.max_spread_price:
+            logger.warning(
+                "maybe_execute_candidates: spread=%.2f > max=%.2f — skipping cycle",
+                current_spread,
+                env.max_spread_price,
+            )
+            return
     if client.positions_count(broker_symbol) >= env.max_open_positions_per_symbol:
         return
     if live_trade_count_today(conn, config.symbol) >= env.max_trades_per_day:
@@ -451,13 +505,27 @@ def maybe_execute_candidates(
     candidate = sorted(eligible, key=lambda item: float(item.get("score") or 0.0), reverse=True)[0]
     if live_candidate_already_executed(conn, str(candidate["id"])):
         return
+    try:
+        pricing_plan = build_execution_pricing_plan(client, broker_symbol, candidate, env.max_entry_drift_price)
+    except Exception as exc:
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="critical",
+            entity_ids=[str(candidate.get("id"))],
+            payload={"title": "Trade pricing failed", "reason": [str(exc)]},
+            dedupe_key=f"pricing-failed:{candidate.get('id')}:{datetime.now(UTC).date().isoformat()}",
+        )
+        return
     # Risk check: compute lot size and verify daily loss limit
     risk_manager = build_risk_manager(client, env.account_profile, env.risk_per_trade_pct)
     assessment = risk_manager.assess_trade(
         conn=conn,
         symbol=config.symbol,
-        entry=candidate.get("entry"),
-        stop_loss=candidate.get("stop_loss"),
+        entry=pricing_plan.entry_price,
+        stop_loss=pricing_plan.stop_loss,
         broker_symbol=broker_symbol,
     )
     if not assessment.allowed:
@@ -476,7 +544,95 @@ def maybe_execute_candidates(
             dedupe_key=f"risk-block:{candidate.get('id')}:{datetime.now(UTC).date().isoformat()}",
         )
         return
-    execute_candidate(conn, config, env, client, candidate, broker_symbol, lot_size=assessment.lot_size)
+    execute_candidate(
+        conn,
+        config,
+        env,
+        client,
+        candidate,
+        broker_symbol,
+        lot_size=assessment.lot_size,
+        pricing_plan=pricing_plan,
+    )
+
+
+def build_execution_pricing_plan(
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    candidate: dict[str, Any],
+    max_entry_drift_price: float,
+) -> ExecutionPricingPlan:
+    signal_entry = float(candidate.get("entry") or 0.0)
+    signal_stop = float(candidate.get("stop_loss") or 0.0)
+    raw_take_profit = candidate.get("take_profit") or []
+    signal_take_profit = [float(value) for value in raw_take_profit if value is not None]
+    if signal_entry <= 0 or signal_stop <= 0 or not signal_take_profit:
+        raise ValueError("candidate is missing entry, stop_loss, or take_profit")
+
+    direction = str(candidate["direction"])
+    side = "buy" if direction == "long" else "sell"
+    current_price = client.current_price_for_side(broker_symbol, side)
+    direction_sign = 1.0 if direction == "long" else -1.0
+    drift = (current_price - signal_entry) * direction_sign
+    adverse_drift = max(drift, 0.0)
+
+    entry_price = signal_entry
+    stop_loss = signal_stop
+    take_profit = signal_take_profit
+    order_type = "market"
+    drift_action = "market_favorable_or_flat"
+
+    # Positive drift means price moved against the planned entry. Small adverse
+    # drift is still marketable, but risk must be recalculated from the real
+    # entry. Large adverse drift becomes a limit order at the original signal.
+    if max_entry_drift_price > 0 and adverse_drift > max_entry_drift_price:
+        order_type = "limit"
+        drift_action = "limit_after_adverse_drift"
+    elif max_entry_drift_price > 0 and adverse_drift > 0:
+        entry_price = current_price
+        original_risk = abs(signal_entry - signal_stop)
+        if original_risk <= 0:
+            raise ValueError("candidate stop distance must be positive")
+        stop_loss = entry_price - original_risk if direction == "long" else entry_price + original_risk
+        # Reprice ALL TP levels, preserving each one's individual RR ratio.
+        repriced_tps: list[float] = []
+        for tp in signal_take_profit:
+            tp_rr = abs(tp - signal_entry) / original_risk if original_risk > 0 else 2.0
+            repriced_tp = (
+                entry_price + original_risk * tp_rr
+                if direction == "long"
+                else entry_price - original_risk * tp_rr
+            )
+            repriced_tps.append(repriced_tp)
+        take_profit = repriced_tps if repriced_tps else signal_take_profit
+        drift_action = "market_repriced_adverse"
+
+    return ExecutionPricingPlan(
+        order_type=order_type,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        current_price=current_price,
+        signal_entry=signal_entry,
+        signal_stop_loss=signal_stop,
+        signal_take_profit=signal_take_profit,
+        drift=drift,
+        adverse_drift=adverse_drift,
+        drift_action=drift_action,
+    )
+
+
+def _candidate_rr(candidate: dict[str, Any], entry: float, stop_loss: float, take_profit: float) -> float:
+    try:
+        rr = float(candidate.get("risk_reward") or 0.0)
+    except (TypeError, ValueError):
+        rr = 0.0
+    if rr > 0:
+        return rr
+    risk = abs(entry - stop_loss)
+    if risk <= 0:
+        return 2.0
+    return max(abs(take_profit - entry) / risk, 0.1)
 
 
 def execute_candidate(
@@ -487,13 +643,31 @@ def execute_candidate(
     candidate: dict[str, Any],
     broker_symbol: str,
     lot_size: float | None = None,
+    pricing_plan: ExecutionPricingPlan | None = None,
 ) -> None:
     # lot_size from risk manager takes precedence; fall back to env fixed volume
     volume = lot_size if lot_size is not None else env.live_order_volume
-    stop_loss = candidate.get("stop_loss")
-    take_profit = candidate.get("take_profit") or []
-    if stop_loss is None or not take_profit:
+
+    # Use repriced values from pricing_plan when available; fall back to raw
+    # candidate signal values only if pricing_plan was somehow not built.
+    if pricing_plan is not None:
+        exec_entry = pricing_plan.entry_price
+        exec_stop = pricing_plan.stop_loss
+        exec_take_profit = pricing_plan.take_profit
+        exec_order_type = pricing_plan.order_type
+    else:
+        exec_entry = float(candidate.get("entry") or 0)
+        exec_stop_raw = candidate.get("stop_loss")
+        if exec_stop_raw is None:
+            return
+        exec_stop = float(exec_stop_raw)
+        raw_tp = candidate.get("take_profit") or []
+        exec_take_profit = [float(v) for v in raw_tp if v is not None]
+        exec_order_type = "market"
+
+    if exec_stop <= 0 or not exec_take_profit:
         return
+
     direction = str(candidate["direction"])
     side = "buy" if direction == "long" else "sell"
     now = utc_now_iso()
@@ -504,7 +678,19 @@ def execute_candidate(
         "source": "live",
         "setup_id": candidate["id"],
         "candidate": candidate,
+        "pricing_plan": {
+            "order_type": exec_order_type,
+            "entry_price": exec_entry,
+            "stop_loss": exec_stop,
+            "take_profit": exec_take_profit,
+            "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
+            "adverse_drift": pricing_plan.adverse_drift if pricing_plan else 0.0,
+        },
     }
+
+    # ── Persist intent BEFORE calling MT5 (Bug #4 guard against double-execution).
+    # status='pending' blocks live_candidate_already_executed on the next poll even
+    # if the process crashes between MT5 call and the post-execution DB commit.
     conn.execute(
         """
         INSERT OR IGNORE INTO trade_ideas (
@@ -524,8 +710,8 @@ def execute_candidate(
             json.dumps(candidate.get("related_zone_ids") or []),
             json.dumps(context_snapshot, sort_keys=True),
             candidate.get("entry"),
-            stop_loss,
-            json.dumps(take_profit),
+            exec_stop,
+            json.dumps(exec_take_profit),
             candidate.get("risk_reward") or 0,
             now,
         ),
@@ -537,7 +723,7 @@ def execute_candidate(
             entry_price, stop_loss, take_profit_json, risk_snapshot_json,
             context_snapshot_json, requested_by, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'market', ?, NULL, ?, ?, ?, ?, 'strategy', 'approved', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'strategy', 'pending', ?, ?)
         """,
         (
             request_id,
@@ -545,34 +731,45 @@ def execute_candidate(
             config.symbol,
             broker_symbol,
             side,
+            exec_order_type,
             volume,
-            stop_loss,
-            json.dumps(take_profit),
+            exec_entry,
+            exec_stop,
+            json.dumps(exec_take_profit),
             json.dumps({"execution_enabled": True, "volume": volume, "account_profile": env.account_profile}, sort_keys=True),
             json.dumps(context_snapshot, sort_keys=True),
             now,
             now,
         ),
     )
+    # Commit the pending intent before touching MT5.  From this point forward,
+    # live_candidate_already_executed will return True and prevent duplicate orders.
+    conn.commit()
+
     try:
-        result = client.place_market_order(
-            MT5OrderRequest(
-                broker_symbol=broker_symbol,
-                side=side,
-                volume=volume,
-                stop_loss=float(stop_loss),
-                take_profit=float(take_profit[0]),
-                comment=f"{candidate['playbook']} {candidate['id'][:8]}",
-                magic=env.mt5_magic,
-            )
+        mt5_request = MT5OrderRequest(
+            broker_symbol=broker_symbol,
+            side=side,
+            volume=volume,
+            stop_loss=exec_stop,
+            take_profit=exec_take_profit[0],
+            comment=f"{candidate['playbook']} {candidate['id'][:8]}",
+            magic=env.mt5_magic,
+            entry_price=exec_entry if exec_order_type == "limit" else None,
         )
+        if exec_order_type == "limit":
+            result = client.place_limit_order(mt5_request)
+        else:
+            result = client.place_market_order(mt5_request)
+
         # Store both the order ticket and the deal ticket.  In hedging mode the
         # order ticket becomes the position_id; in netting mode the deal ticket
         # may differ.  Persisting both lets sync_closed_positions fall back to
         # the deal ticket when the order-ticket lookup returns nothing.
         broker_order_id = str(result.get("order") or "")
         broker_deal_id = str(result.get("deal") or "")
-        fill_price = float(result.get("price") or candidate.get("entry") or 0)
+        # Limit orders report price=0 until filled; fall back to exec_entry.
+        fill_price = float(result.get("price") or exec_entry)
         conn.execute(
             """
             UPDATE execution_requests
@@ -581,6 +778,7 @@ def execute_candidate(
             """,
             (broker_order_id or broker_deal_id, json.dumps(result, sort_keys=True, default=str), now, request_id),
         )
+        order_status = "pending_fill" if exec_order_type == "limit" else "filled"
         conn.execute(
             """
             INSERT INTO trade_orders (
@@ -588,16 +786,18 @@ def execute_candidate(
                 stop_loss, take_profit_json, quantity, opened_at, source,
                 metadata_json, created_at
             )
-            VALUES (?, ?, ?, ?, 'market', 'filled', ?, ?, ?, ?, ?, 'live', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?)
             """,
             (
                 order_id,
                 idea_id,
                 config.symbol,
                 side,
+                exec_order_type,
+                order_status,
                 fill_price,
-                stop_loss,
-                json.dumps(take_profit),
+                exec_stop,
+                json.dumps(exec_take_profit),
                 volume,
                 now,
                 json.dumps(
@@ -616,13 +816,15 @@ def execute_candidate(
             severity="critical",
             entity_ids=[idea_id, order_id],
             payload={
-                "title": "Live order sent",
+                "title": "Live limit order placed" if exec_order_type == "limit" else "Live order sent",
                 "setup": {
                     "playbook": candidate["playbook"],
                     "direction": direction,
+                    "order_type": exec_order_type,
                     "entry": fill_price,
-                    "stop_loss": stop_loss,
-                    "take_profit": take_profit,
+                    "stop_loss": exec_stop,
+                    "take_profit": exec_take_profit,
+                    "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
                 },
                 "reason": [f"MT5 broker order id: {broker_order_id}"],
             },
@@ -668,7 +870,7 @@ def sync_closed_positions(
         """
         SELECT id, side, entry_price, stop_loss, quantity, metadata_json
         FROM trade_orders
-        WHERE symbol = ? AND status = 'filled' AND source = 'live'
+        WHERE symbol = ? AND status IN ('filled', 'pending_fill') AND source = 'live'
         """,
         (config.symbol,),
     ).fetchall()
@@ -819,18 +1021,20 @@ def new_zone_rows(conn: Connection, symbol: str, before_ids: set[str]) -> list[A
 
 
 def live_candidate_already_executed(conn: Connection, candidate_id: str) -> bool:
-    """Return True only when a *successful* execution request exists for this candidate.
+    """Return True when a non-failed execution request exists for this candidate.
 
-    Checking trade_ideas alone was insufficient: a failed order (status='failed')
-    still creates a trade_idea row, which permanently blocked retries on the same
-    candidate even though the order was never actually filled.
+    'pending'  — intent committed to DB before MT5 call; process may have crashed
+                 mid-flight. Treat as already-in-progress to prevent duplicate orders.
+    'sent'     — MT5 accepted the order. Definitive in-flight or filled trade.
+    'failed'   — MT5 rejected or an exception occurred; allow a retry on the same
+                 candidate (the setup may still be eligible).
     """
     row = conn.execute(
         """
         SELECT er.id
         FROM trade_ideas ti
         JOIN execution_requests er ON er.trade_idea_id = ti.id
-        WHERE ti.id = ? AND er.status = 'sent'
+        WHERE ti.id = ? AND er.status IN ('pending', 'sent')
         """,
         (f"live-idea-{candidate_id}",),
     ).fetchone()
@@ -838,14 +1042,22 @@ def live_candidate_already_executed(conn: Connection, candidate_id: str) -> bool
 
 
 def live_trade_count_today(conn: Connection, symbol: str) -> int:
+    """Count live trades that actually reached MT5 today.
+
+    Counts trade_orders rows (source='live', status in filled/pending_fill/closed)
+    instead of execution_requests to avoid ghost counts from 'sent' rows whose
+    MT5 fill was later rejected or never confirmed.  'pending_fill' covers limit
+    orders that have been placed but not yet filled.
+    """
     day_prefix = datetime.now(UTC).date().isoformat()
     row = conn.execute(
         """
         SELECT COUNT(*) AS count
-        FROM execution_requests
+        FROM trade_orders
         WHERE symbol = ?
-          AND status IN ('sent', 'filled')
-          AND created_at >= ?
+          AND source = 'live'
+          AND status IN ('filled', 'pending_fill', 'closed')
+          AND opened_at >= ?
         """,
         (symbol, day_prefix),
     ).fetchone()
@@ -933,6 +1145,9 @@ def _build_trade_metadata(
         "zone_source": cm.get("zone_source", "unknown"),
         "zone_detector": cm.get("zone_detector", "unknown"),
         "atr": cm.get("atr"),
+        "rsi_h1": cm.get("rsi_h1"),
+        "rsi_h1_slope_3": cm.get("rsi_h1_slope_3"),
+        "rsi_h1_slope_5": cm.get("rsi_h1_slope_5"),
         "h1_bias": cm.get("h1_bias", "unknown"),
         "h1_regime": cm.get("h1_regime", "unknown"),
         "confluence_count": cm.get("confluence_count"),

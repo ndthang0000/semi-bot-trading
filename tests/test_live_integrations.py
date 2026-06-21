@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as _timezone
+UTC = _timezone.utc
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -132,8 +134,12 @@ class LiveIntegrationTest(unittest.TestCase):
                 max_open_positions_per_symbol=1,
                 max_trades_per_day=10,
                 poll_seconds=15.0,
+                poll_at_seconds=(1, 16, 31, 46),
+                max_entry_drift_price=2.0,
+                max_spread_price=2.0,
                 live_evaluate_intrabar=False,
                 chart_url_base="http://127.0.0.1:5173",
+                account_label="Test",
                 account_profile="personal",
                 risk_per_trade_pct=None,
                 secret_key="",

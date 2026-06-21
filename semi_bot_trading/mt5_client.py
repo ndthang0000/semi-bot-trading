@@ -25,6 +25,7 @@ class MT5OrderRequest:
     take_profit: float
     comment: str
     magic: int
+    entry_price: float | None = None
 
 
 class MT5BrokerClient:
@@ -109,14 +110,11 @@ class MT5BrokerClient:
 
     def place_market_order(self, request: MT5OrderRequest) -> dict[str, Any]:
         self.ensure_symbol(request.broker_symbol)
-        tick = self.mt5.symbol_info_tick(request.broker_symbol)
-        if tick is None:
-            raise RuntimeError(f"MT5 symbol_info_tick failed: {self.mt5.last_error()}")
         side = request.side.lower()
         if side not in {"buy", "sell"}:
             raise ValueError("side must be buy or sell")
         order_type = self.mt5.ORDER_TYPE_BUY if side == "buy" else self.mt5.ORDER_TYPE_SELL
-        price = float(tick.ask if side == "buy" else tick.bid)
+        price = self.current_price_for_side(request.broker_symbol, side)
         payload = {
             "action": self.mt5.TRADE_ACTION_DEAL,
             "symbol": request.broker_symbol,
@@ -138,6 +136,59 @@ class MT5BrokerClient:
         retcode = int(data.get("retcode", -1))
         if retcode != self.mt5.TRADE_RETCODE_DONE:
             raise RuntimeError(f"MT5 order rejected retcode={retcode}: {data}")
+        return data
+
+    def current_price_for_side(self, broker_symbol: str, side: str) -> float:
+        self.ensure_symbol(broker_symbol)
+        tick = self.mt5.symbol_info_tick(broker_symbol)
+        if tick is None:
+            raise RuntimeError(f"MT5 symbol_info_tick failed: {self.mt5.last_error()}")
+        side = side.lower()
+        if side not in {"buy", "sell"}:
+            raise ValueError("side must be buy or sell")
+        return float(tick.ask if side == "buy" else tick.bid)
+
+    def get_current_spread(self, broker_symbol: str) -> float:
+        """Return the current bid/ask spread in price units (e.g. USD for XAUUSD).
+
+        Returns 0.0 if tick data is unavailable rather than raising, so callers
+        can treat a missing tick as a zero spread and let other guards handle it.
+        """
+        self.ensure_symbol(broker_symbol)
+        tick = self.mt5.symbol_info_tick(broker_symbol)
+        if tick is None:
+            return 0.0
+        return max(0.0, float(tick.ask) - float(tick.bid))
+
+    def place_limit_order(self, request: MT5OrderRequest) -> dict[str, Any]:
+        self.ensure_symbol(request.broker_symbol)
+        side = request.side.lower()
+        if side not in {"buy", "sell"}:
+            raise ValueError("side must be buy or sell")
+        if request.entry_price is None:
+            raise ValueError("entry_price is required for limit orders")
+        order_type = self.mt5.ORDER_TYPE_BUY_LIMIT if side == "buy" else self.mt5.ORDER_TYPE_SELL_LIMIT
+        payload = {
+            "action": self.mt5.TRADE_ACTION_PENDING,
+            "symbol": request.broker_symbol,
+            "volume": request.volume,
+            "type": order_type,
+            "price": float(request.entry_price),
+            "sl": request.stop_loss,
+            "tp": request.take_profit,
+            "deviation": 30,
+            "magic": request.magic,
+            "comment": request.comment[:31],
+            "type_time": self.mt5.ORDER_TIME_GTC,
+            "type_filling": self.order_filling_mode(request.broker_symbol),
+        }
+        result = self.mt5.order_send(payload)
+        if result is None:
+            raise RuntimeError(f"MT5 order_send failed: {self.mt5.last_error()}")
+        data = result._asdict()
+        retcode = int(data.get("retcode", -1))
+        if retcode not in {self.mt5.TRADE_RETCODE_DONE, self.mt5.TRADE_RETCODE_PLACED}:
+            raise RuntimeError(f"MT5 limit order rejected retcode={retcode}: {data}")
         return data
 
     def get_account_info(self) -> dict[str, Any]:

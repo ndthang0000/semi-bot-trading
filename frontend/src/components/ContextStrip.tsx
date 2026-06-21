@@ -44,7 +44,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const priceChange = readCurrentPriceChange(payload);
 
   return (
-    <section className="grid grid-cols-[210px_220px_170px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3">
+    <section className="grid grid-cols-[210px_220px_170px_150px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3">
       <BiasCard bias={bias} context={biasContext} priceChange={priceChange} onEdit={() => setEditing("bias")} />
       <ContextCard
         label="H1 Regime"
@@ -54,6 +54,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
       />
       <MacroTrendCard context={macroContext} />
       <AtrCard atr={payload?.layers.atr} />
+      <RsiCard rsi={payload?.layers.rsi} />
       <ContextCard label="Range" value={payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--"} />
 
       {editing && h1?.[editing] ? (
@@ -87,6 +88,31 @@ function AtrCard({ atr }: { atr: ChartPayload["layers"]["atr"] | undefined }) {
         <div>
           <div className="text-slate-500">M15</div>
           <div className="font-semibold text-slate-100">{formatAtrValue(m15?.value)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RsiCard({ rsi }: { rsi: ChartPayload["layers"]["rsi"] | undefined }) {
+  const h1 = rsi?.H1;
+  const period = h1?.period ?? 14;
+
+  return (
+    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2" title={`Relative Strength Index (${period}) and H1 RSI slope`}>
+      <div className="text-xs text-slate-500">RSI({period})</div>
+      <div className="mt-1 grid grid-cols-3 gap-2 text-[11px] leading-tight">
+        <div>
+          <div className="text-slate-500">H1</div>
+          <div className="font-semibold text-slate-100">{formatRsiValue(h1?.value)}</div>
+        </div>
+        <div>
+          <div className="text-slate-500">S3</div>
+          <div className={`font-semibold ${slopeToneClass(h1?.slope_3)}`}>{formatRsiSlope(h1?.slope_3)}</div>
+        </div>
+        <div>
+          <div className="text-slate-500">S5</div>
+          <div className={`font-semibold ${slopeToneClass(h1?.slope_5)}`}>{formatRsiSlope(h1?.slope_5)}</div>
         </div>
       </div>
     </div>
@@ -450,4 +476,22 @@ function readCurrentPriceChange(payload: ChartPayload | undefined): { currentPri
 
 function formatAtrValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function formatRsiValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(1) : "--";
+}
+
+function formatRsiSlope(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
+function slopeToneClass(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) < 0.05) {
+    return "text-slate-100";
+  }
+  return value > 0 ? "text-emerald-300" : "text-rose-300";
 }

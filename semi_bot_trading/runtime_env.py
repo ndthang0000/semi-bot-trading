@@ -23,6 +23,9 @@ class RuntimeEnv:
     max_open_positions_per_symbol: int
     max_trades_per_day: int
     poll_seconds: float
+    poll_at_seconds: tuple[int, ...]
+    max_entry_drift_price: float
+    max_spread_price: float
     live_evaluate_intrabar: bool
     chart_url_base: str
     # Account identity — human-readable label shown in dashboard; unique per MT5 account
@@ -71,6 +74,9 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         max_open_positions_per_symbol=env_int("MAX_OPEN_POSITIONS_PER_SYMBOL", 1) or 1,
         max_trades_per_day=env_int("MAX_TRADES_PER_DAY", 10) or 10,
         poll_seconds=env_float("LIVE_POLL_SECONDS", 15.0) or 15.0,
+        poll_at_seconds=env_seconds_tuple("LIVE_POLL_AT_SECONDS", (1, 16, 31, 46)),
+        max_entry_drift_price=env_float("MAX_ENTRY_DRIFT_PRICE", 2.0) or 0.0,
+        max_spread_price=env_float("MAX_SPREAD_PRICE", 2.0) or 0.0,
         live_evaluate_intrabar=env_bool("LIVE_EVALUATE_INTRABAR", False),
         chart_url_base=env_text("CHART_URL_BASE", "http://127.0.0.1:5173") or "http://127.0.0.1:5173",
         account_label=env_text("ACCOUNT_LABEL", "Default") or "Default",
@@ -131,3 +137,23 @@ def env_list(name: str, default: list[str]) -> list[str]:
     if not value:
         return default
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def env_seconds_tuple(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    """Parse comma-separated second marks within a minute, e.g. 1,16,45."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    seconds: list[int] = []
+    for raw in value.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        try:
+            second = int(item)
+        except ValueError:
+            raise ValueError(f"{name} must contain integer seconds") from None
+        if second < 0 or second > 59:
+            raise ValueError(f"{name} values must be between 0 and 59")
+        seconds.append(second)
+    return tuple(sorted(set(seconds))) or default
