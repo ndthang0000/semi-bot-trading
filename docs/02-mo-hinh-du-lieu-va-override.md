@@ -362,7 +362,7 @@ Audit trail giúp:
 ```http
 GET /api/context/effective?symbol=XAUUSD&timeframe=H1
 GET /api/chart?symbol=XAUUSD&timeframe=M15&limit=300
-GET /api/zones?symbol=XAUUSD&timeframe=M15&effective=true
+GET /api/zones?symbol=XAUUSD&timeframe=H1&effective=true
 POST /api/overrides
 PATCH /api/overrides/{id}/revoke
 GET /api/entities/{type}/{id}/history
@@ -374,7 +374,7 @@ Trong MVP local, endpoint chart có thể được mô phỏng bằng CLI:
 python3 -m semi_bot_trading.cli export-chart-json --timeframe M15 --limit 300 --output var/chart_xauusd_m15.json
 ```
 
-Payload chart phải gom candles, structure, zones, contexts theo timeframe và trades. Điều này giúp UI render một màn hình replay/backtest nhất quán, gồm cả H1 context trên chart M15.
+Payload chart phải gom candles theo chart timeframe, nhưng price zones và structure trade context luôn là H1. Điều này giúp UI xem được M15 trigger candles mà không biến M15 thành price-zone context.
 
 ## Decisions hiện tại
 

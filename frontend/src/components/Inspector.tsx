@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteManualZone, fetchTradeHistory, updateTradeReview, updateZoneOverride } from "../api/chart";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { ChartPayload, PriceZone, SetupCandidate, TradeOrder, TradeReview, ZoneTradeMode, ZoneTypeVisibility } from "../types";
+import type { ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, TradeOrder, TradeReview, ZoneTradeMode, ZoneTypeVisibility } from "../types";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
@@ -109,7 +109,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
           totalZones={zones.length}
         />
       ) : activeTab === "setups" ? (
-        <SetupsPanel candidates={setupCandidates} zones={zones} />
+        <SetupsPanel candidates={setupCandidates} m15Triggers={payload?.layers.m15_triggers ?? []} zones={zones} />
       ) : (
         <TradesTab
           focusTrade={focusTrade}
@@ -511,7 +511,7 @@ function ZonesTab({
                 }}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className={zoneTitleClass(zone)}>{zoneDisplayName(zone)}</span>
+                  <span className={zoneTitleClass(zone)}>{zone.timeframe} {zoneDisplayName(zone)}</span>
                   <span className="text-xs text-slate-400">{zone.status}</span>
                 </div>
                 <div className="mt-1 text-xs text-slate-400">
@@ -526,7 +526,7 @@ function ZonesTab({
   );
 }
 
-function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zones: PriceZone[] }) {
+function SetupsPanel({ candidates, m15Triggers, zones }: { candidates: SetupCandidate[]; m15Triggers: M15TriggerOverlay[]; zones: PriceZone[] }) {
   const focusZone = useChartStore((state) => state.focusZone);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
   const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
@@ -548,6 +548,13 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
     if (!zone) return;
     focusZone(zone);
   };
+  const triggerByCandidateId = useMemo(() => {
+    const result = new Map<string, M15TriggerOverlay>();
+    for (const trigger of m15Triggers) {
+      if (trigger.candidate_id) result.set(trigger.candidate_id, trigger);
+    }
+    return result;
+  }, [m15Triggers]);
 
   return (
     <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
@@ -566,65 +573,17 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
                 <div key={status} className="grid min-w-0 gap-1.5">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{statusLabel(status)}</div>
                   {items.map((candidate) => (
-                    <div
+                    <SetupCard
                       key={candidate.id}
-                      className={`min-w-0 overflow-hidden rounded-md border p-3 text-left transition ${
-                        focusedCandidateId === candidate.id
-                          ? "ring-1 ring-cyan-300"
-                          : ""
-                      } ${setupCardClass(candidate.status)}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => focusCandidate(candidate)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        focusCandidate(candidate);
-                      }}
-                    >
-                      <div className="flex min-w-0 items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{playbookLabel(candidate.playbook)}</span>
-                        <span className={candidate.direction === "long" ? "text-xs text-emerald-300" : "text-xs text-rose-300"}>
-                          {candidate.direction}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
-                        <span>score {candidate.score.toFixed(2)}</span>
-                        <span>{candidate.zone_reaction_state}</span>
-                        {candidate.risk_reward ? <span>RR {candidate.risk_reward.toFixed(2)}</span> : null}
-                      </div>
-                      {candidate.entry && candidate.stop_loss ? (
-                        <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
-                          <span>Entry {price(candidate.entry)}</span>
-                          <span>SL {price(candidate.stop_loss)}</span>
-                          {candidate.take_profit[0] ? <span>TP {price(candidate.take_profit[0])}</span> : null}
-                        </div>
-                      ) : null}
-                      <div className="mt-1 truncate text-[11px] text-slate-500">
-                        {(candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--")}
-                      </div>
-                      <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
-                      <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-                        <SetupAction
-                          label={watchedIds.has(candidate.id) ? "Watching" : "Watch"}
-                          onClick={() =>
-                            setWatchedIds((current) => toggleSetValue(current, candidate.id))
-                          }
-                        />
-                        <SetupAction
-                          label="Reject"
-                          onClick={() =>
-                            setRejectedIds((current) => addSetValue(current, candidate.id))
-                          }
-                        />
-                        <SetupAction
-                          label="Disable PB"
-                          onClick={() =>
-                            setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook))
-                          }
-                        />
-                      </div>
-                    </div>
+                      candidate={candidate}
+                      focused={focusedCandidateId === candidate.id}
+                      trigger={triggerByCandidateId.get(candidate.id) ?? null}
+                      watched={watchedIds.has(candidate.id)}
+                      onFocus={() => focusCandidate(candidate)}
+                      onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
+                      onReject={() => setRejectedIds((current) => addSetValue(current, candidate.id))}
+                      onDisablePlaybook={() => setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook))}
+                    />
                   ))}
                 </div>
               ) : null,
@@ -633,6 +592,83 @@ function SetupsPanel({ candidates, zones }: { candidates: SetupCandidate[]; zone
         </div>
       )}
     </section>
+  );
+}
+
+function SetupCard({
+  candidate,
+  focused,
+  trigger,
+  watched,
+  onFocus,
+  onToggleWatch,
+  onReject,
+  onDisablePlaybook,
+}: {
+  candidate: SetupCandidate;
+  focused: boolean;
+  trigger: M15TriggerOverlay | null;
+  watched: boolean;
+  onFocus: () => void;
+  onToggleWatch: () => void;
+  onReject: () => void;
+  onDisablePlaybook: () => void;
+}) {
+  return (
+    <div
+      className={`min-w-0 overflow-hidden rounded-md border p-3 text-left transition ${
+        focused ? "ring-1 ring-cyan-300" : ""
+      } ${setupCardClass(candidate.status)}`}
+      role="button"
+      tabIndex={0}
+      onClick={onFocus}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onFocus();
+      }}
+    >
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{playbookLabel(candidate.playbook)}</span>
+        <span className={candidate.direction === "long" ? "text-xs text-emerald-300" : "text-xs text-rose-300"}>
+          {candidate.direction}
+        </span>
+      </div>
+      <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-400">
+        <span>score {candidate.score.toFixed(2)}</span>
+        <span>{candidate.zone_reaction_state}</span>
+        {candidate.risk_reward ? <span>RR {candidate.risk_reward.toFixed(2)}</span> : null}
+      </div>
+      {candidate.entry && candidate.stop_loss ? (
+        <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
+          <span>Entry {price(candidate.entry)}</span>
+          <span>SL {price(candidate.stop_loss)}</span>
+          {candidate.take_profit[0] ? <span>TP {price(candidate.take_profit[0])}</span> : null}
+        </div>
+      ) : null}
+      {trigger ? (
+        <div className="mt-2 rounded border border-cyan-400/20 bg-cyan-400/[0.06] px-2 py-1.5 text-[11px] text-cyan-50">
+          <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1">
+            <span className="font-semibold">M15 trigger</span>
+            <span>{compactTime(trigger.time)}</span>
+            <span>O {price(trigger.open)}</span>
+            <span>H {price(trigger.high)}</span>
+            <span>L {price(trigger.low)}</span>
+            <span>C {price(trigger.close)}</span>
+          </div>
+          <div className="mt-1 truncate text-cyan-100/70">{trigger.reason[0] ?? candidate.reason[0] ?? "--"}</div>
+        </div>
+      ) : null}
+      <div className="mt-1 truncate text-[11px] text-slate-500">
+        {(candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--")}
+      </div>
+      <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
+      <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+        <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} />
+        <SetupAction label="Reject" onClick={onReject} />
+        <SetupAction label="Disable PB" onClick={onDisablePlaybook} />
+      </div>
+    </div>
   );
 }
 
@@ -1090,7 +1126,7 @@ function ZoneEditor({
   return (
     <div className="grid gap-3 text-sm">
       <div className="grid gap-2">
-        <Detail label="Type" value={zoneDisplayName(zone)} />
+        <Detail label="Type" value={`${zone.timeframe} ${zoneDisplayName(zone)}`} />
         <Detail label="Source" value={zone.source} />
         <Detail label="Start" value={compactTime(zone.visual_start)} />
         <Detail label="End" value={compactTime(zone.visual_end)} />

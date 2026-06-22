@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from tempfile import TemporaryDirectory
 import unittest
 from pathlib import Path
@@ -17,6 +18,14 @@ from semi_bot_trading.zones import (
 
 
 class ZoneDetectorTest(unittest.TestCase):
+    def test_replace_price_zones_rejects_m15_zones(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                with self.assertRaisesRegex(ValueError, "H1-context only"):
+                    replace_price_zones(conn, "XAUUSD", "M15", "fvg_v1", [])
+
     def test_replace_price_zones_preserves_human_adjusted_bot_zone(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

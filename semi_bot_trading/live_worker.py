@@ -306,7 +306,7 @@ def run_live_detectors(conn: Connection, config: AppConfig, symbol: str) -> None
         trend_min_bos=config.regime.trend_min_bos,
         range_efficiency_max=config.regime.range_efficiency_max,
     )
-    for timeframe in (config.bias.timeframe, config.strategy.timeframe):
+    for timeframe in (config.bias.timeframe,):
         detect_and_store_support_resistance_zones(
             conn,
             symbol=symbol,

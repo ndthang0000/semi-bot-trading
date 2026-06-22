@@ -5,6 +5,7 @@ from typing import Any
 
 from .chart import (
     CHART_PAYLOAD_VERSION,
+    build_m15_trigger_overlays,
     build_atr_snapshot,
     build_rsi_snapshot,
     load_chart_candles,
@@ -67,23 +68,23 @@ def build_realtime_replay_payload(
     structure_points.sort(key=lambda point: (point.event_time, point.detector, point.point_type))
 
     zone_swings = structure_points_to_zone_swings(swing_points)
-    candle_slices = chart_candles_to_slices(candles)
+    structure_slices = chart_candles_to_slices(structure_candles)
     zones = detect_support_resistance_zones(
         zone_swings[-config.support_resistance.lookback_swings :],
         symbol,
-        timeframe,
+        structure_timeframe,
         config.support_resistance.tolerance_pct,
         config.support_resistance.min_zone_width,
         config.support_resistance.min_touches,
         config.support_resistance.max_zones,
-        candle_slices,
+        structure_slices,
         config.support_resistance.atr_width_multiplier,
         candidate_close_break_buffer=config.zone_lifecycle.close_break_buffer,
         candidate_close_break_buffer_atr_multiplier=config.zone_lifecycle.close_break_buffer_atr_multiplier,
     )
     zones = apply_lifecycle_to_zones(
         zones,
-        candle_slices,
+        structure_slices,
         config.zone_lifecycle.close_break_buffer,
         config.zone_lifecycle.recent_touch_lookback_candles,
         config.zone_lifecycle.age_decay_per_100_candles,
@@ -103,26 +104,26 @@ def build_realtime_replay_payload(
         config.zone_lifecycle.false_break_parent_weight_multiplier,
     )
     smc_detected = detect_smc_zones(
-        candle_slices,
+        structure_slices,
         zone_swings[-config.smc_zones.lookback_swings :],
         symbol,
-        timeframe,
+        structure_timeframe,
         fvg_middle_candle_atr_multiplier=config.smc_zones.fvg_middle_candle_atr_multiplier,
         fvg_gap_atr_ratio=config.smc_zones.fvg_gap_atr_ratio,
         fvg_min_width_atr_ratio=config.smc_zones.fvg_min_width_atr_ratio,
         fvg_max_width_atr_ratio=config.smc_zones.fvg_max_width_atr_ratio,
         fvg_third_candle_follow_through_required=config.smc_zones.fvg_third_candle_follow_through_required,
         fvg_third_candle_min_body_ratio=config.smc_zones.fvg_third_candle_min_body_ratio,
-        fvg_max_active_days=config.smc_zones.fvg_max_active_days_for(timeframe),
-        fvg_decay_start_days=config.smc_zones.fvg_decay_start_days_for(timeframe),
+        fvg_max_active_days=config.smc_zones.fvg_max_active_days_for(structure_timeframe),
+        fvg_decay_start_days=config.smc_zones.fvg_decay_start_days_for(structure_timeframe),
         ob_displacement_atr_multiplier=config.smc_zones.ob_displacement_atr_multiplier,
         ob_min_body_ratio=config.smc_zones.ob_min_body_ratio,
         ob_min_width_atr_ratio=config.smc_zones.ob_min_width_atr_ratio,
         ob_max_width_atr_ratio=config.smc_zones.ob_max_width_atr_ratio,
         ob_require_structure_break=config.smc_zones.ob_require_structure_break,
         ob_merge_overlap_ratio=config.smc_zones.ob_merge_overlap_ratio,
-        ob_max_active_days=config.smc_zones.ob_max_active_days_for(timeframe),
-        ob_decay_start_days=config.smc_zones.ob_decay_start_days_for(timeframe),
+        ob_max_active_days=config.smc_zones.ob_max_active_days_for(structure_timeframe),
+        ob_decay_start_days=config.smc_zones.ob_decay_start_days_for(structure_timeframe),
         max_fvg_zones=config.smc_zones.max_fvg_zones,
         max_order_block_zones=config.smc_zones.max_order_block_zones,
         max_liquidity_zones=config.smc_zones.max_liquidity_zones,
@@ -136,7 +137,7 @@ def build_realtime_replay_payload(
     if include_human_zones:
         human_zones = [
             zone
-            for zone in load_chart_zones(conn, symbol, timeframe, range_start, range_end, active_only=active_zones_only)
+            for zone in load_chart_zones(conn, symbol, structure_timeframe, range_start, range_end, active_only=active_zones_only)
             if zone["detector"] == "human_manual_v1"
         ]
 
@@ -191,6 +192,16 @@ def build_realtime_replay_payload(
             # view candles may be M15, which would diverge from the backtest.
             context_candles=structure_candles,
         )
+    m15_triggers = build_m15_trigger_overlays(
+        conn,
+        symbol,
+        timeframe,
+        structure_timeframe,
+        range_start,
+        range_end,
+        chart_zones,
+        setup_candidates,
+    )
     payload = {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,
@@ -213,6 +224,7 @@ def build_realtime_replay_payload(
             "rsi": build_rsi_snapshot(conn, symbol, ["H1"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
+            "m15_triggers": m15_triggers,
         },
     }
     if replay_enabled:

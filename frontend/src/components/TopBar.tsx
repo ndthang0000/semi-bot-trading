@@ -24,6 +24,10 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
   const setAutoRefreshEnabled = useChartStore((state) => state.setAutoRefreshEnabled);
   const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
   const autoRefreshActive = mode === "dashboard" && autoRefreshEnabled && startIndex === null;
+  // H1 is the only zone/context timeframe; manual zones on M15 are rejected by
+  // the API (422), so the draw entry point is disabled while viewing M15 to
+  // avoid a dead-end UX (draw -> submit -> error).
+  const canAddEntity = timeframe === "H1";
 
   return (
     <header className="flex h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4">
@@ -35,13 +39,22 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
       </div>
 
       <div className="flex min-w-0 items-center gap-2">
-        <div className="flex h-9 items-center overflow-hidden rounded-md border border-ink-700 bg-ink-850">
+        <div
+          className={`flex h-9 items-center overflow-hidden rounded-md border border-ink-700 bg-ink-850 ${
+            canAddEntity ? "" : "opacity-50"
+          }`}
+        >
           <span className="flex h-full items-center px-2 text-cyan-300">
             <Plus size={15} />
           </span>
           <select
-            className="h-full min-w-[150px] bg-transparent pr-2 text-sm text-slate-100 outline-none"
-            title="Add entity: select a type, then drag a box on the chart"
+            className="h-full min-w-[150px] bg-transparent pr-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed"
+            disabled={!canAddEntity}
+            title={
+              canAddEntity
+                ? "Add entity: select a type, then drag a box on the chart"
+                : "Manual zones can only be drawn on the H1 chart"
+            }
             value={addEntityKind ?? ""}
             onChange={(event) => setAddEntityKind((event.target.value || null) as AddEntityKind | null)}
           >
@@ -90,8 +103,8 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
           value={timeframe}
           onChange={(event) => setTimeframe(event.target.value as Timeframe)}
         >
-          <option value="M15">M15</option>
           <option value="H1">H1</option>
+          <option value="M15">M15</option>
         </select>
         <input
           className="h-9 w-24 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none"

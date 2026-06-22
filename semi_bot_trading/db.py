@@ -336,6 +336,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "backtest_runs", "engine", "TEXT NOT NULL DEFAULT 'incremental'")
     ensure_column(conn, "trade_orders", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+    remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)
     expire_price_zones(conn)
     conn.commit()
@@ -354,6 +355,16 @@ def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, d
                 raise
 
 
+def remove_non_h1_price_zones(conn: sqlite3.Connection) -> None:
+    """Hard-delete legacy lower-timeframe zones.
+
+    H1 is the only trade/context zone timeframe. M15 data remains available in
+    candles, structure, and price_action for triggers, but price_zones below H1
+    are intentionally removed so they cannot be displayed or traded later.
+    """
+    conn.execute("DELETE FROM price_zones WHERE UPPER(timeframe) != 'H1'")
+
+
 def backfill_price_zone_expiry(conn: sqlite3.Connection) -> None:
     """Give legacy active zones a finite validity window.
 
@@ -363,7 +374,7 @@ def backfill_price_zone_expiry(conn: sqlite3.Connection) -> None:
     now = datetime.now(UTC)
     rows = conn.execute(
         """
-        SELECT id, timeframe, zone_type, start_time, detected_at, created_at,
+        SELECT id, timeframe, zone_type, source, start_time, detected_at, created_at,
                updated_at, end_time, metadata_json
         FROM price_zones
         WHERE status = 'active'
@@ -371,15 +382,13 @@ def backfill_price_zone_expiry(conn: sqlite3.Connection) -> None:
         """
     ).fetchall()
     for row in rows:
-        base = first_parseable_datetime(
-            row["updated_at"],
-            row["created_at"],
-            row["detected_at"],
-            row["start_time"],
-        ) or now
+        metadata = json_loads(row["metadata_json"], {})
+        if row["source"] == "bot" and row["zone_type"] in {"support", "resistance"}:
+            base = first_parseable_datetime(row["detected_at"], row["start_time"], row["created_at"], row["updated_at"]) or now
+        else:
+            base = first_parseable_datetime(row["updated_at"], row["created_at"], row["detected_at"], row["start_time"]) or now
         expiry = base + default_price_zone_expiry(row["zone_type"], row["timeframe"])
         expiry_iso = expiry.replace(microsecond=0).isoformat()
-        metadata = json_loads(row["metadata_json"], {})
         metadata["expired_rule"] = "default_expiry_backfill"
         metadata["default_expiry_backfill"] = {
             "base_time": base.replace(microsecond=0).isoformat(),
@@ -401,6 +410,55 @@ def backfill_price_zone_expiry(conn: sqlite3.Connection) -> None:
             WHERE id = ?
             """,
             (expiry_iso, end_time, status, json.dumps(metadata, sort_keys=True), row["id"]),
+        )
+    repair_bot_sr_default_expiry_backfill(conn, now)
+
+
+def repair_bot_sr_default_expiry_backfill(conn: sqlite3.Connection, now: datetime) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, timeframe, zone_type, start_time, detected_at, valid_until, metadata_json
+        FROM price_zones
+        WHERE status = 'active'
+          AND source = 'bot'
+          AND zone_type IN ('support', 'resistance')
+          AND valid_until IS NOT NULL
+        """
+    ).fetchall()
+    for row in rows:
+        metadata = json_loads(row["metadata_json"], {})
+        if metadata.get("expired_rule") != "default_expiry_backfill":
+            continue
+        base = first_parseable_datetime(row["detected_at"], row["start_time"])
+        if base is None:
+            continue
+        expiry = base + default_price_zone_expiry(row["zone_type"], row["timeframe"])
+        expiry_iso = expiry.replace(microsecond=0).isoformat()
+        try:
+            current_expiry = parse_datetime_utc(str(row["valid_until"]))
+        except ValueError:
+            current_expiry = None
+        if current_expiry is not None and current_expiry <= expiry:
+            continue
+        metadata["expired_rule"] = "default_expiry_backfill"
+        metadata["default_expiry_repaired"] = {
+            "base_time": base.replace(microsecond=0).isoformat(),
+            "previous_valid_until": row["valid_until"],
+            "zone_type": row["zone_type"],
+            "timeframe": row["timeframe"],
+        }
+        status = "expired" if expiry <= now else "active"
+        conn.execute(
+            """
+            UPDATE price_zones
+            SET valid_until = ?,
+                end_time = ?,
+                status = ?,
+                metadata_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (expiry_iso, expiry_iso, status, json.dumps(metadata, sort_keys=True), row["id"]),
         )
 
 

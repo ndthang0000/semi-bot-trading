@@ -1036,6 +1036,8 @@ def replace_price_zones(
     detector: str,
     zones: list[PriceZone],
 ) -> int:
+    if timeframe.upper() != "H1":
+        raise ValueError(f"price_zones are H1-context only; refusing to write {timeframe} zones for {detector}")
     protected_rows = protected_price_zone_rows(conn, symbol, timeframe, detector)
     protected_ids = {str(row["id"]) for row in protected_rows}
     if detector == SR_DETECTOR:

@@ -79,12 +79,11 @@ Detect support/resistance zones:
 
 ```bash
 python3 -m semi_bot_trading.cli detect-zones --timeframe H1
-python3 -m semi_bot_trading.cli detect-zones --timeframe M15
 python3 -m semi_bot_trading.cli apply-zone-lifecycle --timeframe H1
 python3 -m semi_bot_trading.cli zone-summary --timeframe H1 --limit 10
 ```
 
-Detect SMC zones và M15 price action:
+Detect H1 SMC zones và M15 price action:
 
 ```bash
 python3 -m semi_bot_trading.cli detect-smc-zones --timeframe H1

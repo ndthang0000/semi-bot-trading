@@ -32,6 +32,17 @@ export type ChartCandle = {
   volume: number | null;
 };
 
+export type M15TriggerOverlay = ChartCandle & {
+  zone_id: string;
+  zone_type: string;
+  reaction_state: string;
+  candidate_id: string | null;
+  status: "touch" | SetupCandidate["status"] | string;
+  direction: string | null;
+  reason: string[];
+  metadata: Record<string, unknown>;
+};
+
 export type AtrSnapshot = {
   period: number;
   value: number | null;
@@ -62,6 +73,7 @@ export type StructurePoint = {
 export type PriceZone = {
   id: string;
   type: string;
+  timeframe: Timeframe;
   direction: "bullish" | "bearish" | string;
   detector: string;
   status: string;
@@ -185,6 +197,7 @@ export type ChartPayload = {
     rsi: Record<string, RsiSnapshot>;
     trades: TradeOrder[];
     setup_candidates: SetupCandidate[];
+    m15_triggers: M15TriggerOverlay[];
   };
   replay?: {
     enabled: boolean;

@@ -24,16 +24,17 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual(payload["timeframe"], "M15")
         self.assertEqual(len(payload["layers"]["candles"]), 2)
         self.assertIn("structure", payload["layers"])
-        self.assertEqual(payload["layers"]["structure_timeframe"], "M15")
+        self.assertEqual(payload["layers"]["structure_timeframe"], "H1")
         self.assertIn("zones", payload["layers"])
         self.assertIn("contexts", payload["layers"])
         self.assertIn("trades", payload["layers"])
         self.assertIn("setup_candidates", payload["layers"])
         self.assertEqual(payload["layers"]["setup_candidates"], [])
-        self.assertEqual(payload["layers"]["zones"][0]["timeframe"], "M15")
+        self.assertEqual(payload["layers"]["zones"][0]["timeframe"], "H1")
         self.assertEqual(payload["layers"]["contexts"]["H1"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["contexts"]["M15"]["bias"]["effective_value"], "bullish")
-        self.assertEqual(payload["layers"]["zones"][0]["visual_end"], "2026-01-08T00:15:00+00:00")
+        self.assertEqual(payload["layers"]["zones"][0]["visual_start"], "2026-01-01T00:00:00+00:00")
+        self.assertEqual(payload["layers"]["zones"][0]["visual_end"], "2027-01-01T00:00:00+00:00")
 
     def test_can_render_m15_chart_with_h1_structure(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -90,7 +91,7 @@ def seed_chart_data(conn) -> None:
             invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
             effective_confidence, effective_weight, status, source, metadata_json
         )
-        VALUES ('z1', 'XAUUSD', 'M15', 'sr_v1', 'support', 'bullish', 1990, 1995,
+        VALUES ('z1', 'XAUUSD', 'H1', 'sr_v1', 'support', 'bullish', 1990, 1995,
                 '2026-01-01T00:00:00+00:00', '2027-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00',
                 '2027-01-01T00:00:00+00:00', NULL, NULL, '2026-01-01T00:00:00+00:00',
                 0.8, 0.7, 0.8, 0.7, 'active', 'bot', ?)

@@ -14,6 +14,7 @@ def compute_zone_reaction_v2_levels(
     atr: float,
     config: StrategyConfig,
     stop_fallback_atr: float | None = None,
+    stop_fallback_atr_timeframe: str | None = None,
     level_metadata: dict[str, Any] | None = None,
 ) -> tuple[float | None, float | None, list[float], float | None]:
     metadata = reaction.metadata
@@ -31,6 +32,7 @@ def compute_zone_reaction_v2_levels(
         wick_stop_states = wick_stop_states | {"reject"}
     stop_source = "reaction_wick" if reaction.state in wick_stop_states else "zone"
     fallback_atr = stop_fallback_atr if stop_fallback_atr is not None else atr
+    fallback_atr_timeframe = stop_fallback_atr_timeframe or "strategy"
     if direction == "long":
         wick_natural_stop = reaction_low - buffer
         zone_natural_stop = min(zone_low, reaction_low) - buffer
@@ -39,16 +41,17 @@ def compute_zone_reaction_v2_levels(
         if should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(min(wick_natural_stop, entry - min_stop_distance), 5)
             stop_source = "reaction_wick"
-        if should_fallback_reject_stop_to_atr(reaction, config, entry, stop):
+        if should_fallback_reject_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
+            zone, direction, stop_source, stop
+        ):
             stop = round(entry - _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
         if _should_fallback_fvg_stop_to_atr(zone, config, entry, stop):
-            fallback_atr = atr
-            stop = round(entry - _reject_atr_stop_distance(atr, min_stop_distance, config), 5)
+            stop = round(entry - _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
         risk = entry - stop
         if risk <= 0:
-            _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
+            _write_level_metadata(level_metadata, stop_source, fallback_atr, fallback_atr_timeframe, config)
             return entry, stop, [], None
         take_profit = [round(entry + risk * target_rr, 5)]
     else:
@@ -59,19 +62,20 @@ def compute_zone_reaction_v2_levels(
         if should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(max(wick_natural_stop, entry + min_stop_distance), 5)
             stop_source = "reaction_wick"
-        if should_fallback_reject_stop_to_atr(reaction, config, entry, stop):
+        if should_fallback_reject_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
+            zone, direction, stop_source, stop
+        ):
             stop = round(entry + _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
         if _should_fallback_fvg_stop_to_atr(zone, config, entry, stop):
-            fallback_atr = atr
-            stop = round(entry + _reject_atr_stop_distance(atr, min_stop_distance, config), 5)
+            stop = round(entry + _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
         risk = stop - entry
         if risk <= 0:
-            _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
+            _write_level_metadata(level_metadata, stop_source, fallback_atr, fallback_atr_timeframe, config)
             return entry, stop, [], None
         take_profit = [round(entry - risk * target_rr, 5)]
-    _write_level_metadata(level_metadata, stop_source, fallback_atr, config)
+    _write_level_metadata(level_metadata, stop_source, fallback_atr, fallback_atr_timeframe, config)
     return entry, stop, take_profit, round(target_rr, 4)
 
 
@@ -107,12 +111,14 @@ def _write_level_metadata(
     level_metadata: dict[str, Any],
     stop_source: str,
     stop_fallback_atr: float,
+    stop_fallback_atr_timeframe: str,
     config: StrategyConfig,
 ) -> None:
     level_metadata.update(
         {
             "stop_source": stop_source,
             "stop_fallback_atr": round(stop_fallback_atr, 5),
+            "stop_fallback_atr_timeframe": stop_fallback_atr_timeframe,
             "stop_fallback_atr_multiplier": config.zone_reaction_v2_reject_atr_stop,
         }
     )
@@ -130,6 +136,16 @@ def _should_fallback_fvg_stop_to_atr(
         and config.zone_reaction_v2_max_stop_distance > 0
         and abs(entry - current_stop) > config.zone_reaction_v2_max_stop_distance
     )
+
+
+def _wick_stop_inside_zone(zone: dict[str, Any], direction: str, stop_source: str, stop: float) -> bool:
+    if stop_source != "reaction_wick":
+        return False
+    zone_low = float(zone["price_low"])
+    zone_high = float(zone["price_high"])
+    if direction == "long":
+        return stop >= zone_low
+    return stop <= zone_high
 
 
 def _reject_atr_stop_distance(atr: float, min_stop_distance: float, config: StrategyConfig) -> float:

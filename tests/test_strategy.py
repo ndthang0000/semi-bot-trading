@@ -122,7 +122,7 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_min_stop_atr=1.5,
     zone_reaction_v2_max_stop_distance=30.0,
     zone_reaction_v2_reject_wide_stop_fallback="atr",
-    zone_reaction_v2_reject_atr_stop=1.8,
+    zone_reaction_v2_reject_atr_stop=1.2,
     zone_reaction_v2_require_trigger_for_fakeout=True,
     zone_reaction_v2_fakeout_max_reaction_depth_atr=1.5,
     zone_reaction_v2_internal_reject_enabled=True,
@@ -264,6 +264,29 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("reject", reaction.state)
         self.assertEqual("long", reaction.direction)
 
+    def test_m15_price_zone_does_not_create_setup_candidate(self) -> None:
+        candles = [
+            candle("00:00", 4220, 4222, 4218, 4221),
+            candle("00:15", 4221, 4223, 4219, 4222),
+            candle("00:30", 4220, 4221.5, 4200.75, 4211.77),
+        ]
+        m15_zone = {
+            **zone("resistance", "bearish", 4215.48, 4239.33),
+            "timeframe": "M15",
+        }
+
+        candidates = build_setup_candidates(
+            symbol="XAUUSD",
+            zones=[m15_zone],
+            contexts=contexts(bias="bearish", regime="ranging", macro_trend="down"),
+            candles=candles,
+            structure_points=[],
+            config=CONFIG,
+            context_timeframe="H1",
+        )
+
+        self.assertEqual([], candidates)
+
     def test_zone_reaction_v2_reject_is_runtime_playbook(self) -> None:
         candles = [
             candle("00:00", 110, 112, 108, 111),
@@ -356,23 +379,30 @@ class StrategyTest(unittest.TestCase):
         self.assertGreater(wick_mode[0]["stop_loss"], 100.0)
         self.assertLess(wick_mode[0]["stop_loss"], 105.5)
 
-    def test_zone_reject_stop_falls_back_to_reaction_wick_when_zone_stop_too_wide(self) -> None:
+    def test_zone_reject_stop_falls_back_to_h1_atr_when_wick_stop_is_inside_zone(self) -> None:
         candles = [
             candle("00:00", 110, 112, 108, 111),
             candle("00:15", 111, 113, 109, 112),
             candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        context_candles = [
+            candle("01:00", 100, 160, 100, 150),
+            candle("02:00", 150, 210, 150, 200),
+            candle("03:00", 200, 260, 200, 250),
+            candle("04:00", 250, 310, 250, 300),
         ]
         zone_too_wide = zone("support", "bullish", 50, 107)
 
         candidates = build_setup_candidates(
             "XAUUSD", [zone_too_wide], contexts("bullish", "trending"), candles,
             [point("pinbar_bullish", "up", "00:30")], CONFIG,
+            context_candles=context_candles,
         )
 
         self.assertEqual("reject", candidates[0]["zone_reaction_state"])
-        self.assertGreater(candidates[0]["stop_loss"], 100.0)
-        self.assertLess(candidates[0]["stop_loss"], 105.5)
-        self.assertLessEqual(abs(candidates[0]["entry"] - candidates[0]["stop_loss"]), 30.0)
+        self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertEqual("H1", candidates[0]["metadata"]["stop_fallback_atr_timeframe"])
+        self.assertLess(candidates[0]["stop_loss"], 50.0)
 
     def test_human_reject_mode_bypasses_macro_gate(self) -> None:
         candles = [
@@ -800,8 +830,8 @@ class StrategyTest(unittest.TestCase):
         )
 
         self.assertEqual(103, entry)
-        self.assertEqual(107.8, stop)
-        self.assertEqual([93.4], take_profit)
+        self.assertEqual(109, stop)
+        self.assertEqual([91], take_profit)
         self.assertEqual(2.0, rr)
 
     def test_zone_reaction_v2_blocks_stop_distance_above_max(self) -> None:
@@ -825,7 +855,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("blocked", candidates[0]["status"])
         self.assertIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
 
-    def test_zone_reaction_v2_wide_reject_stop_can_fallback_to_m15_atr(self) -> None:
+    def test_zone_reaction_v2_wide_reject_stop_can_fallback_to_h1_atr(self) -> None:
         candles = [
             candle("00:00", 108, 109, 107, 108),
             candle("00:15", 108, 108.5, 107.5, 108.1),
@@ -833,10 +863,10 @@ class StrategyTest(unittest.TestCase):
             candle("00:45", 98, 111, 60, 109),
         ]
         context_candles = [
-            candle("2024-01-01 00:00:00", 100, 160, 100, 150),
-            candle("2024-01-01 01:00:00", 150, 210, 150, 200),
-            candle("2024-01-01 02:00:00", 200, 260, 200, 250),
-            candle("2024-01-01 03:00:00", 250, 310, 250, 300),
+            candle("01:00", 100, 160, 100, 150),
+            candle("02:00", 150, 210, 150, 200),
+            candle("03:00", 200, 260, 200, 250),
+            candle("04:00", 250, 310, 250, 300),
         ]
 
         candidates = build_setup_candidates(
@@ -852,14 +882,53 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
-        self.assertEqual(candidates[0]["metadata"]["atr"], candidates[0]["metadata"]["stop_fallback_atr"])
+        self.assertEqual("H1", candidates[0]["metadata"]["stop_fallback_atr_timeframe"])
+        self.assertGreater(candidates[0]["metadata"]["stop_fallback_atr"], candidates[0]["metadata"]["atr"])
         expected_distance = max(
             CONFIG.zone_reaction_v2_min_stop_price,
-            candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
+            candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_min_stop_atr,
+            candidates[0]["metadata"]["stop_fallback_atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
         )
         self.assertAlmostEqual(expected_distance, candidates[0]["entry"] - candidates[0]["stop_loss"], places=4)
 
-    def test_zone_reaction_v2_wide_fvg_stop_falls_back_to_m15_atr(self) -> None:
+    def test_zone_reaction_v2_wide_fvg_stop_falls_back_to_h1_atr(self) -> None:
+        candles = [
+            candle("00:00", 112, 113, 111, 112),
+            candle("00:15", 112, 113, 111, 112),
+            candle("00:30", 110, 111, 80, 90),
+            candle("00:45", 90, 120, 88, 115),
+        ]
+        context_candles = [
+            candle("01:00", 100, 160, 100, 150),
+            candle("02:00", 150, 210, 150, 200),
+            candle("03:00", 200, 260, 200, 250),
+            candle("04:00", 250, 310, 250, 300),
+        ]
+        fvg = zone("fvg", "bullish", 80, 107)
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [fvg],
+            contexts("bullish", "ranging"),
+            candles,
+            [point("pinbar_bullish", "up", "00:45")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertEqual("H1", candidates[0]["metadata"]["stop_fallback_atr_timeframe"])
+        self.assertGreater(candidates[0]["metadata"]["stop_fallback_atr"], candidates[0]["metadata"]["atr"])
+        expected_distance = max(
+            CONFIG.zone_reaction_v2_min_stop_price,
+            candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_min_stop_atr,
+            candidates[0]["metadata"]["stop_fallback_atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
+        )
+        self.assertAlmostEqual(expected_distance, candidates[0]["entry"] - candidates[0]["stop_loss"], places=4)
+
+    def test_zone_reaction_v2_wide_fvg_stop_falls_back_to_strategy_atr_without_context(self) -> None:
         candles = [
             candle("00:00", 112, 113, 111, 112),
             candle("00:15", 112, 113, 111, 112),
@@ -880,9 +949,11 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertEqual("M15", candidates[0]["metadata"]["stop_fallback_atr_timeframe"])
         self.assertEqual(candidates[0]["metadata"]["atr"], candidates[0]["metadata"]["stop_fallback_atr"])
         expected_distance = max(
             CONFIG.zone_reaction_v2_min_stop_price,
+            candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_min_stop_atr,
             candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
         )
         self.assertAlmostEqual(expected_distance, candidates[0]["entry"] - candidates[0]["stop_loss"], places=4)
@@ -1216,7 +1287,7 @@ class StrategyTest(unittest.TestCase):
         self.assertLess(candidates[0]["stop_loss"], wick_candidates[0]["stop_loss"])
         self.assertLess(wick_candidates[0]["stop_loss"], 102)
 
-    def test_sr_breakout_v1_stop_can_use_m15_atr(self) -> None:
+    def test_sr_breakout_v1_stop_can_use_explicit_stop_atr(self) -> None:
         entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(
             "long",
             candle("13:00", 100, 110, 99, 105),

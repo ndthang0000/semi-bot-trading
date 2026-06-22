@@ -85,7 +85,10 @@ export const useChartStore = create<ChartState>()(
       selected: null,
       zoneFocusRequest: null,
       tradeFocusRequest: null,
-      setTimeframe: (timeframe) => set({ timeframe, selected: null }),
+      // Manual zone drawing is H1-only (the API rejects M15 zone creation), so
+      // leaving H1 must cancel any in-progress "add entity" draw mode.
+      setTimeframe: (timeframe) =>
+        set((state) => ({ timeframe, selected: null, addEntityKind: timeframe === "H1" ? state.addEntityKind : null })),
       setLimit: (limit) => set({ limit: Math.min(Math.max(limit, 1), 15000) }),
       setStartIndex: (startIndex) => set({ startIndex: startIndex === null ? null : Math.max(0, Math.floor(startIndex)), selected: null }),
       shiftStartIndex: (delta) =>

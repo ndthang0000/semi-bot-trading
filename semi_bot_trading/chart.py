@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
 from sqlite3 import Connection
 from typing import Any
 
@@ -255,6 +254,8 @@ def load_chart_zones(
     end: str,
     active_only: bool = False,
 ) -> list[dict[str, Any]]:
+    if timeframe.upper() != "H1":
+        return []
     clauses = [
         "symbol = ?",
         "timeframe = ?",
@@ -286,6 +287,12 @@ def load_chart_zones(
     for row in rows:
         metadata = json_loads(row["metadata_json"], {})
         status = row["status"]
+        is_bot_sr = (
+            row["zone_type"] in ("support", "resistance")
+            and row["source"] != "human"
+            and row["detector"] != "human_manual_v1"
+        )
+        visual_start = row["detected_at"] if is_bot_sr and row["detected_at"] else row["start_time"]
         visual_end = row["end_time"]
         invalidated_at = row["invalidated_at"]
         is_human_zone = row["source"] == "human" or metadata.get("human_created") is True
@@ -295,20 +302,14 @@ def load_chart_zones(
         if row["end_time"] is not None and row["end_time"] > end and not deterministic_expiry:
             status = "active"
             invalidated_at = None
-            is_bot_sr = (
-                row["zone_type"] in ("support", "resistance")
-                and row["detector"] != "human_manual_v1"
-            )
             if is_human_zone:
                 # Human-drawn zones keep the exact end_time the user drew, even
                 # when it is in the future beyond the latest candle.
                 visual_end = row["end_time"]
             elif is_bot_sr:
-                # Bot-detected SR zones: extend 7 days from last candle so the
-                # frontend can render them with a fixed end without special-casing.
-                visual_end = (
-                    datetime.fromisoformat(end) + timedelta(days=7)
-                ).replace(microsecond=0).isoformat()
+                # Bot SR zones are born when the detector has enough touches,
+                # and they should never render past their expiry.
+                visual_end = row["valid_until"] or row["end_time"]
             else:
                 visual_end = None
         zones.append(
@@ -322,7 +323,7 @@ def load_chart_zones(
             "source": row["source"],
             "price_low": float(row["price_low"]),
             "price_high": float(row["price_high"]),
-            "visual_start": row["start_time"],
+            "visual_start": visual_start,
             "visual_end": visual_end,
             "valid_from": row["valid_from"],
             "valid_until": row["valid_until"],
@@ -349,6 +350,81 @@ def merge_zones_by_id(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 seen.add(zone_id)
             merged.append(zone)
     return merged
+
+
+def build_m15_trigger_overlays(
+    conn: Connection,
+    symbol: str,
+    chart_timeframe: str,
+    context_timeframe: str,
+    range_start: str,
+    range_end: str,
+    zones: list[dict[str, Any]],
+    setup_candidates: list[dict[str, Any]],
+    include_live_candle: bool = False,
+) -> list[dict[str, Any]]:
+    if chart_timeframe.upper() != context_timeframe.upper() or context_timeframe.upper() != "H1":
+        return []
+    if not zones:
+        return []
+
+    candidates_by_zone_time: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in setup_candidates:
+        zone_id = str(candidate.get("primary_zone_id") or "")
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        reaction_time = str(metadata.get("reaction_candle_time") or "")
+        if zone_id and reaction_time:
+            candidates_by_zone_time[(zone_id, reaction_time)] = candidate
+
+    candles = load_chart_candles(conn, symbol, "M15", 5000, start=range_start, end=range_end)
+    # In latest mode the still-forming M15 candle is the one most likely to be
+    # touching a zone a human just drew, so include it for immediate feedback —
+    # otherwise the marker only appears once that M15 candle closes.
+    if include_live_candle:
+        live_candle = load_live_candle(conn, symbol, "M15")
+        if live_candle is not None and (not candles or live_candle["time"] > candles[-1]["time"]):
+            candles = [*candles, live_candle]
+    overlays: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for candle in candles:
+        high = float(candle["high"])
+        low = float(candle["low"])
+        for zone in zones:
+            zone_id = str(zone.get("id") or "")
+            if not zone_id:
+                continue
+            if high < float(zone["price_low"]) or low > float(zone["price_high"]):
+                continue
+            key = (zone_id, str(candle["time"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidate = candidates_by_zone_time.get(key)
+            metadata = candidate.get("metadata", {}) if candidate else {}
+            overlays.append(
+                {
+                    "time": candle["time"],
+                    "open": candle["open"],
+                    "high": candle["high"],
+                    "low": candle["low"],
+                    "close": candle["close"],
+                    "zone_id": zone_id,
+                    "zone_type": zone.get("type"),
+                    "reaction_state": candidate.get("zone_reaction_state") if candidate else "touch",
+                    "candidate_id": candidate.get("id") if candidate else None,
+                    "status": candidate.get("status") if candidate else "touch",
+                    "reason": list(candidate.get("reason") or [])[:3] if candidate else ["M15 candle touched H1 zone."],
+                    "direction": candidate.get("direction") if candidate else zone.get("direction"),
+                    "metadata": {
+                        "reaction_open": metadata.get("reaction_open"),
+                        "reaction_high": metadata.get("reaction_high"),
+                        "reaction_low": metadata.get("reaction_low"),
+                        "reaction_close": metadata.get("reaction_close"),
+                        "trigger_types": metadata.get("trigger_types"),
+                    },
+                }
+            )
+    return overlays
 
 
 def load_chart_contexts(conn: Connection, symbol: str) -> dict[str, dict[str, dict[str, Any]]]:
@@ -555,8 +631,8 @@ def build_chart_payload(
 
     range_start = candles[0]["time"]
     range_end = candles[-1]["time"]
-    effective_structure_timeframe = structure_timeframe or timeframe
-    zones = load_chart_zones(conn, symbol, timeframe, range_start, range_end, active_only=active_zones_only)
+    effective_structure_timeframe = structure_timeframe or "H1"
+    zones = load_chart_zones(conn, symbol, effective_structure_timeframe, range_start, range_end, active_only=active_zones_only)
     contexts = load_chart_contexts(conn, symbol)
     if macro_trend_config is not None:
         macro_timeframe = str(macro_trend_config.timeframe)
@@ -567,8 +643,10 @@ def build_chart_payload(
                 contexts.setdefault(macro_timeframe, {})["macro_trend"] = live_macro
     setup_candidates: list[dict[str, Any]] = []
     if strategy_config is not None:
-        zone_groups_by_timeframe: dict[str, list[dict[str, Any]]] = {timeframe: zones}
-        candidate_timeframes = candidate_zone_timeframes or {timeframe, effective_structure_timeframe}
+        zone_groups_by_timeframe: dict[str, list[dict[str, Any]]] = {effective_structure_timeframe: zones}
+        # H1 is the only zone/context timeframe. M15 remains the strategy
+        # trigger timeframe, but it must never contribute price_zones.
+        candidate_timeframes = candidate_zone_timeframes or {effective_structure_timeframe}
         for zone_timeframe in sorted(candidate_timeframes):
             if zone_timeframe not in zone_groups_by_timeframe:
                 zone_groups_by_timeframe[zone_timeframe] = load_chart_zones(
@@ -607,6 +685,17 @@ def build_chart_payload(
                 context_candles=context_candles,
             )
             setup_candidates = filter_traded_setup_candidates(conn, symbol, setup_candidates)
+    m15_triggers = build_m15_trigger_overlays(
+        conn,
+        symbol,
+        timeframe,
+        effective_structure_timeframe,
+        range_start,
+        range_end,
+        zones,
+        setup_candidates,
+        include_live_candle=is_latest_mode,
+    )
     return {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,
@@ -629,5 +718,6 @@ def build_chart_payload(
             "rsi": build_rsi_snapshot(conn, symbol, ["H1"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
+            "m15_triggers": m15_triggers,
         },
     }

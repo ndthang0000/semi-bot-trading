@@ -413,7 +413,9 @@ def cmd_context_summary(args: argparse.Namespace) -> None:
 def cmd_detect_zones(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     symbol = args.symbol or config.symbol
-    timeframe = args.timeframe
+    timeframe = args.timeframe.upper()
+    if timeframe != config.bias.timeframe.upper():
+        raise SystemExit(f"Price zones are H1-context only; refusing to detect zones for {timeframe}.")
     sr_config = config.support_resistance
     lifecycle_config = config.zone_lifecycle
     reaction_config = config.zone_reaction
@@ -456,7 +458,9 @@ def cmd_detect_zones(args: argparse.Namespace) -> None:
 def cmd_detect_smc_zones(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     symbol = args.symbol or config.symbol
-    timeframe = args.timeframe
+    timeframe = args.timeframe.upper()
+    if timeframe != config.bias.timeframe.upper():
+        raise SystemExit(f"Price zones are H1-context only; refusing to detect SMC zones for {timeframe}.")
     smc_config = config.smc_zones
     db_path = args.db or config.database
 
@@ -522,7 +526,9 @@ def cmd_detect_smc_zones(args: argparse.Namespace) -> None:
 def cmd_materialize_zones(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     symbol = args.symbol or config.symbol
-    timeframe = args.timeframe
+    timeframe = args.timeframe.upper()
+    if timeframe != config.bias.timeframe.upper():
+        raise SystemExit(f"Price zones are H1-context only; refusing to materialize zones for {timeframe}.")
     detectors = parse_incremental_zone_detectors(args.detectors)
     db_path = args.db or config.database
 

@@ -167,16 +167,12 @@ python -m semi_bot_trading.cli apply-zone-lifecycle --timeframe H1
 
 Detect M15 support/resistance và lifecycle:
 
-```bash
-python -m semi_bot_trading.cli detect-zones --timeframe M15
-python -m semi_bot_trading.cli apply-zone-lifecycle --timeframe M15
-```
+M15 is trigger-only; do not detect or lifecycle price zones on M15.
 
 Detect SMC zones:
 
 ```bash
 python -m semi_bot_trading.cli detect-smc-zones --timeframe H1
-python -m semi_bot_trading.cli detect-smc-zones --timeframe M15
 ```
 
 Materialize SR/FVG giống replay/backtest vào DB cho realtime dashboard:
@@ -208,10 +204,7 @@ python -m semi_bot_trading.cli detect-bias --timeframe H1
 python -m semi_bot_trading.cli detect-regime --timeframe H1
 python -m semi_bot_trading.cli detect-zones --timeframe H1
 python -m semi_bot_trading.cli apply-zone-lifecycle --timeframe H1
-python -m semi_bot_trading.cli detect-zones --timeframe M15
-python -m semi_bot_trading.cli apply-zone-lifecycle --timeframe M15
 python -m semi_bot_trading.cli detect-smc-zones --timeframe H1
-python -m semi_bot_trading.cli detect-smc-zones --timeframe M15
 python -m semi_bot_trading.cli detect-price-action --timeframe M15
 ```
 

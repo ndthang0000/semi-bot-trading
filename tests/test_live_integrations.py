@@ -14,7 +14,7 @@ from semi_bot_trading.candles import Candle, upsert_candles
 from semi_bot_trading.config import load_config
 from semi_bot_trading.alerts import pending_alerts, queue_alert
 from semi_bot_trading.db import connect, init_db
-from semi_bot_trading.live_worker import LiveWorkerState, run_live_iteration
+from semi_bot_trading.live_worker import LiveWorkerState, run_live_detectors, run_live_iteration
 from semi_bot_trading.runtime_env import RuntimeEnv
 from semi_bot_trading.runtime_env import load_runtime_env
 
@@ -178,6 +178,115 @@ class LiveIntegrationTest(unittest.TestCase):
             build_payload.assert_called_once()
             self.assertEqual({"H1"}, build_payload.call_args.kwargs["candidate_zone_timeframes"])
             self.assertEqual([[{"id": "candidate-1", "status": "eligible"}]], execute_calls)
+
+    def test_run_live_detectors_only_builds_zones_for_bias_timeframe(self) -> None:
+        # H1 is the only zone/context timeframe. M15 must still get swing/break
+        # structure (it remains the strategy trigger timeframe) but must never
+        # get SR or SMC price_zones generated for it.
+        config = load_config()
+        self.assertEqual("H1", config.bias.timeframe)
+        self.assertEqual("M15", config.strategy.timeframe)
+
+        with (
+            patch("semi_bot_trading.live_worker.detect_and_store_swing_structure") as swing,
+            patch("semi_bot_trading.live_worker.detect_and_store_break_structure") as breaks,
+            patch("semi_bot_trading.live_worker.detect_and_store_bias"),
+            patch("semi_bot_trading.live_worker.detect_and_store_macro_trend"),
+            patch("semi_bot_trading.live_worker.detect_and_store_regime"),
+            patch("semi_bot_trading.live_worker.detect_and_store_support_resistance_zones") as sr_zones,
+            patch("semi_bot_trading.live_worker.apply_and_store_zone_lifecycle") as lifecycle,
+            patch("semi_bot_trading.live_worker.detect_and_store_smc_zones") as smc_zones,
+            patch("semi_bot_trading.live_worker.detect_and_store_price_action_patterns"),
+            patch("semi_bot_trading.live_worker._load_swing_ids", return_value=set()),
+        ):
+            run_live_detectors(conn=None, config=config, symbol=config.symbol)
+
+            swing_timeframes = {call.args[2] for call in swing.call_args_list}
+            break_timeframes = {call.args[2] for call in breaks.call_args_list}
+            self.assertEqual({"H1", "M15"}, swing_timeframes)
+            self.assertEqual({"H1", "M15"}, break_timeframes)
+
+            sr_timeframes = {call.kwargs["timeframe"] for call in sr_zones.call_args_list}
+            lifecycle_timeframes = {call.kwargs["timeframe"] for call in lifecycle.call_args_list}
+            smc_timeframes = {call.kwargs["timeframe"] for call in smc_zones.call_args_list}
+            self.assertEqual({"H1"}, sr_timeframes)
+            self.assertEqual({"H1"}, lifecycle_timeframes)
+            self.assertEqual({"H1"}, smc_timeframes)
+
+
+    def test_init_db_removes_legacy_m15_price_zones_but_keeps_m15_candles(self) -> None:
+        # H1 is the only zone/context timeframe. init_db's migration must
+        # hard-delete any legacy M15 price_zones row, while leaving M15
+        # candles/structure_points untouched (M15 remains the trigger timeframe).
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                now = datetime.now(UTC).isoformat()
+                conn.execute(
+                    """
+                    INSERT INTO price_zones (
+                        id, symbol, timeframe, detector, zone_type, direction,
+                        price_low, price_high, start_time, valid_from, detected_at, status, source
+                    ) VALUES (?, 'XAUUSD', 'M15', 'sr_v2', 'support', 'bullish', 100, 102, ?, ?, ?, 'active', 'bot')
+                    """,
+                    ("legacy-m15-zone", now, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO price_zones (
+                        id, symbol, timeframe, detector, zone_type, direction,
+                        price_low, price_high, start_time, valid_from, detected_at, status, source
+                    ) VALUES (?, 'XAUUSD', 'H1', 'sr_v2', 'support', 'bullish', 100, 102, ?, ?, ?, 'active', 'bot')
+                    """,
+                    ("h1-zone", now, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO structure_points (
+                        id, symbol, timeframe, detector, status, point_type, price, event_time,
+                        confidence, related_zone_ids_json, metadata_json
+                    ) VALUES ('m15-swing', 'XAUUSD', 'M15', 'swing_v1', 'confirmed', 'swing_high', 101, ?, 1.0, '[]', '{}')
+                    """,
+                    (now,),
+                )
+                upsert_candles(
+                    conn,
+                    [
+                        Candle(
+                            symbol="XAUUSD",
+                            timeframe="M15",
+                            open_time=datetime(2026, 6, 1, tzinfo=UTC),
+                            close_time=datetime(2026, 6, 1, 0, 15, tzinfo=UTC),
+                            open=100,
+                            high=102,
+                            low=99,
+                            close=101,
+                            volume=1,
+                            source="test",
+                        )
+                    ],
+                )
+                conn.commit()
+
+                # Re-running init_db (as the worker does on every startup) must be
+                # idempotent and must not touch M15 candles/structure.
+                init_db(conn)
+
+                zone_rows = conn.execute("SELECT id, timeframe FROM price_zones ORDER BY id").fetchall()
+                candle_count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM candles WHERE symbol = 'XAUUSD' AND timeframe = 'M15'"
+                ).fetchone()["c"]
+                structure_count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM structure_points WHERE symbol = 'XAUUSD' AND timeframe = 'M15'"
+                ).fetchone()["c"]
+            finally:
+                conn.close()
+
+        self.assertEqual([("h1-zone", "H1")], [(row["id"], row["timeframe"]) for row in zone_rows])
+        self.assertEqual(1, candle_count)
+        self.assertEqual(1, structure_count)
 
 
 if __name__ == "__main__":

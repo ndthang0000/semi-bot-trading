@@ -112,7 +112,7 @@ Trong code MVP hiện tại, contract này được phục vụ bởi FastAPI:
 python3 -m semi_bot_trading.cli serve-api --port 8000
 ```
 
-Frontend React/Vite chạy ở `http://127.0.0.1:5173`, dùng TradingView Lightweight Charts và đọc `/api/chart?symbol=XAUUSD&timeframe=M15&limit=300` qua Vite proxy. UI canvas thuần cũ ở `serve-chart` chỉ còn là prototype tham khảo.
+Frontend React/Vite chạy ở `http://127.0.0.1:5173`, dùng TradingView Lightweight Charts và đọc `/api/chart?symbol=XAUUSD&timeframe=H1&limit=300` hoặc `/api/chart?symbol=XAUUSD&timeframe=M15&limit=300` qua Vite proxy. Dù xem M15, zones và structure trade context vẫn là H1; M15 chỉ là candle/trigger view. UI canvas thuần cũ ở `serve-chart` chỉ còn là prototype tham khảo.
 
 ## Workflow chỉnh zone
 

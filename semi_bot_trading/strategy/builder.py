@@ -37,6 +37,13 @@ def build_setup_candidates(
         return []
     candle_slices = chart_candles_to_slices(candles)
     atr = latest_atr(candle_slices, period=config.atr_period) or latest_range(candles) or 1.0
+    context_slices = chart_candles_to_slices(context_candles or [])
+    context_atr = (
+        latest_atr(context_slices, period=config.atr_period)
+        or latest_range(context_candles or [])
+        or atr
+    )
+    context_atr_timeframe = context_timeframe if context_candles else config.timeframe
     last_candle = candles[-1]
     last_close = float(last_candle["close"])
     bias = contexts.get(context_timeframe, {}).get("bias", {})
@@ -55,6 +62,7 @@ def build_setup_candidates(
         zone
         for zone in zones
         if (allowed_zone_types is None or str(zone.get("type")) in allowed_zone_types)
+        and str(zone.get("timeframe") or context_timeframe).upper() == context_timeframe.upper()
         and not zone_trade_disabled_after_sweep(zone)
     ]
 
@@ -85,6 +93,8 @@ def build_setup_candidates(
                 config,
                 as_of=str(last_candle["time"]),
                 macro_trend=macro_trend_value,
+                stop_fallback_atr=context_atr,
+                stop_fallback_atr_timeframe=context_atr_timeframe,
             )
         )
 

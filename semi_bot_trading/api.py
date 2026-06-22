@@ -186,7 +186,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     @app.get("/api/chart")
     def chart(
         symbol: str = Query(default=None),
-        timeframe: str = Query(default="M15"),
+        timeframe: str = Query(default="H1"),
         limit: int = Query(default=300, ge=1, le=MAX_CHART_LIMIT),
         start_index: int | None = Query(default=None, ge=0),
         start: str | None = None,
@@ -237,7 +237,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     @app.get("/api/replay/timeline")
     def replay_timeline(
         symbol: str = Query(default=None),
-        timeframe: str = Query(default="M15"),
+        timeframe: str = Query(default="H1"),
         limit: int = Query(default=300, ge=1, le=MAX_CHART_LIMIT),
         start_index: int | None = Query(default=None, ge=0),
         _: str = Depends(require_auth),
@@ -730,6 +730,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
 
         symbol = request.symbol or config.symbol
         timeframe = request.timeframe.upper()
+        if timeframe != config.bias.timeframe.upper():
+            raise HTTPException(status_code=422, detail=f"Manual price zones must use {config.bias.timeframe} timeframe")
         now = utc_now_iso()
         expiry_input = request.expires_at
         if request.status == "active" and expiry_input is None:

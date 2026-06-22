@@ -609,6 +609,7 @@ def evaluate_zone_reaction_v2(
     as_of: str,
     macro_trend: str = "unknown",
     stop_fallback_atr: float | None = None,
+    stop_fallback_atr_timeframe: str | None = None,
 ) -> list[SetupCandidate]:
     if not config.zone_reaction_v2_enabled:
         return []
@@ -689,6 +690,7 @@ def evaluate_zone_reaction_v2(
         atr,
         config,
         stop_fallback_atr=stop_fallback_atr,
+        stop_fallback_atr_timeframe=stop_fallback_atr_timeframe,
         level_metadata=level_metadata,
     )
     stop_distance = abs(entry - stop) if entry is not None and stop is not None else None
@@ -763,6 +765,7 @@ def evaluate_zone_reaction_v2(
             "price_action_trigger_types": price_action_trigger_types,
             "atr": round(atr, 5),
             "stop_fallback_atr": level_metadata.get("stop_fallback_atr"),
+            "stop_fallback_atr_timeframe": level_metadata.get("stop_fallback_atr_timeframe"),
             "stop_fallback_atr_multiplier": level_metadata.get("stop_fallback_atr_multiplier"),
             "stop_distance": round(stop_distance, 5) if stop_distance is not None else None,
             "stop_source": level_metadata.get("stop_source"),

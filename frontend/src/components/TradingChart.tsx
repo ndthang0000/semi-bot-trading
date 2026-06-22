@@ -14,7 +14,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { createManualZone, updateZoneOverride } from "../api/chart";
 import { toUnixTime } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { AddEntityKind, ChartPayload, PriceZone, SetupCandidate, StructurePoint, TradeOrder, ZoneTradeMode, ZoneTypeVisibility } from "../types";
+import type { AddEntityKind, ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, StructurePoint, TradeOrder, ZoneTradeMode, ZoneTypeVisibility } from "../types";
 
 type TradingChartProps = {
   payload: ChartPayload;
@@ -48,6 +48,12 @@ type TradeBox = {
   height: number;
   profit: BoxRect;
   loss: BoxRect;
+};
+
+type M15TriggerMarker = {
+  trigger: M15TriggerOverlay;
+  x: number;
+  y: number;
 };
 
 type CandleDatum = {
@@ -135,6 +141,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
   const [structureDots, setStructureDots] = useState<StructureDot[]>([]);
   const [swingDots, setSwingDots] = useState<SwingDot[]>([]);
   const [tradeBoxes, setTradeBoxes] = useState<TradeBox[]>([]);
+  const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
   const [drawPreviewZone, setDrawPreviewZone] = useState<PriceZone | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
@@ -267,11 +274,20 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
       const box = tradeToBox(trade, currentPayload.range.start, currentPayload.range.end, candleDataRef.current, plotWidth, height, timeScale, series);
       return box ? [box] : [];
     });
+    const visibleM15Triggers = filterVisibleM15Triggers(currentPayload.layers.m15_triggers ?? []);
+    const m15Triggers = visibleM15Triggers.flatMap((trigger) => {
+      const x = interpolateChartX(timeScale, toUnixTime(trigger.time), candleDataRef.current);
+      const y = series.priceToCoordinate(trigger.close);
+      if (x === null || y === null) return [];
+      if (x < -12 || x > plotWidth + 12 || y < -12 || y > height + 12) return [];
+      return [{ trigger, x, y }];
+    });
 
     setZoneBoxes(zones);
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
     setSwingDots(visibleSwings);
     setTradeBoxes(trades);
+    setM15TriggerMarkers(m15Triggers);
 
     const priceY = series.priceToCoordinate(lastCandle.close);
     if (typeof priceY === "number" && priceY >= 0 && priceY <= height) {
@@ -396,6 +412,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
       updateDrawPreview({
         id: "__manual_zone_preview__",
         type: spec.zoneType,
+        timeframe: "H1",
         direction: spec.direction,
         detector: "human_manual_v1",
         status: "active",
@@ -1053,7 +1070,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
                     zoneClasses.label
                   }`}
                 >
-                  {zoneDisplayName(box.zone)} · {box.zone.weight.toFixed(2)} · {formatZoneDate(box.zone.visual_start)}
+                  {box.zone.timeframe} {zoneDisplayName(box.zone)} · {box.zone.weight.toFixed(2)} · {formatZoneDate(box.zone.visual_start)}
                 </span>
               ) : null}
             </div>
@@ -1092,6 +1109,25 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
             onClick={() => selectStructurePoint(dot.point)}
           />
         ))}
+        {m15TriggerMarkers.map(({ trigger, x, y }) => {
+          const className =
+            trigger.status === "eligible"
+              ? "border-cyan-200 bg-cyan-300 text-cyan-950 shadow-[0_0_10px_rgba(34,211,238,0.6)]"
+              : trigger.status === "waiting_confirmation"
+                ? "border-yellow-200 bg-yellow-300 text-yellow-950 shadow-[0_0_8px_rgba(250,204,21,0.45)]"
+                : "border-slate-300/60 bg-slate-400/75 text-slate-950";
+          const label = `${trigger.zone_type} ${trigger.reaction_state} ${trigger.status} ${trigger.open.toFixed(2)}/${trigger.high.toFixed(2)}/${trigger.low.toFixed(2)}/${trigger.close.toFixed(2)}`;
+          return (
+            <div
+              key={`${trigger.zone_id}:${trigger.time}`}
+              className={`pointer-events-none absolute z-[25] flex h-4 min-w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border px-1 text-[9px] font-black leading-none ${className}`}
+              style={{ left: x, top: y }}
+              title={`${label}\n${trigger.reason[0] ?? ""}`}
+            >
+              M15
+            </div>
+          );
+        })}
         {tradeBoxes.map((box) => {
           const trade = box.trade;
           const isLong = trade.direction === "long" || trade.side === "buy";
@@ -1166,6 +1202,9 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
 }
 
 const TIMEFRAME_SECONDS: Record<string, number> = { M15: 900, H1: 3600 };
+function filterVisibleM15Triggers(triggers: M15TriggerOverlay[]): M15TriggerOverlay[] {
+  return triggers.filter((trigger) => trigger.candidate_id !== null);
+}
 
 function CandleCountdown({
   timeframe,
@@ -1719,9 +1758,10 @@ function zoneStartCoordinate(
   const lastCandle = candles.at(-1);
   if (!firstCandle || !lastCandle) return null;
 
-  // Do not fake an old zone start at the left edge. If the real creation time
-  // is outside the loaded candle window, hide it until that creation point is visible.
-  if (startUnix < toUnixTime(firstCandle.time) || startUnix > toUnixTime(lastCandle.time)) {
+  if (startUnix < toUnixTime(firstCandle.time)) {
+    return timeScale.timeToCoordinate(toUnixTime(firstCandle.time));
+  }
+  if (startUnix > toUnixTime(lastCandle.time)) {
     return null;
   }
 

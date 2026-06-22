@@ -41,6 +41,30 @@ class ApiTest(unittest.TestCase):
         self.assertIsNotNone(row["valid_until"])
         self.assertEqual(row["end_time"], row["valid_until"])
 
+    def test_init_db_hard_deletes_m15_price_zones_only(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                insert_price_zone(conn, zone_id="m15-zone", timeframe="M15")
+                insert_price_zone(conn, zone_id="h1-zone", timeframe="H1")
+                conn.execute(
+                    """
+                    INSERT INTO candles (
+                        id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+                    )
+                    VALUES ('m15-candle', 'XAUUSD', 'M15', '2026-01-01T00:00:00+00:00',
+                            '2026-01-01T00:15:00+00:00', 2000, 2002, 1999, 2001, 100, 'test')
+                    """
+                )
+                conn.commit()
+                init_db(conn)
+                zones = conn.execute("SELECT id FROM price_zones ORDER BY id").fetchall()
+                candles = conn.execute("SELECT COUNT(*) AS count FROM candles WHERE timeframe = 'M15'").fetchone()
+
+        self.assertEqual([row["id"] for row in zones], ["h1-zone"])
+        self.assertEqual(candles["count"], 1)
+
     def test_chart_endpoint_returns_payload(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -59,6 +83,26 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(len(payload["layers"]["candles"]), 2)
         self.assertEqual(payload["layers"]["structure_timeframe"], "H1")
         self.assertEqual(payload["layers"]["structure"][0]["id"], "h1-s1")
+        self.assertEqual(payload["layers"]["m15_triggers"], [])
+
+    def test_h1_chart_returns_m15_trigger_overlay_for_h1_zone_touch(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_zone(db_path)
+
+            client = TestClient(create_app(config_path))
+            response = client.get("/api/chart?symbol=XAUUSD&timeframe=H1&limit=2")
+
+        self.assertEqual(response.status_code, 200)
+        triggers = response.json()["layers"]["m15_triggers"]
+        self.assertEqual(len(triggers), 2)
+        self.assertEqual(triggers[0]["zone_id"], "z1")
+        self.assertEqual(triggers[0]["status"], "touch")
+        self.assertEqual(triggers[0]["time"], "2026-01-01T00:00:00+00:00")
 
     def test_chart_endpoint_supports_start_index_window(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -476,6 +520,18 @@ def seed_candles(db_path: Path) -> None:
                 ("c2", "2026-01-01T00:15:00+00:00", "2026-01-01T00:30:00+00:00", 2001, 2004, 2000, 2003),
             ],
         )
+        conn.executemany(
+            """
+            INSERT INTO candles (
+                id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+            )
+            VALUES (?, 'XAUUSD', 'H1', ?, ?, ?, ?, ?, ?, 100, 'test')
+            """,
+            [
+                ("h1-c1", "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00", 2000, 2004, 1999, 2003),
+                ("h1-c2", "2026-01-01T01:00:00+00:00", "2026-01-01T02:00:00+00:00", 2003, 2005, 2001, 2002),
+            ],
+        )
         conn.execute(
             """
             INSERT INTO structure_points (
@@ -500,13 +556,32 @@ def seed_zone(db_path: Path) -> None:
                 invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
                 effective_confidence, effective_weight, status, source, metadata_json
             )
-            VALUES ('z1', 'XAUUSD', 'M15', 'sr_v1', 'support', 'bullish', 1990, 1995,
+            VALUES ('z1', 'XAUUSD', 'H1', 'sr_v1', 'support', 'bullish', 1999, 2004,
                     '2026-01-01T00:00:00+00:00', '2027-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00',
                     '2027-01-01T00:00:00+00:00', NULL, NULL, '2026-01-01T00:00:00+00:00',
                     0.8, 0.7, 0.8, 0.7, 'active', 'bot', '{}')
             """
         )
         conn.commit()
+
+
+def insert_price_zone(conn, zone_id: str, timeframe: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO price_zones (
+            id, symbol, timeframe, detector, zone_type, direction, price_low, price_high,
+            start_time, end_time, valid_from, valid_until, invalidated_at,
+            invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
+            effective_confidence, effective_weight, status, source, metadata_json
+        )
+        VALUES (?, 'XAUUSD', ?, 'sr_v1', 'support', 'bullish', 1999, 2004,
+                '2026-01-01T00:00:00+00:00', '2027-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00', '2027-01-01T00:00:00+00:00',
+                NULL, NULL, '2026-01-01T00:00:00+00:00',
+                0.8, 0.7, 0.8, 0.7, 'active', 'bot', '{}')
+        """,
+        (zone_id, timeframe),
+    )
 
 
 def insert_legacy_null_expiry_zone(conn, created_at: str) -> None:
