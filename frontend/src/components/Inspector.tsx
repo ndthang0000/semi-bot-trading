@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteManualZone, fetchTradeHistory, updateTradeReview, updateZoneOverride } from "../api/chart";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { ChartPayload, PriceZone, SetupCandidate, TradeOrder, TradeReview, ZoneTradeMode, ZoneTypeVisibility } from "../types";
+import type { ChartPayload, PriceZone, SelectedEntity, SetupCandidate, TradeOrder, TradeReview, ZoneTradeMode, ZoneTypeVisibility } from "../types";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
@@ -22,7 +22,7 @@ type ToastMessage = {
 const TRADE_FILTER_STORAGE_KEY = "semi-bot-trade-history-filters";
 
 export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
-  const selected = useChartStore((state) => state.selected);
+  const rawSelected = useChartStore((state) => state.selected);
   const setSelected = useChartStore((state) => state.setSelected);
   const focusZone = useChartStore((state) => state.focusZone);
   const focusTrade = useChartStore((state) => state.focusTrade);
@@ -36,6 +36,15 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const zones = payload?.layers.zones ?? [];
+  const payloadTrades = payload?.layers.trades ?? [];
+  const selected = useMemo(
+    () => resolveLatestSelected(rawSelected, zones, payloadTrades),
+    [payloadTrades, rawSelected, zones],
+  );
+  useEffect(() => {
+    if (!rawSelected || !selected || selected === rawSelected || !selectedNeedsSync(rawSelected, selected)) return;
+    setSelected(selected);
+  }, [rawSelected, selected, setSelected]);
   const setupCandidates = payload?.layers.setup_candidates ?? [];
   const layerFilteredZones = showZones ? zones.filter((zone) => isZoneTypeVisible(zone, zoneTypeVisibility)) : [];
   const lastCandle = payload?.layers.candles.at(-1);
@@ -191,7 +200,7 @@ function TradesTab({
         zoneType: zoneType || undefined,
         reaction: reaction || undefined,
         tradeId: trimmedTradeId || undefined,
-        backtest: true,
+        backtest: null,
         sort,
       }),
     staleTime: 10_000,
@@ -1340,6 +1349,41 @@ function playbookLabel(value: string): string {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function resolveLatestSelected(selected: SelectedEntity | null, zones: PriceZone[], trades: TradeOrder[]): SelectedEntity | null {
+  if (!selected) return null;
+  if (selected.kind === "zone") {
+    const latest = zones.find((zone) => zone.id === selected.entity.id);
+    return latest ? { kind: "zone", entity: latest } : selected;
+  }
+  if (selected.kind === "trade") {
+    const latest = trades.find((trade) => trade.id === selected.entity.id);
+    return latest ? { kind: "trade", entity: latest } : selected;
+  }
+  return selected;
+}
+
+function selectedNeedsSync(current: SelectedEntity, latest: SelectedEntity): boolean {
+  if (current.kind !== latest.kind) return true;
+  if (current.kind === "zone" && latest.kind === "zone") {
+    const a = current.entity;
+    const b = latest.entity;
+    return (
+      a.status !== b.status ||
+      a.price_low !== b.price_low ||
+      a.price_high !== b.price_high ||
+      a.visual_start !== b.visual_start ||
+      a.visual_end !== b.visual_end ||
+      a.valid_until !== b.valid_until
+    );
+  }
+  if (current.kind === "trade" && latest.kind === "trade") {
+    const a = current.entity;
+    const b = latest.entity;
+    return a.status !== b.status || a.close_price !== b.close_price || a.pnl_r !== b.pnl_r;
+  }
+  return false;
 }
 
 function toggleSetValue(current: Set<string>, value: string): Set<string> {
