@@ -156,6 +156,114 @@ CONFIG = StrategyConfig(
 
 
 class StrategyTest(unittest.TestCase):
+    def test_bearish_strong_reject_requires_bearish_candle_body(self) -> None:
+        candles = [
+            candle("00:00", 4200, 4202, 4199, 4201),
+            candle("00:15", 4201, 4203, 4200, 4202),
+            candle("00:30", 4201.003, 4221.317, 4200.754, 4211.77),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("resistance", "bearish", 4215.48, 4239.33),
+            candles,
+            atr=11.8,
+            config=CONFIG,
+        )
+
+        self.assertNotEqual("reject", reaction.state)
+        self.assertEqual("waiting_bos", reaction.state)
+        self.assertTrue(reaction.metadata.get("wick_reject"))
+
+    def test_bearish_wick_reject_confirms_after_next_bearish_break(self) -> None:
+        candles = [
+            candle("00:00", 4200, 4202, 4199, 4201),
+            candle("00:15", 4201, 4203, 4200, 4202),
+            candle("00:30", 4201.003, 4221.317, 4200.754, 4211.77),
+            candle("00:45", 4211.5, 4212.0, 4198.5, 4199.0),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("resistance", "bearish", 4215.48, 4239.33),
+            candles,
+            atr=11.8,
+            config=CONFIG,
+        )
+
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("short", reaction.direction)
+        self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
+
+    def test_bearish_strong_reject_accepts_bearish_candle_body(self) -> None:
+        candles = [
+            candle("00:00", 4200, 4202, 4199, 4201),
+            candle("00:15", 4201, 4203, 4200, 4202),
+            candle("00:30", 4220.0, 4221.317, 4200.754, 4211.77),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("resistance", "bearish", 4215.48, 4239.33),
+            candles,
+            atr=11.8,
+            config=CONFIG,
+        )
+
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("short", reaction.direction)
+
+    def test_bullish_strong_reject_requires_bullish_candle_body(self) -> None:
+        candles = [
+            candle("00:00", 4200, 4202, 4199, 4201),
+            candle("00:15", 4201, 4203, 4200, 4202),
+            candle("00:30", 4211.77, 4221.317, 4190.754, 4201.003),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("support", "bullish", 4185, 4200),
+            candles,
+            atr=11.8,
+            config=CONFIG,
+        )
+
+        self.assertNotEqual("reject", reaction.state)
+        self.assertEqual("waiting_bos", reaction.state)
+        self.assertTrue(reaction.metadata.get("wick_reject"))
+
+    def test_bullish_wick_reject_confirms_after_next_bullish_break(self) -> None:
+        candles = [
+            candle("00:00", 4200, 4202, 4199, 4201),
+            candle("00:15", 4201, 4203, 4200, 4202),
+            candle("00:30", 4211.77, 4221.317, 4190.754, 4201.003),
+            candle("00:45", 4201.5, 4222.0, 4200.0, 4221.5),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("support", "bullish", 4185, 4200),
+            candles,
+            atr=11.8,
+            config=CONFIG,
+        )
+
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("long", reaction.direction)
+        self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
+
+    def test_bullish_strong_reject_accepts_bullish_candle_body(self) -> None:
+        candles = [
+            candle("00:00", 4200, 4202, 4199, 4201),
+            candle("00:15", 4201, 4203, 4200, 4202),
+            candle("00:30", 4190.0, 4221.317, 4189.754, 4201.003),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("support", "bullish", 4185, 4200),
+            candles,
+            atr=11.8,
+            config=CONFIG,
+        )
+
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("long", reaction.direction)
+
     def test_zone_reaction_v2_reject_is_runtime_playbook(self) -> None:
         candles = [
             candle("00:00", 110, 112, 108, 111),

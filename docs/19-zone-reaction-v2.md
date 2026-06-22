@@ -120,6 +120,8 @@ Phase hien tai la reject-family. Chi `reject` va `internal_reject` duoc phep tao
 
 `fakeout`, `waiting_bos`, `retest_reject`, `clean_breakout` va cac reaction khac van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong `zone_reaction_v2` khi chung khong nam trong `allowed_reactions`.
 
+Strong body reject phai dung mau nen theo huong entry: long reject can bullish candle (`close > open`), short reject can bearish candle (`close < open`). Neu candle cham resistance/support co wick reject nhung dong nguoc mau, setup khong duoc promote thanh strong reject; no chuyen sang `waiting_bos` voi metadata `wick_reject=true`. Candle ke tiep moi duoc promote thanh `reject` khi xac nhan cung huong: short can bearish candle pha low cua wick candle, long can bullish candle pha high cua wick candle.
+
 ### Macro Trend Gate
 
 Backtest 2023-2026 cho thay counter-macro trade co edge am ro rang: short tai resistance trong gold uptrend thua `-22.7R` tren 83 trades, trong khi long tai support thang `+20.8R`. MA200 H1 khong tach duoc edge, nhung momentum ~30 ngay thi co.

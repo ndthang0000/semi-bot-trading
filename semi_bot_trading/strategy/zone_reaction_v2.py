@@ -54,6 +54,7 @@ def classify_zone_reaction_v2(
     low = float(last["low"])
     high = float(last["high"])
     close = float(last["close"])
+    open_ = float(last["open"])
     zone_low = float(zone["price_low"])
     zone_high = float(zone["price_high"])
     touched = high >= zone_low and low <= zone_high
@@ -72,6 +73,18 @@ def classify_zone_reaction_v2(
     fakeout_limit = atr * config.zone_reaction_v2_fakeout_max_atr
     buffer = atr * config.breakout_buffer_atr_multiplier
     min_close_outside = atr * config.zone_reaction_v2_breakout_min_close_outside_atr
+    previous_avg_body = average_body(candles[:-1], config.zone_reaction_v2_reject_avg_body_period)
+    confirmed_wick_reject = confirmed_wick_rejection(zone, candles, previous_avg_body, config, expected)
+    if confirmed_wick_reject is not None:
+        return reaction_v2(
+            "reject",
+            expected,
+            True,
+            last,
+            [f"Confirmed {expected} wick rejection from zone."],
+            buffer,
+            confirmed_wick_reject,
+        )
 
     if expected == "long":
         penetration = max(zone_low - low, 0.0)
@@ -89,7 +102,7 @@ def classify_zone_reaction_v2(
                     "fakeout_reaction_depth_atr": round(reaction_depth / max(atr, 0.00001), 4),
                 },
             )
-        if touched and close > zone_high and strong_reject:
+        if touched and close > zone_high and close > open_ and strong_reject:
             return reaction_v2("reject", "long", True, last, ["Strong bullish rejection from zone."], buffer)
         if (
             config.zone_reaction_v2_reject_pinbar_enabled
@@ -104,6 +117,17 @@ def classify_zone_reaction_v2(
             )
         ):
             return reaction_v2("reject", "long", True, last, ["Bullish pinbar rejection at zone."], buffer)
+        wick_reject = wick_rejection_metadata(last, "long", zone_low, zone_high, avg_body, config)
+        if wick_reject is not None:
+            return reaction_v2(
+                "waiting_bos",
+                "long",
+                True,
+                last,
+                ["Bullish wick rejection needs confirmation."],
+                buffer,
+                wick_reject,
+            )
         close_outside = zone_low - close
         if close_outside >= min_close_outside and breakout_body:
             return reaction_v2(
@@ -134,7 +158,7 @@ def classify_zone_reaction_v2(
                     "fakeout_reaction_depth_atr": round(reaction_depth / max(atr, 0.00001), 4),
                 },
             )
-        if touched and close < zone_low and strong_reject:
+        if touched and close < zone_low and close < open_ and strong_reject:
             return reaction_v2("reject", "short", True, last, ["Strong bearish rejection from zone."], buffer)
         if (
             config.zone_reaction_v2_reject_pinbar_enabled
@@ -149,6 +173,17 @@ def classify_zone_reaction_v2(
             )
         ):
             return reaction_v2("reject", "short", True, last, ["Bearish pinbar rejection at zone."], buffer)
+        wick_reject = wick_rejection_metadata(last, "short", zone_low, zone_high, avg_body, config)
+        if wick_reject is not None:
+            return reaction_v2(
+                "waiting_bos",
+                "short",
+                True,
+                last,
+                ["Bearish wick rejection needs confirmation."],
+                buffer,
+                wick_reject,
+            )
         close_outside = close - zone_high
         if close_outside >= min_close_outside and breakout_body:
             return reaction_v2(
@@ -296,6 +331,90 @@ def breakout_retest_reaction(
                 {"breakout_candle_time": breakout_candle.get("time"), "breakout_direction": "long"},
             )
     return None
+
+
+def confirmed_wick_rejection(
+    zone: dict[str, Any],
+    candles: list[dict[str, Any]],
+    avg_body: float,
+    config: StrategyConfig,
+    expected: str,
+) -> dict[str, Any] | None:
+    if len(candles) < 2:
+        return None
+    previous = candles[-2]
+    current = candles[-1]
+    zone_low = float(zone["price_low"])
+    zone_high = float(zone["price_high"])
+    previous_wick = wick_rejection_metadata(previous, expected, zone_low, zone_high, avg_body, config)
+    if previous_wick is None:
+        return None
+
+    current_open = float(current["open"])
+    current_close = float(current["close"])
+    if expected == "short":
+        if current_close >= current_open or current_close >= float(previous["low"]):
+            return None
+    else:
+        if current_close <= current_open or current_close <= float(previous["high"]):
+            return None
+
+    return {
+        **previous_wick,
+        "wick_reject_confirmed": True,
+        "wick_reject_confirmation_time": current.get("time"),
+        "wick_reject_confirmation_close": current_close,
+    }
+
+
+def wick_rejection_metadata(
+    candle: dict[str, Any],
+    direction: str,
+    zone_low: float,
+    zone_high: float,
+    avg_body: float,
+    config: StrategyConfig,
+) -> dict[str, Any] | None:
+    high = float(candle["high"])
+    low = float(candle["low"])
+    open_ = float(candle["open"])
+    close = float(candle["close"])
+    full_range = high - low
+    if full_range <= 0:
+        return None
+    body = abs(close - open_)
+    body_floor = avg_body * config.zone_reaction_v2_reject_body_min_ratio
+
+    if direction == "short":
+        touched = high >= zone_low and low <= zone_high
+        upper_wick = high - max(open_, close)
+        rejection_size = high - close
+        if not (touched and close < zone_low and close > open_ and rejection_size >= body_floor):
+            return None
+        return {
+            "wick_reject": True,
+            "wick_reject_direction": "short",
+            "wick_reject_candle_time": candle.get("time"),
+            "wick_reject_wick_size": round(upper_wick, 5),
+            "wick_reject_body": round(body, 5),
+            "wick_reject_rejection_size": round(rejection_size, 5),
+            "wick_reject_wick_ratio": round(upper_wick / full_range, 4),
+        }
+
+    touched = high >= zone_low and low <= zone_high
+    lower_wick = min(open_, close) - low
+    rejection_size = close - low
+    if not (touched and close > zone_high and close < open_ and rejection_size >= body_floor):
+        return None
+    return {
+        "wick_reject": True,
+        "wick_reject_direction": "long",
+        "wick_reject_candle_time": candle.get("time"),
+        "wick_reject_wick_size": round(lower_wick, 5),
+        "wick_reject_body": round(body, 5),
+        "wick_reject_rejection_size": round(rejection_size, 5),
+        "wick_reject_wick_ratio": round(lower_wick / full_range, 4),
+    }
 
 
 def classify_consolidation_reaction_v2(
