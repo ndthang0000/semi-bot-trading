@@ -176,6 +176,7 @@ class LiveIntegrationTest(unittest.TestCase):
 
             detectors.assert_not_called()
             build_payload.assert_called_once()
+            self.assertEqual({"H1"}, build_payload.call_args.kwargs["candidate_zone_timeframes"])
             self.assertEqual([[{"id": "candidate-1", "status": "eligible"}]], execute_calls)
 
 

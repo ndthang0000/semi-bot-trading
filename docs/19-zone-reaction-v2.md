@@ -6,6 +6,8 @@ Zone Reaction V2 la playbook research-first tap trung vao phan ung M15 tai tung 
 
 `zone_reaction_v2` la playbook runtime/research/backtest chinh cho reject/internal reject. Playbook breakout SR duoc tach rieng thanh `sr_breakout_v1` de tranh tron logic reject va breakout trong cung mot state machine.
 
+Live worker chi dung H1 price zones lam primary trade zones; M15 van la timeframe reaction/trigger/entry. Rule nay giu cho lenh live khop voi zone dang hien thi tren dashboard H1 va tranh trade theo M15 zone ma human khong thay tren chart H1.
+
 Legacy playbooks nhu `trend_pullback`, `ob_mitigation_continuation`, `fvg_fill_go`, `breakout_retest`, `momentum_expansion_continuation`, `range_boundary_reversal`, `liquidity_sweep_reversal`, va `failed_breakout_trap` da duoc ngung khoi strategy runtime. Trade cu trong database van co the hien thi playbook string cu de review lich su, nhung backend/UI/CLI khong con cho chay them cac playbook do.
 
 Playbook runtime hien tai:

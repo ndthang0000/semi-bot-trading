@@ -615,6 +615,7 @@ def evaluate_zone_reaction_v2(
         metadata={
             "as_of": as_of,
             "zone_type": zone.get("type"),
+            "zone_timeframe": zone.get("timeframe"),
             "zone_direction": zone.get("direction"),
             "zone_detector": zone.get("detector"),
             "zone_source": zone.get("source"),

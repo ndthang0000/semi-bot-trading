@@ -315,6 +315,7 @@ def load_chart_zones(
             {
             "id": row["id"],
             "type": row["zone_type"],
+            "timeframe": timeframe,
             "direction": row["direction"],
             "detector": row["detector"],
             "status": status,
@@ -536,6 +537,7 @@ def build_chart_payload(
     active_zones_only: bool = False,
     structure_timeframe: str | None = None,
     strategy_config: Any | None = None,
+    candidate_zone_timeframes: set[str] | None = None,
     allowed_playbooks: set[str] | None = None,
     macro_trend_config: Any | None = None,
 ) -> dict[str, Any]:
@@ -565,12 +567,21 @@ def build_chart_payload(
                 contexts.setdefault(macro_timeframe, {})["macro_trend"] = live_macro
     setup_candidates: list[dict[str, Any]] = []
     if strategy_config is not None:
-        candidate_zone_groups = [zones]
-        if effective_structure_timeframe != timeframe:
-            candidate_zone_groups.append(
-                load_chart_zones(conn, symbol, effective_structure_timeframe, range_start, range_end, active_only=active_zones_only)
-            )
-        candidate_zones = merge_zones_by_id(*candidate_zone_groups)
+        zone_groups_by_timeframe: dict[str, list[dict[str, Any]]] = {timeframe: zones}
+        candidate_timeframes = candidate_zone_timeframes or {timeframe, effective_structure_timeframe}
+        for zone_timeframe in sorted(candidate_timeframes):
+            if zone_timeframe not in zone_groups_by_timeframe:
+                zone_groups_by_timeframe[zone_timeframe] = load_chart_zones(
+                    conn,
+                    symbol,
+                    zone_timeframe,
+                    range_start,
+                    range_end,
+                    active_only=active_zones_only,
+                )
+        candidate_zones = merge_zones_by_id(
+            *[zone_groups_by_timeframe[zone_timeframe] for zone_timeframe in sorted(candidate_timeframes)]
+        )
         # Latest chart mode should evaluate setup candidates from the latest closed
         # strategy candle, not from the H1 chart range end. Otherwise M15 touches
         # after the current H1 candle opens are invisible until the next H1 close.

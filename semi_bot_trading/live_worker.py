@@ -197,6 +197,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
                 active_zones_only=True,
                 structure_timeframe=config.bias.timeframe,
                 strategy_config=config.strategy,
+                candidate_zone_timeframes={config.bias.timeframe},
                 macro_trend_config=config.macro_trend,
             )
             queue_setup_alerts(conn, config, env, payload["layers"].get("setup_candidates", []))
@@ -1142,6 +1143,7 @@ def _build_trade_metadata(
         "session": trading_session(now),
         "macro_trend": cm.get("macro_trend", "unknown"),
         "zone_type": cm.get("zone_type", "unknown"),
+        "zone_timeframe": cm.get("zone_timeframe", "unknown"),
         "zone_source": cm.get("zone_source", "unknown"),
         "zone_detector": cm.get("zone_detector", "unknown"),
         "atr": cm.get("atr"),

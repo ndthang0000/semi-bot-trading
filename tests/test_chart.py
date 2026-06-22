@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -13,7 +14,7 @@ class ChartPayloadTest(unittest.TestCase):
     def test_builds_chart_payload_contract(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
-            with connect(db_path) as conn:
+            with closing(connect(db_path)) as conn:
                 init_db(conn)
                 seed_chart_data(conn)
                 payload = build_chart_payload(conn, "XAUUSD", "M15", limit=2)
@@ -29,14 +30,15 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertIn("trades", payload["layers"])
         self.assertIn("setup_candidates", payload["layers"])
         self.assertEqual(payload["layers"]["setup_candidates"], [])
+        self.assertEqual(payload["layers"]["zones"][0]["timeframe"], "M15")
         self.assertEqual(payload["layers"]["contexts"]["H1"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["contexts"]["M15"]["bias"]["effective_value"], "bullish")
-        self.assertEqual(payload["layers"]["zones"][0]["visual_end"], None)
+        self.assertEqual(payload["layers"]["zones"][0]["visual_end"], "2026-01-08T00:15:00+00:00")
 
     def test_can_render_m15_chart_with_h1_structure(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
-            with connect(db_path) as conn:
+            with closing(connect(db_path)) as conn:
                 init_db(conn)
                 seed_chart_data(conn)
                 payload = build_chart_payload(conn, "XAUUSD", "M15", limit=2, structure_timeframe="H1")
