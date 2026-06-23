@@ -230,6 +230,10 @@ def _load_swing_ids(conn: Connection, symbol: str, timeframe: str) -> set[str]:
 def _queue_new_swing_alerts(
     conn: Connection, config: AppConfig, symbol: str, timeframe: str, new_ids: set[str]
 ) -> None:
+    # M15 swing structure is still stored for trigger/debug data, but it is not
+    # a trade-context signal. Only notify humans about the H1 context swings.
+    if timeframe.upper() != config.bias.timeframe.upper():
+        return
     placeholders = ",".join("?" * len(new_ids))
     rows = conn.execute(
         f"""
@@ -434,6 +438,8 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
     for candidate in candidates:
         if candidate.get("status") not in {"eligible", "waiting_confirmation"}:
             continue
+        trigger_timeframe = str(candidate.get("timeframe") or config.strategy.timeframe).upper()
+        context_timeframe = config.bias.timeframe.upper()
         payload = {
             "title": "Setup candidate",
             "setup": {
@@ -444,6 +450,8 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
                 "entry": candidate.get("entry"),
                 "stop_loss": candidate.get("stop_loss"),
                 "take_profit": candidate.get("take_profit"),
+                "context_timeframe": context_timeframe,
+                "trigger_timeframe": trigger_timeframe,
             },
             "reason": list(candidate.get("reason") or [])[:5],
             "action": "Auto execution is enabled." if env.execution_enabled else "Execution is disabled; observe manually.",
@@ -452,7 +460,7 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
         queue_alert(
             conn,
             symbol=config.symbol,
-            timeframe=str(candidate.get("timeframe") or config.strategy.timeframe),
+            timeframe=context_timeframe,
             event_type="setup_candidate",
             severity="important" if candidate.get("status") == "eligible" else "watch",
             entity_ids=[str(candidate.get("id"))],

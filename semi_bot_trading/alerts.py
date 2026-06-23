@@ -273,6 +273,8 @@ def _fmt_setup(alert: AlertEvent) -> str:
     entry = setup.get("entry", "?")
     sl = setup.get("stop_loss", "?")
     tp = _tp_str(setup.get("take_profit"))
+    context_tf = str(setup.get("context_timeframe") or alert.timeframe or "").upper()
+    trigger_tf = str(setup.get("trigger_timeframe") or "").upper()
 
     status_tag = "[READY]" if status == "eligible" else "[WAIT]"
     sym_tf = "[" + alert.symbol + " " + alert.timeframe + "]"
@@ -280,6 +282,8 @@ def _fmt_setup(alert: AlertEvent) -> str:
         sym_tf + " " + status_tag + " " + playbook + " " + direction,
         "Entry " + str(entry) + "  SL " + str(sl) + "  TP " + tp,
     ]
+    if trigger_tf and trigger_tf != context_tf:
+        lines.append("Context " + context_tf + " / trigger " + trigger_tf)
     reasons = _clean_reasons(p.get("reason"))
     if reasons:
         lines.append("- " + "\n- ".join(reasons))
