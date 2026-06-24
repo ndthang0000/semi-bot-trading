@@ -160,6 +160,8 @@ def format_alert_message(alert: AlertEvent) -> str:
         return _fmt_execution(alert)
     if et == "new_swing":
         return _fmt_swing(alert)
+    if et == "news_alert":
+        return _fmt_news(alert)
     return _fmt_generic(alert)
 
 
@@ -344,6 +346,19 @@ def _fmt_execution(alert: AlertEvent) -> str:
     chart = p.get("chart_url")
     if chart:
         lines.append(str(chart))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# News alert
+# ---------------------------------------------------------------------------
+
+
+def _fmt_news(alert: AlertEvent) -> str:
+    p = alert.payload
+    title = str(p.get("title", "⚠️ Tin tức sắp ra"))
+    reasons = p.get("reason") or []
+    lines = [title] + [str(r) for r in reasons if r]
     return "\n".join(lines)
 
 

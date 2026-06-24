@@ -127,9 +127,56 @@ Override nhanh window từ CLI nếu cần thử nghiệm:
 python3 -m semi_bot_trading.cli detect-structure --timeframe M15 --window 4
 ```
 
-Chạy test:
+## Economic Calendar (News Blackout)
+
+Bot tự động skip execution khi có tin tức lớn ảnh hưởng XAUUSD:
+
+- **Tier 1** (NFP, FOMC, CPI, GDP): blackout ±30 phút
+- **Tier 2** (PCE, PPI, Retail Sales, ISM, ADP, Unemployment): blackout ±15 phút
+
+### Fetch news thủ công
 
 ```bash
-python3 -m unittest discover -s tests
+python -m semi_bot_trading.cli fetch-news
+```
+
+Lệnh này fetch ForexFactory calendar (tuần này + tuần sau) và upsert events vào DB.
+
+### Xem events đã lưu
+
+```bash
+sqlite3 var/trading.sqlite3 "SELECT title, scheduled_at, tier FROM news_events ORDER BY scheduled_at;"
+```
+
+### Windows VPS Scheduled Task (khuyến nghị)
+
+Chạy PowerShell bằng quyền Administrator:
+
+```powershell
+.\scripts\install-scheduled-tasks.ps1 -Python "C:\path\to\python.exe" -At "01:00"
+```
+
+Script sẽ tạo task `SemiBot-FetchNews`, ghi log vào `logs\fetch-news.log`, và seed DB bằng `fetch-news` ngay lần đầu. Dùng `-SkipSeed` nếu chỉ muốn đăng ký lịch.
+
+Nếu đang dùng virtualenv trong project, trỏ thẳng tới Python của virtualenv, ví dụ:
+
+```powershell
+.\scripts\install-scheduled-tasks.ps1 -Python ".\.venv\Scripts\python.exe" -At "01:00"
+```
+
+### Linux cron (chỉ dùng nếu deploy Linux)
+
+```cron
+0 1 * * * cd /path/to/semi-bot-trading && mkdir -p logs && /path/to/python -m semi_bot_trading.cli fetch-news >> logs/fetch-news.log 2>&1
+```
+
+> **Lần đầu deploy**: chạy `fetch-news` thủ công hoặc dùng script Windows ở trên trước khi khởi động live worker để DB có data.
+
+---
+
+## Chạy test:
+
+```bash
+python -m pytest tests/ -q
 cd frontend && npm run build
 ```

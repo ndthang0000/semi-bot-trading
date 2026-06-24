@@ -622,3 +622,34 @@ Set `LIVE_EVALUATE_INTRABAR=true` only if the live worker should evaluate setup
 candidates on every poll using MT5's still-forming live candle. This helps catch
 wick touches/rejections before the candle closes, while detectors still update
 only on closed candles.
+
+## 11. Windows Scheduled Task cho economic calendar
+
+Trên Windows VPS, dùng Windows Scheduled Task thay cho cron để fetch lịch tin tức hằng ngày.
+
+Chạy PowerShell bằng quyền Administrator:
+
+```powershell
+.\scripts\install-scheduled-tasks.ps1 -Python ".\.venv\Scripts\python.exe" -At "01:00"
+```
+
+Nếu không dùng virtualenv trong project, truyền đường dẫn Python đang chạy bot:
+
+```powershell
+.\scripts\install-scheduled-tasks.ps1 -Python "C:\path\to\python.exe" -At "01:00"
+```
+
+Script tạo task `SemiBot-FetchNews`, chạy lệnh dưới root repo, ghi log vào `logs\fetch-news.log`, và chạy `fetch-news` ngay lần đầu để seed DB.
+
+Kiểm tra task:
+
+```powershell
+Get-ScheduledTask -TaskName SemiBot-FetchNews
+Get-Content .\logs\fetch-news.log -Tail 50
+```
+
+Chạy thủ công khi cần:
+
+```powershell
+python -m semi_bot_trading.cli fetch-news
+```

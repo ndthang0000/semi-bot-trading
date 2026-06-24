@@ -1,6 +1,7 @@
 param(
     [switch]$SkipFrontend,
-    [switch]$RestartWorker
+    [switch]$RestartWorker,
+    [switch]$SkipNews
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +15,7 @@ Write-Host "===============================" -ForegroundColor Cyan
 Write-Host ""
 
 # ── 1. Git pull ──────────────────────────────────────────────────────────────
-Write-Host "[1/4] Pulling latest code from GitHub..." -ForegroundColor Yellow
+Write-Host "[1/5] Pulling latest code from GitHub..." -ForegroundColor Yellow
 Set-Location $Root
 $beforeHash = git rev-parse HEAD
 git pull
@@ -28,36 +29,47 @@ if ($beforeHash -eq $afterHash) {
 
 # ── 2. Install Python dependencies ───────────────────────────────────────────
 Write-Host ""
-Write-Host "[2/4] Installing Python dependencies..." -ForegroundColor Yellow
+Write-Host "[2/5] Installing Python dependencies..." -ForegroundColor Yellow
 pip install -e . --quiet --upgrade
 Write-Host "      Done." -ForegroundColor Green
 
 # ── 3. Build frontend ────────────────────────────────────────────────────────
 Write-Host ""
 if ($SkipFrontend) {
-    Write-Host "[3/4] Skipping frontend build (-SkipFrontend)." -ForegroundColor Gray
+    Write-Host "[3/5] Skipping frontend build (-SkipFrontend)." -ForegroundColor Gray
 } else {
     if ($beforeHash -eq $afterHash) {
-        Write-Host "[3/4] No code changes, skipping frontend build." -ForegroundColor Gray
+        Write-Host "[3/5] No code changes, skipping frontend build." -ForegroundColor Gray
     } else {
         # Check if frontend files changed between the two commits
         $frontendChanged = git diff "$beforeHash" "$afterHash" --name-only 2>$null | Select-String "^frontend/"
         if ($frontendChanged) {
-            Write-Host "[3/4] Building frontend..." -ForegroundColor Yellow
+            Write-Host "[3/5] Building frontend..." -ForegroundColor Yellow
             Set-Location (Join-Path $Root "frontend")
             npm install --silent
             npm run build
             Set-Location $Root
             Write-Host "      Done." -ForegroundColor Green
         } else {
-            Write-Host "[3/4] No frontend changes, skipping build." -ForegroundColor Gray
+            Write-Host "[3/5] No frontend changes, skipping build." -ForegroundColor Gray
         }
     }
 }
 
-# ── 4. Restart services ───────────────────────────────────────────────────────
+# ── 4. Fetch news calendar ───────────────────────────────────────────────────
 Write-Host ""
-Write-Host "[4/4] Restarting services..." -ForegroundColor Yellow
+if ($SkipNews) {
+    Write-Host "[4/5] Skipping fetch-news (-SkipNews)." -ForegroundColor Gray
+} else {
+    Write-Host "[4/5] Fetching economic calendar..." -ForegroundColor Yellow
+    Set-Location $Root
+    python -m semi_bot_trading.cli fetch-news
+    Write-Host "      Done." -ForegroundColor Green
+}
+
+# ── 5. Restart services ───────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "[5/5] Restarting services..." -ForegroundColor Yellow
 
 & "$WinSW\BotAPI.exe" restart
 Write-Host "      BotAPI restarted." -ForegroundColor Green

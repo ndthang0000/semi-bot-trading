@@ -209,6 +209,35 @@ export type ContextOverrideInput = {
   use_bot?: boolean;
 };
 
+export type NewsEvent = {
+  id: string;
+  title: string;
+  country: string;
+  impact: string;
+  tier: 1 | 2;
+  scheduled_at: string;
+  blackout_from: string;
+  blackout_until: string;
+  blackout_before_min: number;
+  blackout_after_min: number;
+  minutes_until: number;
+  is_active_blackout: boolean;
+  forecast: string | null;
+  previous: string | null;
+  url: string | null;
+};
+
+export type NewsResponse = {
+  events: NewsEvent[];
+  active_blackout: NewsEvent | null;
+};
+
+export async function fetchNews(hoursAhead = 48): Promise<NewsResponse> {
+  const response = await authFetch(`/api/news?hours_ahead=${hoursAhead}`);
+  if (!response.ok) throw new Error(`News API failed with ${response.status}`);
+  return response.json();
+}
+
 export async function updateMarketContextOverride(
   timeframe: string,
   contextType: "bias" | "regime",

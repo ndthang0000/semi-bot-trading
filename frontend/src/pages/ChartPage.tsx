@@ -7,9 +7,14 @@ import { Inspector } from "../components/Inspector";
 import { ReplayControls } from "../components/ReplayControls";
 import { TopBar } from "../components/TopBar";
 import { TradingChart } from "../components/TradingChart";
+import type { NewsResponse } from "../api/chart";
 import { useChartStore } from "../store/chartStore";
 
-export function ChartPage() {
+type ChartPageProps = {
+  newsData?: NewsResponse | null;
+};
+
+export function ChartPage({ newsData }: ChartPageProps) {
   const mode = window.location.pathname === "/replay-chart" ? "replay" : "dashboard";
   const isReplayRoute = mode === "replay";
   const symbol = useChartStore((state) => state.symbol);
@@ -82,7 +87,7 @@ export function ChartPage() {
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-950 text-slate-100">
-      <TopBar mode={mode} isFetching={chartQuery.isFetching || timelineQuery.isFetching} onRefresh={() => chartQuery.refetch()} />
+      <TopBar mode={mode} isFetching={chartQuery.isFetching || timelineQuery.isFetching} onRefresh={() => chartQuery.refetch()} newsData={newsData} />
       <main className="grid min-h-0 grid-cols-[minmax(0,1fr)_340px]">
         <section className={`grid min-h-0 ${isReplayRoute ? "grid-rows-[auto_auto_minmax(0,1fr)]" : "grid-rows-[auto_minmax(0,1fr)]"}`}>
           <ContextStrip payload={chartQuery.data} onContextUpdated={() => chartQuery.refetch()} />

@@ -736,6 +736,17 @@ def cmd_telegram_test(args: argparse.Namespace) -> None:
     print(f"Telegram test queued={queued} sent={sent}")
 
 
+def cmd_fetch_news(args: argparse.Namespace) -> None:
+    """Fetch ForexFactory economic calendar and upsert tier-1/2 USD events into DB."""
+    from .news_calendar import fetch_and_store_news
+
+    config = load_config(args.config)
+    with connect(config.database) as conn:
+        init_db(conn)
+        n = fetch_and_store_news(conn)
+    print(f"fetch-news: upserted {n} tier-1/2 events into {config.database}")
+
+
 def cmd_live_worker(args: argparse.Namespace) -> None:
     from .live_worker import run_live_worker
     from .runtime_env import load_runtime_env
@@ -1340,6 +1351,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_env_arg(live_worker_parser)
     live_worker_parser.add_argument("--once", action="store_true", help="Run one iteration and exit.")
     live_worker_parser.set_defaults(func=cmd_live_worker)
+
+    fetch_news_parser = subparsers.add_parser(
+        "fetch-news",
+        help="Fetch ForexFactory economic calendar and upsert tier-1/2 USD events into DB. Run weekly via cron.",
+    )
+    add_common_config_arg(fetch_news_parser)
+    fetch_news_parser.set_defaults(func=cmd_fetch_news)
 
     hash_pw_parser = subparsers.add_parser(
         "hash-password",

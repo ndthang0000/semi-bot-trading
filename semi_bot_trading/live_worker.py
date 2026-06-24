@@ -14,9 +14,10 @@ from .alerts import queue_alert, send_pending_telegram_alerts
 from .candles import upsert_candles, upsert_live_candle
 from .chart import build_chart_payload
 from .config import AppConfig
-from .context import detect_and_store_bias, detect_and_store_macro_trend, detect_and_store_regime
+from .context import MarketContext, detect_and_store_bias, detect_and_store_macro_trend, detect_and_store_regime
 from .db import connect, init_db
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
+from .news_calendar import active_news_blackout, should_notify_news
 from .price_action import detect_and_store_price_action_patterns
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
@@ -168,8 +169,13 @@ def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient)
 
 def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient, state: LiveWorkerState) -> None:
     state.loop_count += 1
+    now = datetime.now(UTC)
     broker_symbol: str = state.broker_symbol or ""
     with closing(connect(config.database)) as conn:
+        # Queue Telegram alerts for tier-1/2 events arriving in ~10 minutes.
+        _maybe_queue_news_alerts(conn, config, env, now)
+        _expire_news_regimes(conn, config, now)
+
         # init_db is called once at startup in run_live_worker; skip here.
         snapshot_account(conn, env, client)
         sync_mt5_candles(conn, config, client, broker_symbol)
@@ -183,6 +189,13 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
             state.last_closed_m15 = latest_m15
+
+        # Override H1 regime to "news" during active blackout windows so that
+        # strategy evaluation and the UI both reflect the news state.
+        blackout = active_news_blackout(conn, now)
+        if blackout:
+            _upsert_news_regime(conn, config, blackout)
+
         if latest_m15 is not None:
             # Closed M15 updates drive detectors, but setup evaluation must run
             # every poll. Otherwise a worker that has already processed the
@@ -204,6 +217,126 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)
     with closing(connect(config.database)) as conn:
         send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id, environment=env.environment)
+
+
+def _maybe_queue_news_alerts(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    now: datetime,
+) -> None:
+    """Queue a Telegram alert for tier-1/2 events arriving in ~10 minutes."""
+    if not env.telegram_token or not env.telegram_chat_id:
+        return
+    events = should_notify_news(conn, now, notify_minutes_before=10)
+    for ev in events:
+        tier = int(ev["tier"])
+        tier_label = "🔴🔴 Tin Đỏ Tối Cao" if tier == 1 else "🔴 Tin Đỏ"
+        before = int(ev["blackout_before_min"])
+        after = int(ev["blackout_after_min"])
+        lines = [
+            f"[{config.symbol}] ⚠️ Tin tức sắp ra trong ~10 phút",
+            f"{tier_label}: {ev['title']}",
+            f"USD · Blackout ±{before}/{after} phút",
+        ]
+        if ev.get("forecast"):
+            lines.append(f"Forecast: {ev['forecast']}  |  Previous: {ev.get('previous', '?')}")
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.regime.timeframe,
+            event_type="news_alert",
+            severity="important",
+            entity_ids=[ev["id"]],
+            payload={"title": "\n".join(lines[:1]), "reason": lines[1:]},
+            dedupe_key=f"news-alert:{ev['id']}",
+        )
+
+
+def _upsert_news_regime(
+    conn: Connection,
+    config: AppConfig,
+    blackout: dict[str, Any],
+) -> None:
+    """Push a bounded 'news' regime overlay without replacing the bot regime."""
+    regime_tf = config.regime.timeframe
+    ctx = MarketContext(
+        symbol=config.symbol,
+        timeframe=regime_tf,
+        context_type="regime",
+        bot_value="news",
+        primary_value="news",
+        secondary_value=str(blackout["title"]),
+        bot_confidence=1.0,
+        effective_value="news",
+        effective_confidence=1.0,
+        source="news_calendar",
+        valid_from=str(blackout["blackout_from"]),
+        valid_until=str(blackout["blackout_until"]),
+        status="active",
+        metadata={
+            "news_event_id": blackout["id"],
+            "news_title": blackout["title"],
+            "tier": blackout["tier"],
+            "blackout_from": blackout["blackout_from"],
+            "blackout_until": blackout["blackout_until"],
+        },
+    )
+    conn.execute(
+        """
+        INSERT INTO market_contexts (
+            id, symbol, timeframe, context_type, bot_value, primary_value, secondary_value,
+            bot_confidence, effective_value, effective_confidence, source,
+            valid_from, valid_until, status, metadata_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            secondary_value = excluded.secondary_value,
+            valid_from = excluded.valid_from,
+            valid_until = excluded.valid_until,
+            status = 'active',
+            metadata_json = excluded.metadata_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            ctx.id,
+            ctx.symbol,
+            ctx.timeframe,
+            ctx.context_type,
+            ctx.bot_value,
+            ctx.primary_value,
+            ctx.secondary_value,
+            ctx.bot_confidence,
+            ctx.effective_value,
+            ctx.effective_confidence,
+            ctx.source,
+            ctx.valid_from,
+            ctx.valid_until,
+            ctx.status,
+            json.dumps(ctx.metadata, sort_keys=True),
+        ),
+    )
+    conn.commit()
+
+
+def _expire_news_regimes(conn: Connection, config: AppConfig, now: datetime) -> None:
+    """Expire bounded news overlays once their blackout window has passed."""
+    now_iso = now.replace(microsecond=0).isoformat()
+    conn.execute(
+        """
+        UPDATE market_contexts
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE symbol = ?
+          AND timeframe = ?
+          AND context_type = 'regime'
+          AND source = 'news_calendar'
+          AND status = 'active'
+          AND valid_until IS NOT NULL
+          AND valid_until <= ?
+        """,
+        (config.symbol, config.regime.timeframe, now_iso),
+    )
+    conn.commit()
 
 
 def sync_mt5_candles(conn: Connection, config: AppConfig, client: MT5BrokerClient, broker_symbol: str) -> None:
@@ -484,6 +617,19 @@ def maybe_execute_candidates(
     # prices and place orders on a random/default instrument.
     if not broker_symbol:
         logger.warning("maybe_execute_candidates: broker_symbol is empty — skipping execution")
+        return
+    # News blackout guard: skip execution during tier-1/2 news windows.
+    # The candidate stays eligible and will retry on the next poll once the
+    # blackout window expires. Spread guard below provides a secondary check
+    # for unexpected volatility outside defined windows.
+    blackout = active_news_blackout(conn)
+    if blackout:
+        tier = blackout["tier"]
+        logger.warning(
+            "maybe_execute_candidates: news blackout tier=%d '%s' — skipping cycle",
+            tier,
+            blackout["title"],
+        )
         return
     # Spread guard: wide spreads (e.g. during news) mean any fill will be at a
     # significantly worse price than the signal. Skip the whole cycle and retry

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { clearStoredRefreshToken, getStoredRefreshToken, refreshAccessToken } from "./api/auth";
+import { BlackoutBanner, useNewsData } from "./components/NewsWidget";
 import { LoginPage } from "./components/LoginPage";
 import { Sidebar } from "./components/Sidebar";
 import { AccountDashboardPage } from "./pages/AccountDashboardPage";
@@ -46,14 +47,18 @@ export function App() {
 
 function AppShell() {
   const activePage = useNavigationStore((s) => s.activePage);
+  const newsData = useNewsData();
 
   return (
-    <div className="flex h-dvh overflow-hidden">
-      <Sidebar />
-      <div className="flex-1 min-w-0">
-        {activePage === "chart" && <ChartPage />}
-        {activePage === "dashboard" && <AccountDashboardPage />}
-        {activePage === "journal" && <JournalPage />}
+    <div className="flex h-dvh flex-col overflow-hidden">
+      {newsData?.active_blackout && <BlackoutBanner event={newsData.active_blackout} />}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <Sidebar />
+        <div className="flex-1 min-w-0">
+          {activePage === "chart" && <ChartPage newsData={newsData} />}
+          {activePage === "dashboard" && <AccountDashboardPage />}
+          {activePage === "journal" && <JournalPage />}
+        </div>
       </div>
     </div>
   );

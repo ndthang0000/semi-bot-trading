@@ -45,6 +45,7 @@ from .chart import build_chart_payload, trade_order_row_to_chart
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
 from .db import connect, init_db
+from .news_calendar import active_news_blackout, upcoming_news_events
 from .replay_chart import build_realtime_replay_payload
 from .runtime_env import load_runtime_env
 
@@ -329,6 +330,19 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
                 for row in rows
             ]
         }
+
+    @app.get("/api/news")
+    def get_news(
+        hours_ahead: int = Query(default=48, ge=1, le=168),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Return upcoming tier-1/2 news events and any active blackout."""
+        from datetime import UTC, datetime
+        now = datetime.now(UTC)
+        with connect(config.database) as conn:
+            events = upcoming_news_events(conn, now=now, hours_ahead=hours_ahead)
+            blackout = active_news_blackout(conn, now=now)
+        return {"events": events, "active_blackout": blackout}
 
     @app.get("/api/trades")
     def trades(

@@ -1,17 +1,20 @@
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/auth";
+import type { NewsResponse } from "../api/chart";
 import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, ZoneVisibilityKey } from "../types";
+import { NewsPill } from "./NewsWidget";
 
 type TopBarProps = {
   isFetching: boolean;
   mode: "dashboard" | "replay";
   onRefresh: () => void;
+  newsData?: NewsResponse | null;
 };
 
-export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
+export function TopBar({ isFetching, mode, onRefresh, newsData }: TopBarProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
   const startIndex = useChartStore((state) => state.startIndex);
@@ -147,6 +150,7 @@ export function TopBar({ isFetching, mode, onRefresh }: TopBarProps) {
           <RefreshCw className={isFetching ? "animate-spin" : ""} size={15} />
           Reload
         </button>
+        {newsData && <NewsPill data={newsData} />}
         <LogoutButton />
       </div>
     </header>

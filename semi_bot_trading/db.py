@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
+UTC = _tz.utc
 from pathlib import Path
 
 
@@ -298,6 +299,27 @@ CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash
 ON auth_refresh_tokens(token_hash);
+
+-- Economic calendar events fetched from ForexFactory.
+-- Only USD High-impact events that affect XAUUSD are stored.
+-- tier 1 = Supreme Red (±30min blackout), tier 2 = Regular Red (±15min blackout)
+CREATE TABLE IF NOT EXISTS news_events (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    country TEXT NOT NULL,
+    impact TEXT NOT NULL,
+    tier INTEGER,
+    scheduled_at TEXT NOT NULL,
+    blackout_before_min INTEGER NOT NULL DEFAULT 0,
+    blackout_after_min INTEGER NOT NULL DEFAULT 0,
+    forecast TEXT,
+    previous TEXT,
+    url TEXT,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_events_scheduled
+ON news_events(scheduled_at, tier);
 
 -- One row per account label: upserted by the worker each cycle.
 -- account_label is the human-readable name (e.g. "Exness Personal", "FTMO Challenge").

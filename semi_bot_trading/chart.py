@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from sqlite3 import Connection
 from typing import Any
 
@@ -427,17 +428,21 @@ def build_m15_trigger_overlays(
     return overlays
 
 
-def load_chart_contexts(conn: Connection, symbol: str) -> dict[str, dict[str, dict[str, Any]]]:
+def load_chart_contexts(conn: Connection, symbol: str, as_of: str | None = None) -> dict[str, dict[str, dict[str, Any]]]:
+    as_of_iso = as_of or datetime.now(UTC).replace(microsecond=0).isoformat()
     rows = conn.execute(
         """
         SELECT timeframe, context_type, bot_value, primary_value, secondary_value,
                bot_confidence, effective_value, effective_confidence, source,
                valid_from, valid_until, status, metadata_json
         FROM market_contexts
-        WHERE symbol = ? AND status = 'active'
-        ORDER BY timeframe, context_type
+        WHERE symbol = ?
+          AND status = 'active'
+          AND (valid_until IS NULL OR valid_until > ?)
+        ORDER BY timeframe, context_type,
+                 CASE source WHEN 'bot' THEN 0 WHEN 'human' THEN 1 WHEN 'news_calendar' THEN 2 ELSE 1 END
         """,
-        (symbol,),
+        (symbol, as_of_iso),
     ).fetchall()
     contexts: dict[str, dict[str, dict[str, Any]]] = {}
     for row in rows:
@@ -633,7 +638,8 @@ def build_chart_payload(
     range_end = candles[-1]["time"]
     effective_structure_timeframe = structure_timeframe or "H1"
     zones = load_chart_zones(conn, symbol, effective_structure_timeframe, range_start, range_end, active_only=active_zones_only)
-    contexts = load_chart_contexts(conn, symbol)
+    context_as_of = None if is_latest_mode else range_end
+    contexts = load_chart_contexts(conn, symbol, as_of=context_as_of)
     if macro_trend_config is not None:
         macro_timeframe = str(macro_trend_config.timeframe)
         # Persisted contexts (including human overrides) win; the live value is a fallback.
