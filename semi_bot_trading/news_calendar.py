@@ -76,6 +76,8 @@ _FF_URLS = [
     "https://nfs.faireconomy.media/ff_calendar_nextweek.xml",
 ]
 
+_FF_CALENDAR_URL = "https://www.forexfactory.com/calendar"
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -183,7 +185,7 @@ def _parse_ff_xml(xml_text: str, fetched_at: datetime) -> list[NewsEvent]:
         time_str = (elem.findtext("time") or "").strip()
         forecast = (elem.findtext("forecast") or "").strip() or None
         previous = (elem.findtext("previous") or "").strip() or None
-        url = (elem.findtext("url") or "").strip() or None
+        url = (elem.findtext("url") or "").strip() or _FF_CALENDAR_URL
 
         tier = classify_tier(title, country, impact)
         if tier is None:
