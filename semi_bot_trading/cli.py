@@ -19,6 +19,7 @@ from .price_action import detect_and_store_price_action_patterns
 from .research import read_research_csv, render_research_html, render_research_report, run_research_events
 from .replay import replay_candles
 from .smc_zones import detect_and_store_smc_zones
+from .spread import spread_summary
 from .strategy import PLAYBOOK_ZONE_TYPES
 from .server import run_chart_server
 from .structure import (
@@ -761,6 +762,32 @@ def cmd_live_worker(args: argparse.Namespace) -> None:
     run_live_worker(config, env, once=args.once)
 
 
+def cmd_spread_summary(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    db_path = args.db or config.database
+    symbol = args.symbol or config.symbol
+    with connect(db_path) as conn:
+        init_db(conn)
+        summary = spread_summary(conn, symbol, hours=args.hours)
+    latest = summary["latest"]
+    print(f"Spread summary symbol={symbol} hours={summary['hours']} db={db_path}")
+    print(f"count={summary['count']}")
+    if latest:
+        print(
+            "latest="
+            f"{latest['spread']:.3f} bid={latest['bid']:.3f} ask={latest['ask']:.3f} "
+            f"broker_symbol={latest['broker_symbol']} at={latest['snapshot_at']}"
+        )
+    else:
+        print("latest=--")
+    if summary["count"] == 0:
+        return
+    print(
+        "min={min:.3f} avg={avg:.3f} p50={p50:.3f} p90={p90:.3f} "
+        "p95={p95:.3f} p99={p99:.3f} max={max:.3f}".format(**summary)
+    )
+
+
 def cmd_backtest_strategies(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     symbol = args.symbol or config.symbol
@@ -1351,6 +1378,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_env_arg(live_worker_parser)
     live_worker_parser.add_argument("--once", action="store_true", help="Run one iteration and exit.")
     live_worker_parser.set_defaults(func=cmd_live_worker)
+
+    spread_summary_parser = subparsers.add_parser(
+        "spread-summary",
+        help="Summarize stored bid/ask spread snapshots.",
+    )
+    add_common_config_arg(spread_summary_parser)
+    add_common_db_arg(spread_summary_parser)
+    spread_summary_parser.add_argument("--symbol")
+    spread_summary_parser.add_argument("--hours", type=int, default=24, help="Lookback window in hours. Default: 24.")
+    spread_summary_parser.set_defaults(func=cmd_spread_summary)
 
     fetch_news_parser = subparsers.add_parser(
         "fetch-news",

@@ -1,4 +1,15 @@
-import type { ChartPayload, MarketContext, PlaybookKey, PriceZone, ReplayTimeline, Timeframe, TradeHistoryResponse, TradeReview, ZoneTradeMode } from "../types";
+import type {
+  ChartPayload,
+  MarketContext,
+  PlaybookKey,
+  PriceZone,
+  ReplayTimeline,
+  SpreadSummary,
+  Timeframe,
+  TradeHistoryResponse,
+  TradeReview,
+  ZoneTradeMode,
+} from "../types";
 import { authFetch } from "./auth";
 
 type ChartQuery = {
@@ -235,6 +246,13 @@ export type NewsResponse = {
 export async function fetchNews(hoursAhead = 48): Promise<NewsResponse> {
   const response = await authFetch(`/api/news?hours_ahead=${hoursAhead}`);
   if (!response.ok) throw new Error(`News API failed with ${response.status}`);
+  return response.json();
+}
+
+export async function fetchSpreadSummary(symbol: string, hours = 24): Promise<SpreadSummary> {
+  const params = new URLSearchParams({ symbol, hours: String(hours) });
+  const response = await authFetch(`/api/spread?${params.toString()}`);
+  if (!response.ok) throw new Error(`Spread API failed with ${response.status}`);
   return response.json();
 }
 

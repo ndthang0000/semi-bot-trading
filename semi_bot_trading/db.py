@@ -337,6 +337,23 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
     currency      TEXT NOT NULL DEFAULT 'USD',
     snapshot_at   TEXT NOT NULL
 );
+
+-- Bid/ask spread observations captured by the live worker.
+-- Spread is stored in price units (e.g. XAUUSD dollars), matching MAX_SPREAD_PRICE.
+CREATE TABLE IF NOT EXISTS spread_snapshots (
+    id            TEXT PRIMARY KEY,
+    symbol        TEXT NOT NULL,
+    broker_symbol TEXT NOT NULL,
+    bid           REAL NOT NULL,
+    ask           REAL NOT NULL,
+    spread        REAL NOT NULL,
+    snapshot_at   TEXT NOT NULL,
+    source        TEXT NOT NULL DEFAULT 'mt5',
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_spread_snapshots_symbol_time
+ON spread_snapshots(symbol, snapshot_at);
 """
 
 

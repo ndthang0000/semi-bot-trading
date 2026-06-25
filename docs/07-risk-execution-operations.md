@@ -179,10 +179,24 @@ Metrics:
 
 - Candle latency.
 - Analyzer latency per symbol/timeframe.
+- Spread latest/average/percentiles theo broker symbol để phát hiện khung giờ spread ăn mòn lợi nhuận.
 - WebSocket connected clients.
 - Alert count by severity.
 - Risk rejection count.
 - Executor errors.
+
+## Spread Monitoring
+
+Live worker lưu bid/ask/spread của XAUUSD mỗi vòng poll vào `spread_snapshots`. Spread được lưu theo price unit giống `MAX_SPREAD_PRICE`, ví dụ XAUUSD spread `1.20` nghĩa là ask-bid lệch 1.20 USD.
+
+Xem nhanh thống kê:
+
+```bash
+python -m semi_bot_trading.cli spread-summary --hours 24
+python -m semi_bot_trading.cli spread-summary --hours 168
+```
+
+UI realtime đọc `/api/spread` bằng polling ngắn. Chưa cần Socket.IO cho spread vì chỉ cần current status và summary vài giây/lần; WebSocket/Socket.IO chỉ nên thêm khi cần stream tick-by-tick, multi-symbol, hoặc event push có độ trễ thấp.
 
 ## Incident cases
 

@@ -602,6 +602,13 @@ Run continuous live worker:
 python -m semi_bot_trading.cli live-worker
 ```
 
+Xem thống kê spread đã được live worker lưu:
+
+```powershell
+python -m semi_bot_trading.cli spread-summary --hours 24
+python -m semi_bot_trading.cli spread-summary --hours 168
+```
+
 Important environment values:
 
 ```text

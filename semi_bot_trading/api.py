@@ -48,6 +48,7 @@ from .db import connect, init_db
 from .news_calendar import active_news_blackout, upcoming_news_events
 from .replay_chart import build_realtime_replay_payload
 from .runtime_env import load_runtime_env
+from .spread import spread_summary
 
 
 MAX_CHART_LIMIT = 15_000
@@ -343,6 +344,17 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             events = upcoming_news_events(conn, now=now, hours_ahead=hours_ahead)
             blackout = active_news_blackout(conn, now=now)
         return {"events": events, "active_blackout": blackout}
+
+    @app.get("/api/spread")
+    def get_spread(
+        symbol: str | None = Query(default=None),
+        hours: int = Query(default=24, ge=1, le=168),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Return current/latest spread and summary stats in price units."""
+        resolved_symbol = symbol or config.symbol
+        with connect(config.database) as conn:
+            return spread_summary(conn, resolved_symbol, hours=hours)
 
     @app.get("/api/trades")
     def trades(

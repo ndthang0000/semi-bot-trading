@@ -14,10 +14,22 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { createManualZone, updateZoneOverride } from "../api/chart";
 import { toUnixTime } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
-import type { AddEntityKind, ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, StructurePoint, TradeOrder, ZoneTradeMode, ZoneTypeVisibility } from "../types";
+import type {
+  AddEntityKind,
+  ChartPayload,
+  M15TriggerOverlay,
+  PriceZone,
+  SetupCandidate,
+  SpreadSummary,
+  StructurePoint,
+  TradeOrder,
+  ZoneTradeMode,
+  ZoneTypeVisibility,
+} from "../types";
 
 type TradingChartProps = {
   payload: ChartPayload;
+  spread?: SpreadSummary | null;
   onEntityCreated: () => void;
 };
 
@@ -120,7 +132,7 @@ const REPLAY_VISIBLE_BARS = 120;
 const VERTICAL_FOCUS_BARS = 14;
 
 
-export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
+export function TradingChart({ payload, spread, onEntityCreated }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -1195,6 +1207,7 @@ export function TradingChart({ payload, onEntityCreated }: TradingChartProps) {
           priceY={candleLabel.priceY}
           scaleWidth={candleLabel.scaleWidth}
           isUp={candleLabel.isUp}
+          spread={spread}
         />
       ) : null}
     </div>
@@ -1211,11 +1224,13 @@ function CandleCountdown({
   priceY,
   scaleWidth,
   isUp,
+  spread,
 }: {
   timeframe: string;
   priceY: number;
   scaleWidth: number;
   isUp: boolean;
+  spread?: SpreadSummary | null;
 }) {
   const tfSecs = TIMEFRAME_SECONDS[timeframe] ?? 3600;
 
@@ -1236,18 +1251,29 @@ function CandleCountdown({
   const ss = (secs % 60).toString().padStart(2, "0");
   const bg = isUp ? "#2fbd85" : "#e35d68";
 
+  const currentSpread = spread?.latest?.spread ?? null;
+
   return (
-    <div
-      className="pointer-events-none absolute z-20 flex items-center justify-center font-mono text-[11px] font-semibold text-white"
-      style={{
-        right: 0,
-        top: priceY + 10,
-        width: scaleWidth,
-        height: 20,
-        backgroundColor: bg,
-      }}
-    >
-      {mm}:{ss}
+    <div className="pointer-events-none absolute z-20 flex items-stretch justify-end gap-1" style={{ right: 0, top: priceY + 10, height: 20 }}>
+      {currentSpread !== null ? <SpreadBadge spread={currentSpread} /> : null}
+      <div
+        className="flex items-center justify-center font-mono text-[11px] font-semibold text-white"
+        style={{
+          width: scaleWidth,
+          backgroundColor: bg,
+        }}
+      >
+        {mm}:{ss}
+      </div>
+    </div>
+  );
+}
+
+function SpreadBadge({ spread }: { spread: number }) {
+  const colorClass = spread >= 1.5 ? "text-fuchsia-300" : spread >= 0.8 ? "text-yellow-300" : "text-white";
+  return (
+    <div className={`flex items-center border border-white/10 bg-ink-950/90 px-1.5 font-mono text-[10px] font-bold ${colorClass}`}>
+      S {spread.toFixed(2)}
     </div>
   );
 }

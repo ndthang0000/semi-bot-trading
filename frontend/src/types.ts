@@ -219,6 +219,32 @@ export type ReplayTimeline = {
   count: number;
 };
 
+export type SpreadSnapshot = {
+  id: string;
+  symbol: string;
+  broker_symbol: string;
+  bid: number;
+  ask: number;
+  spread: number;
+  snapshot_at: string;
+  source: string;
+  metadata: Record<string, unknown>;
+};
+
+export type SpreadSummary = {
+  symbol: string;
+  hours: number;
+  count: number;
+  latest: SpreadSnapshot | null;
+  min: number | null;
+  avg: number | null;
+  p50: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  max: number | null;
+};
+
 export type SelectedEntity =
   | { kind: "zone"; entity: PriceZone }
   | { kind: "structure"; entity: StructurePoint }

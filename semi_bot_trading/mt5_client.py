@@ -160,6 +160,16 @@ class MT5BrokerClient:
             return 0.0
         return max(0.0, float(tick.ask) - float(tick.bid))
 
+    def get_current_quote(self, broker_symbol: str) -> dict[str, float]:
+        """Return current bid, ask, and spread in price units."""
+        self.ensure_symbol(broker_symbol)
+        tick = self.mt5.symbol_info_tick(broker_symbol)
+        if tick is None:
+            raise RuntimeError(f"MT5 symbol_info_tick failed: {self.mt5.last_error()}")
+        bid = float(tick.bid)
+        ask = float(tick.ask)
+        return {"bid": bid, "ask": ask, "spread": max(0.0, ask - bid)}
+
     def place_limit_order(self, request: MT5OrderRequest) -> dict[str, Any]:
         self.ensure_symbol(request.broker_symbol)
         side = request.side.lower()

@@ -22,6 +22,7 @@ from .price_action import detect_and_store_price_action_patterns
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
 from .smc_zones import detect_and_store_smc_zones
+from .spread import record_spread_snapshot
 from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
 
@@ -167,6 +168,32 @@ def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient)
     conn.commit()
 
 
+def snapshot_spread(
+    conn: Connection,
+    config: AppConfig,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    now: datetime | None = None,
+) -> None:
+    try:
+        quote = client.get_current_quote(broker_symbol)
+    except AttributeError:
+        logger.debug("Broker client does not expose get_current_quote; skipping spread snapshot")
+        return
+    except Exception:
+        logger.warning("Could not fetch MT5 spread snapshot", exc_info=True)
+        return
+    record_spread_snapshot(
+        conn,
+        symbol=config.symbol,
+        broker_symbol=broker_symbol,
+        bid=quote["bid"],
+        ask=quote["ask"],
+        spread=quote["spread"],
+        snapshot_at=now,
+    )
+
+
 def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClient, state: LiveWorkerState) -> None:
     state.loop_count += 1
     now = datetime.now(UTC)
@@ -178,6 +205,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
 
         # init_db is called once at startup in run_live_worker; skip here.
         snapshot_account(conn, env, client)
+        if broker_symbol:
+            snapshot_spread(conn, config, client, broker_symbol, now)
         sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)

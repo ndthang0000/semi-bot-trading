@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { fetchChartPayload, fetchReplayTimeline } from "../api/chart";
+import { fetchChartPayload, fetchReplayTimeline, fetchSpreadSummary } from "../api/chart";
 import { ContextStrip } from "../components/ContextStrip";
 import { Inspector } from "../components/Inspector";
 import { ReplayControls } from "../components/ReplayControls";
@@ -49,6 +49,17 @@ export function ChartPage({ newsData }: ChartPageProps) {
     refetchOnWindowFocus: autoRefreshActive,
     staleTime: 10_000,
     enabled: !isReplayRoute || (replayStart !== null && replayAt !== null),
+  });
+
+  const spreadQuery = useQuery({
+    queryKey: ["spread", symbol],
+    queryFn: () => fetchSpreadSummary(symbol, 24),
+    refetchInterval: isReplayRoute ? false : 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+    staleTime: 2_000,
+    enabled: !isReplayRoute,
   });
 
   useEffect(() => {
@@ -107,7 +118,7 @@ export function ChartPage({ newsData }: ChartPageProps) {
               </div>
             </div>
           ) : chartQuery.data ? (
-            <TradingChart payload={chartQuery.data} onEntityCreated={() => chartQuery.refetch()} />
+            <TradingChart payload={chartQuery.data} spread={spreadQuery.data ?? null} onEntityCreated={() => chartQuery.refetch()} />
           ) : (
             <div className="grid place-items-center bg-ink-950 text-sm text-slate-500">Loading chart...</div>
           )}
