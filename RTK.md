@@ -157,6 +157,7 @@ See more commands in `docs/14-terminal-commands.md`.
 - Use existing config in `config/trading.toml`; add config before hardcoding thresholds.
 - Use structured parsing and typed models where the codebase already has them.
 - Do not remove user-created zones, reviews, comments, or overrides.
+- Do not commit or push code unless the user explicitly asks for it in the current conversation.
 - If changing detector or strategy logic, update the matching doc in `docs/`.
 - If changing frontend behavior, run `npm run build`.
 - If changing backend logic, run relevant unit tests or the full test suite.
