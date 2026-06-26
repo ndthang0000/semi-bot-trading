@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from semi_bot_trading.chart import build_chart_payload
+from semi_bot_trading.chart import build_chart_payload, filter_traded_setup_candidates
 from semi_bot_trading.db import connect, init_db
 
 
@@ -47,6 +47,30 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual(payload["timeframe"], "M15")
         self.assertEqual(payload["layers"]["structure_timeframe"], "H1")
         self.assertEqual(payload["layers"]["structure"][0]["id"], "h1-s1")
+
+    def test_closed_live_order_does_not_hide_new_setup_for_same_zone(self) -> None:
+        candidate = {"id": "candidate-new", "primary_zone_id": "z1"}
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_live_order(conn, status="closed", zone_id="z1")
+
+                filtered = filter_traded_setup_candidates(conn, "XAUUSD", [candidate])
+
+        self.assertEqual([candidate], filtered)
+
+    def test_open_live_order_hides_setup_for_same_zone(self) -> None:
+        candidate = {"id": "candidate-new", "primary_zone_id": "z1"}
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_live_order(conn, status="filled", zone_id="z1")
+
+                filtered = filter_traded_setup_candidates(conn, "XAUUSD", [candidate])
+
+        self.assertEqual([], filtered)
 
 
 def seed_chart_data(conn) -> None:
@@ -121,6 +145,39 @@ def seed_chart_data(conn) -> None:
                 0.9, 'bullish', 0.9, 'bot', '2026-01-01T00:00:00+00:00',
                 NULL, 'active', '{}')
         """
+    )
+    conn.commit()
+
+
+def seed_live_order(conn, status: str, zone_id: str) -> None:
+    candidate = {"id": "candidate-old", "primary_zone_id": zone_id}
+    conn.execute(
+        """
+        INSERT INTO trade_ideas (
+            id, symbol, direction, playbook, status, entry_zone_id,
+            related_zone_ids_json, context_snapshot_json, suggested_entry,
+            suggested_stop_loss, suggested_take_profit_json, risk_reward,
+            created_at, expires_at
+        )
+        VALUES ('idea-1', 'XAUUSD', 'long', 'zone_reaction_v2', 'approved',
+                ?, '[]', ?, 100, 95, '[110]', 2.0,
+                '2026-01-01T00:00:00+00:00', NULL)
+        """,
+        (zone_id, json.dumps({"candidate": candidate})),
+    )
+    conn.execute(
+        """
+        INSERT INTO trade_orders (
+            id, trade_idea_id, symbol, side, order_type, status, entry_price,
+            stop_loss, take_profit_json, quantity, opened_at, closed_at,
+            source, metadata_json, created_at
+        )
+        VALUES ('order-1', 'idea-1', 'XAUUSD', 'buy', 'market', ?, 100,
+                95, '[110]', 0.01, '2026-01-01T00:00:00+00:00',
+                CASE WHEN ? = 'closed' THEN '2026-01-01T01:00:00+00:00' ELSE NULL END,
+                'live', ?, '2026-01-01T00:00:00+00:00')
+        """,
+        (status, status, json.dumps({"candidate_id": "candidate-old"})),
     )
     conn.commit()
 

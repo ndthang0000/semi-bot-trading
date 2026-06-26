@@ -76,6 +76,24 @@ def build_setup_candidates(
             continue
         reaction_v2 = classify_zone_reaction_v2(zone, candles, atr, config)
         if reaction_v2.state == "far":
+            carried = _carry_forward_zone_reaction_v2(
+                symbol=symbol,
+                zone=zone,
+                candles=candles,
+                atr=atr,
+                bias_value=bias_value,
+                secondary_bias=secondary_bias,
+                regime_value=regime_value,
+                overlays=overlays,
+                recent_points=recent_points,
+                active_reaction_zones=active_reaction_zones,
+                config=config,
+                macro_trend_value=macro_trend_value,
+                stop_fallback_atr=context_atr,
+                stop_fallback_atr_timeframe=context_atr_timeframe,
+            )
+            if carried:
+                candidates.extend(carried)
             continue
         candidates.extend(
             evaluate_zone_reaction_v2(
@@ -150,6 +168,69 @@ def build_setup_candidates(
         selected.append(candidate)
 
     return [candidate.to_chart() for candidate in selected]
+
+
+def _carry_forward_zone_reaction_v2(
+    *,
+    symbol: str,
+    zone: dict[str, Any],
+    candles: list[dict[str, Any]],
+    atr: float,
+    bias_value: str,
+    secondary_bias: Any,
+    regime_value: str,
+    overlays: set[str],
+    recent_points: list[dict[str, Any]],
+    active_reaction_zones: list[dict[str, Any]],
+    config: StrategyConfig,
+    macro_trend_value: str,
+    stop_fallback_atr: float,
+    stop_fallback_atr_timeframe: str,
+) -> list[SetupCandidate]:
+    """Keep a fresh signal visible briefly after price leaves the zone."""
+    lookback = max(int(config.waiting_candles), 0)
+    if lookback <= 0 or len(candles) < 2:
+        return []
+    current_time = str(candles[-1]["time"])
+    start_index = max(0, len(candles) - lookback - 1)
+    for index in range(len(candles) - 2, start_index - 1, -1):
+        signal_candles = candles[: index + 1]
+        signal_reaction = classify_zone_reaction_v2(zone, signal_candles, atr, config)
+        if signal_reaction.state in {"far", "approaching"}:
+            continue
+        signal_candidates = evaluate_zone_reaction_v2(
+            symbol,
+            zone,
+            signal_reaction,
+            float(signal_candles[-1]["close"]),
+            atr,
+            bias_value,
+            secondary_bias,
+            regime_value,
+            overlays,
+            recent_points,
+            active_reaction_zones,
+            config,
+            as_of=str(signal_candles[-1]["time"]),
+            macro_trend=macro_trend_value,
+            stop_fallback_atr=stop_fallback_atr,
+            stop_fallback_atr_timeframe=stop_fallback_atr_timeframe,
+        )
+        visible_candidates = [
+            replace(
+                candidate,
+                metadata={
+                    **candidate.metadata,
+                    "carried_forward": True,
+                    "carried_forward_current_as_of": current_time,
+                },
+            )
+            for candidate in signal_candidates
+            if candidate.status in {"eligible", "waiting_confirmation", "watching"}
+        ]
+        if visible_candidates:
+            return visible_candidates
+    return []
 
 
 def _h1_rsi_metadata(context_timeframe: str, context_candles: list[dict[str, Any]] | None) -> dict[str, Any]:

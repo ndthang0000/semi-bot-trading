@@ -521,6 +521,7 @@ def load_live_traded_candidate_refs(conn: Connection, symbol: str) -> tuple[set[
         WHERE trade_orders.symbol = ?
           AND trade_orders.source = 'live'
           AND trade_orders.opened_at IS NOT NULL
+          AND trade_orders.status IN ('filled', 'pending_fill')
         """,
         (symbol,),
     ).fetchall()

@@ -247,6 +247,32 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("long", reaction.direction)
         self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
 
+    def test_zone_reaction_v2_carries_recent_reject_after_price_leaves_zone(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 109, 111),
+            candle("00:15", 111, 113, 110, 112),
+            candle("00:30", 112, 113, 100, 108),
+            candle("00:45", 108, 116, 107, 115),
+            candle("01:00", 125, 126, 124, 125),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("support", "bullish", 100, 105)],
+            contexts(),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual("2026-01-01T00:45:00+00:00", candidates[0]["metadata"]["as_of"])
+        self.assertTrue(candidates[0]["metadata"]["carried_forward"])
+        self.assertEqual("2026-01-01T01:00:00+00:00", candidates[0]["metadata"]["carried_forward_current_as_of"])
+
     def test_bullish_strong_reject_accepts_bullish_candle_body(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),
