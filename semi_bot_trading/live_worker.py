@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from sqlite3 import Connection
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .alerts import queue_alert, send_pending_telegram_alerts
 from .candles import upsert_candles, upsert_live_candle
@@ -210,6 +211,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
+            maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
         if has_new_closed_m15:
@@ -641,6 +643,9 @@ def maybe_execute_candidates(
 ) -> None:
     if not env.execution_enabled:
         return
+    if is_weekend_no_new_trade_window(env, datetime.now(UTC)):
+        logger.warning("maybe_execute_candidates: weekend cutoff active — skipping execution")
+        return
     # Bug #5: broker_symbol is resolved at startup; if resolution failed the
     # string is empty.  Executing against an empty symbol would query wrong
     # prices and place orders on a random/default instrument.
@@ -738,6 +743,136 @@ def maybe_execute_candidates(
         lot_size=assessment.lot_size,
         pricing_plan=pricing_plan,
     )
+
+
+def maybe_weekend_flatten(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    now: datetime | None = None,
+) -> bool:
+    """Cancel pending orders and close open positions once the Friday flatten window starts."""
+    if not env.execution_enabled or not env.weekend_flatten_enabled or not broker_symbol:
+        return False
+    now = now or datetime.now(UTC)
+    if not is_weekend_flatten_window(env, now):
+        return False
+
+    action_date = _local_datetime(env, now).date().isoformat()
+    did_anything = False
+    cancelled: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []
+    try:
+        cancelled = client.cancel_pending_orders(broker_symbol, comment="Friday flatten")
+        closed = client.close_open_positions(broker_symbol, magic=env.mt5_magic, comment="Friday flatten")
+        did_anything = bool(cancelled or closed)
+    except Exception as exc:
+        logger.exception("Weekend flatten failed")
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="critical",
+            entity_ids=[],
+            payload={"title": "Weekend flatten failed", "reason": [str(exc)]},
+            dedupe_key=f"weekend-flatten-failed:{config.symbol}:{action_date}",
+        )
+        return False
+
+    if cancelled:
+        _mark_live_pending_orders_cancelled(conn, config.symbol, utc_now_iso())
+    if closed:
+        sync_closed_positions(conn, config, env, client, broker_symbol)
+
+    if did_anything:
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="critical",
+            entity_ids=[],
+            payload={
+                "title": "Weekend flatten completed",
+                "reason": [
+                    f"Cancelled pending orders: {len(cancelled)}",
+                    f"Closed positions: {len(closed)}",
+                ],
+            },
+            dedupe_key=f"weekend-flatten:{config.symbol}:{action_date}",
+        )
+        conn.commit()
+    return did_anything
+
+
+def _mark_live_pending_orders_cancelled(conn: Connection, symbol: str, now: str) -> None:
+    conn.execute(
+        """
+        UPDATE trade_orders
+        SET status = 'cancelled',
+            closed_at = COALESCE(closed_at, ?),
+            updated_at = ?
+        WHERE symbol = ?
+          AND source = 'live'
+          AND status = 'pending_fill'
+        """,
+        (now, now, symbol),
+    )
+
+
+def is_weekend_no_new_trade_window(env: RuntimeEnv, now: datetime | None = None) -> bool:
+    if not env.weekend_flatten_enabled:
+        return False
+    local_now = _local_datetime(env, now or datetime.now(UTC))
+    cutoff = _parse_hhmm(env.weekend_no_new_trades_time, "12:00")
+    return _is_weekend_risk_window(local_now, cutoff)
+
+
+def is_weekend_flatten_window(env: RuntimeEnv, now: datetime | None = None) -> bool:
+    if not env.weekend_flatten_enabled:
+        return False
+    local_now = _local_datetime(env, now or datetime.now(UTC))
+    cutoff = _parse_hhmm(env.weekend_flatten_time, "15:30")
+    return _is_weekend_risk_window(local_now, cutoff)
+
+
+def _is_weekend_risk_window(local_now: datetime, cutoff: tuple[int, int]) -> bool:
+    weekday = local_now.weekday()  # Monday=0, Friday=4
+    if weekday == 4:
+        return (local_now.hour, local_now.minute) >= cutoff
+    if weekday == 5:
+        return True
+    if weekday == 6:
+        return (local_now.hour, local_now.minute) < (17, 0)
+    return False
+
+
+def _local_datetime(env: RuntimeEnv, now: datetime) -> datetime:
+    aware = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    try:
+        timezone = ZoneInfo(env.weekend_flatten_timezone)
+    except ZoneInfoNotFoundError:
+        logger.warning("Unknown WEEKEND_FLATTEN_TIMEZONE=%s; falling back to UTC", env.weekend_flatten_timezone)
+        timezone = UTC
+    return aware.astimezone(timezone)
+
+
+def _parse_hhmm(value: str, fallback: str) -> tuple[int, int]:
+    raw = value or fallback
+    try:
+        hour_text, minute_text = raw.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except (TypeError, ValueError):
+        hour_text, minute_text = fallback.split(":", 1)
+        return int(hour_text), int(minute_text)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        hour_text, minute_text = fallback.split(":", 1)
+        return int(hour_text), int(minute_text)
+    return hour, minute
 
 
 def build_execution_pricing_plan(

@@ -121,6 +121,10 @@ class LiveIntegrationTest(unittest.TestCase):
             admin_password_hash=None,
             allowed_origins=[],
             environment="development",
+            weekend_flatten_enabled=False,
+            weekend_flatten_timezone="America/New_York",
+            weekend_no_new_trades_time="12:00",
+            weekend_flatten_time="15:30",
         )
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
@@ -247,6 +251,10 @@ class LiveIntegrationTest(unittest.TestCase):
                 admin_password_hash=None,
                 allowed_origins=[],
                 environment="development",
+                weekend_flatten_enabled=False,
+                weekend_flatten_timezone="America/New_York",
+                weekend_no_new_trades_time="12:00",
+                weekend_flatten_time="15:30",
             )
             state = LiveWorkerState(
                 broker_symbol="XAUUSDm",

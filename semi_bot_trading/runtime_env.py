@@ -41,6 +41,11 @@ class RuntimeEnv:
     allowed_origins: list[str]
     # Environment — "development" | "production"
     environment: str
+    # Weekend risk controls
+    weekend_flatten_enabled: bool = True
+    weekend_flatten_timezone: str = "America/New_York"
+    weekend_no_new_trades_time: str = "12:00"
+    weekend_flatten_time: str = "15:30"
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -90,6 +95,10 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
             ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8765", "http://localhost:8765"],
         ),
         environment=env_text("ENVIRONMENT", "development") or "development",
+        weekend_flatten_enabled=env_bool("WEEKEND_FLATTEN_ENABLED", True),
+        weekend_flatten_timezone=env_text("WEEKEND_FLATTEN_TIMEZONE", "America/New_York") or "America/New_York",
+        weekend_no_new_trades_time=env_text("WEEKEND_NO_NEW_TRADES_TIME", "12:00") or "12:00",
+        weekend_flatten_time=env_text("WEEKEND_FLATTEN_TIME", "15:30") or "15:30",
     )
 
 

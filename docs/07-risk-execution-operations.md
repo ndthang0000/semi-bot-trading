@@ -185,6 +185,26 @@ Metrics:
 - Risk rejection count.
 - Executor errors.
 
+## Weekend Flatten
+
+Voi style XAUUSD H1/M15 zone reaction, live worker khong giu lenh qua weekend. Mac dinh:
+
+- Ngung mo lenh moi sau `Friday 12:00 America/New_York`.
+- Tu dong cancel pending orders va close open positions sau `Friday 15:30 America/New_York`.
+- `Friday 15:30 America/New_York` thuong la `Saturday 02:30 Asia/Ho_Chi_Minh` khi New York dang DST.
+- Weekend window ket thuc luc `Sunday 17:00 America/New_York`, gan voi luc thi truong mo lai tuan moi.
+
+Config `.env`:
+
+```text
+WEEKEND_FLATTEN_ENABLED=true
+WEEKEND_FLATTEN_TIMEZONE=America/New_York
+WEEKEND_NO_NEW_TRADES_TIME=12:00
+WEEKEND_FLATTEN_TIME=15:30
+```
+
+Dung timezone New York de tu dong dung khi DST doi gio; tranh hard-code gio Viet Nam.
+
 ## Spread Monitoring
 
 Live worker lưu bid/ask/spread của XAUUSD mỗi vòng poll vào `spread_snapshots`. Spread được lưu theo price unit giống `MAX_SPREAD_PRICE`, ví dụ XAUUSD spread `1.20` nghĩa là ask-bid lệch 1.20 USD.

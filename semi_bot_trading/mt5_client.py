@@ -229,6 +229,65 @@ class MT5BrokerClient:
             return 0
         return len(positions)
 
+    def cancel_pending_orders(self, broker_symbol: str, *, comment: str = "weekend flatten") -> list[dict[str, Any]]:
+        """Cancel all pending orders for a symbol and return MT5 responses."""
+        self.ensure_symbol(broker_symbol)
+        orders = self.mt5.orders_get(symbol=broker_symbol)
+        if not orders:
+            return []
+        results: list[dict[str, Any]] = []
+        for order in orders:
+            payload = {
+                "action": self.mt5.TRADE_ACTION_REMOVE,
+                "order": int(order.ticket),
+                "symbol": broker_symbol,
+                "comment": comment[:31],
+            }
+            result = self.mt5.order_send(payload)
+            if result is None:
+                raise RuntimeError(f"MT5 cancel order failed: {self.mt5.last_error()}")
+            data = result._asdict()
+            retcode = int(data.get("retcode", -1))
+            if retcode != self.mt5.TRADE_RETCODE_DONE:
+                raise RuntimeError(f"MT5 cancel order rejected retcode={retcode}: {data}")
+            results.append(data)
+        return results
+
+    def close_open_positions(self, broker_symbol: str, *, magic: int, comment: str = "weekend flatten") -> list[dict[str, Any]]:
+        """Close all open positions for a symbol at market and return MT5 responses."""
+        self.ensure_symbol(broker_symbol)
+        positions = self.mt5.positions_get(symbol=broker_symbol)
+        if not positions:
+            return []
+        results: list[dict[str, Any]] = []
+        filling_mode = self.order_filling_mode(broker_symbol)
+        for position in positions:
+            side = "sell" if int(position.type) == self.mt5.POSITION_TYPE_BUY else "buy"
+            order_type = self.mt5.ORDER_TYPE_SELL if side == "sell" else self.mt5.ORDER_TYPE_BUY
+            price = self.current_price_for_side(broker_symbol, side)
+            payload = {
+                "action": self.mt5.TRADE_ACTION_DEAL,
+                "symbol": broker_symbol,
+                "volume": float(position.volume),
+                "type": order_type,
+                "position": int(position.ticket),
+                "price": price,
+                "deviation": 30,
+                "magic": magic,
+                "comment": comment[:31],
+                "type_time": self.mt5.ORDER_TIME_GTC,
+                "type_filling": filling_mode,
+            }
+            result = self.mt5.order_send(payload)
+            if result is None:
+                raise RuntimeError(f"MT5 close position failed: {self.mt5.last_error()}")
+            data = result._asdict()
+            retcode = int(data.get("retcode", -1))
+            if retcode != self.mt5.TRADE_RETCODE_DONE:
+                raise RuntimeError(f"MT5 close position rejected retcode={retcode}: {data}")
+            results.append(data)
+        return results
+
     def get_open_position_tickets(self, broker_symbol: str) -> set[str]:
         """Return ticket IDs of all currently open positions for the symbol."""
         positions = self.mt5.positions_get(symbol=broker_symbol)

@@ -31,9 +31,12 @@ from semi_bot_trading.live_worker import (
     build_execution_pricing_plan,
     candidates_after_live_fvg_trade_count,
     execute_candidate,
+    is_weekend_flatten_window,
+    is_weekend_no_new_trade_window,
     live_candidate_already_executed,
     live_fvg_trade_count_for_zone,
     live_trade_count_today,
+    maybe_weekend_flatten,
     maybe_execute_candidates,
     sync_closed_positions,
     trading_session,
@@ -75,6 +78,10 @@ def _make_env(**overrides) -> RuntimeEnv:
         admin_password_hash=None,
         allowed_origins=[],
         environment="development",
+        weekend_flatten_enabled=False,
+        weekend_flatten_timezone="America/New_York",
+        weekend_no_new_trades_time="12:00",
+        weekend_flatten_time="15:30",
     )
     defaults.update(overrides)
     return RuntimeEnv(**defaults)
@@ -647,6 +654,19 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         self._run([_make_candidate()], env=env)
         self.assertEqual(0, self._order_count())
 
+    def test_weekend_no_new_trade_cutoff_blocks_execution(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        cutoff_now = datetime(2026, 6, 26, 16, 0, tzinfo=UTC)  # Friday 12:00 New York during DST
+        client = _fake_client()
+        with (
+            patch("semi_bot_trading.live_worker.datetime") as dt,
+            patch("semi_bot_trading.live_worker.build_risk_manager", return_value=_fake_risk_manager()),
+        ):
+            dt.now.return_value = cutoff_now
+            maybe_execute_candidates(self._conn, self._config, env, client, [_make_candidate()], "XAUUSDm")
+        self.assertEqual(0, self._order_count())
+        client.place_market_order.assert_not_called()
+
     def test_empty_broker_symbol_no_trade(self):
         env = _make_env()
         client = _fake_client()
@@ -755,6 +775,81 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         self.assertEqual(1, self._order_count())
         er = self._conn.execute("SELECT * FROM execution_requests").fetchone()
         self.assertEqual("sent", er["status"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# weekend flatten guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestWeekendFlatten(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._tmp.name)
+        self._config = replace(load_config(), database=self._db_path)
+
+    def tearDown(self):
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def test_no_new_trade_window_starts_friday_noon_new_york(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        before = datetime(2026, 6, 26, 15, 59, tzinfo=UTC)  # 11:59 New York
+        at_cutoff = datetime(2026, 6, 26, 16, 0, tzinfo=UTC)  # 12:00 New York
+        self.assertFalse(is_weekend_no_new_trade_window(env, before))
+        self.assertTrue(is_weekend_no_new_trade_window(env, at_cutoff))
+        sunday_before_reopen = datetime(2026, 6, 28, 20, 59, tzinfo=UTC)  # 16:59 New York
+        sunday_reopen = datetime(2026, 6, 28, 21, 0, tzinfo=UTC)  # 17:00 New York
+        self.assertTrue(is_weekend_no_new_trade_window(env, sunday_before_reopen))
+        self.assertFalse(is_weekend_no_new_trade_window(env, sunday_reopen))
+
+    def test_flatten_window_starts_friday_1530_new_york(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        before = datetime(2026, 6, 26, 19, 29, tzinfo=UTC)  # 15:29 New York
+        at_cutoff = datetime(2026, 6, 26, 19, 30, tzinfo=UTC)  # 15:30 New York
+        self.assertFalse(is_weekend_flatten_window(env, before))
+        self.assertTrue(is_weekend_flatten_window(env, at_cutoff))
+
+    def test_weekend_flatten_cancels_pending_and_closes_positions(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        client = _fake_client()
+        client.cancel_pending_orders.return_value = [{"order": 111, "retcode": 10009}]
+        client.close_open_positions.return_value = [{"order": 222, "deal": 333, "retcode": 10009}]
+        now = "2026-06-26T18:00:00+00:00"
+        self._conn.execute(
+            """INSERT INTO trade_ideas
+               (id, symbol, direction, playbook, status, entry_zone_id,
+                related_zone_ids_json, context_snapshot_json, suggested_entry,
+                suggested_stop_loss, suggested_take_profit_json, risk_reward, created_at)
+               VALUES ('idea-pending', 'XAUUSD', 'long', 'test', 'approved', NULL, '[]', '{}',
+                       3000, 2980, '[3040]', 2.0, ?)""",
+            (now,),
+        )
+        self._conn.execute(
+            """INSERT INTO trade_orders
+               (id, trade_idea_id, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity,
+                opened_at, source, metadata_json, created_at)
+               VALUES ('order-pending', 'idea-pending', 'XAUUSD', 'buy', 'limit', 'pending_fill',
+                       3000, 2980, '[3040]', 0.01, ?, 'live', '{}', ?)""",
+            (now, now),
+        )
+        self._conn.commit()
+
+        did_flatten = maybe_weekend_flatten(
+            self._conn,
+            self._config,
+            env,
+            client,
+            "XAUUSDm",
+            datetime(2026, 6, 26, 19, 30, tzinfo=UTC),
+        )
+
+        self.assertTrue(did_flatten)
+        client.cancel_pending_orders.assert_called_once_with("XAUUSDm", comment="Friday flatten")
+        client.close_open_positions.assert_called_once_with("XAUUSDm", magic=env.mt5_magic, comment="Friday flatten")
+        row = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'order-pending'").fetchone()
+        self.assertEqual("cancelled", row["status"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
