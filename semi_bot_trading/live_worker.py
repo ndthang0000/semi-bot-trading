@@ -6,7 +6,7 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from sqlite3 import Connection
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -853,11 +853,36 @@ def _is_weekend_risk_window(local_now: datetime, cutoff: tuple[int, int]) -> boo
 def _local_datetime(env: RuntimeEnv, now: datetime) -> datetime:
     aware = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     try:
-        timezone = ZoneInfo(env.weekend_flatten_timezone)
+        local_tz = ZoneInfo(env.weekend_flatten_timezone)
     except ZoneInfoNotFoundError:
+        if env.weekend_flatten_timezone == "America/New_York":
+            logger.warning("System timezone database is missing America/New_York; using built-in New York DST rules")
+            return _new_york_datetime(aware)
         logger.warning("Unknown WEEKEND_FLATTEN_TIMEZONE=%s; falling back to UTC", env.weekend_flatten_timezone)
-        timezone = UTC
-    return aware.astimezone(timezone)
+        local_tz = UTC
+    return aware.astimezone(local_tz)
+
+
+def _new_york_datetime(now: datetime) -> datetime:
+    """Convert an aware datetime to New York time without relying on system tzdata.
+
+    Windows VPS hosts often do not ship the IANA timezone database that
+    ZoneInfo("America/New_York") needs.  Using UTC as a fallback would trigger
+    Friday flatten several hours early, so keep a small US DST fallback here.
+    """
+    utc_now = now.astimezone(UTC)
+    year = utc_now.year
+    dst_start = _nth_weekday_utc(year, month=3, weekday=6, occurrence=2, hour=7)
+    dst_end = _nth_weekday_utc(year, month=11, weekday=6, occurrence=1, hour=6)
+    offset_hours = -4 if dst_start <= utc_now < dst_end else -5
+    return utc_now.astimezone(timezone(timedelta(hours=offset_hours), name="America/New_York"))
+
+
+def _nth_weekday_utc(year: int, *, month: int, weekday: int, occurrence: int, hour: int) -> datetime:
+    current = datetime(year, month, 1, hour, tzinfo=UTC)
+    days_until_weekday = (weekday - current.weekday()) % 7
+    day = 1 + days_until_weekday + (occurrence - 1) * 7
+    return datetime(year, month, day, hour, tzinfo=UTC)
 
 
 def _parse_hhmm(value: str, fallback: str) -> tuple[int, int]:

@@ -18,6 +18,7 @@ import json
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone as _tz
+from zoneinfo import ZoneInfoNotFoundError
 UTC = _tz.utc
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -809,6 +810,14 @@ class TestWeekendFlatten(unittest.TestCase):
         at_cutoff = datetime(2026, 6, 26, 19, 30, tzinfo=UTC)  # 15:30 New York
         self.assertFalse(is_weekend_flatten_window(env, before))
         self.assertTrue(is_weekend_flatten_window(env, at_cutoff))
+
+    def test_flatten_window_uses_new_york_fallback_when_tzdata_missing(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        deploy_time = datetime(2026, 6, 26, 17, 50, tzinfo=UTC)  # 13:50 New York, before flatten
+        flatten_time = datetime(2026, 6, 26, 19, 30, tzinfo=UTC)  # 15:30 New York
+        with patch("semi_bot_trading.live_worker.ZoneInfo", side_effect=ZoneInfoNotFoundError):
+            self.assertFalse(is_weekend_flatten_window(env, deploy_time))
+            self.assertTrue(is_weekend_flatten_window(env, flatten_time))
 
     def test_weekend_flatten_cancels_pending_and_closes_positions(self):
         env = _make_env(weekend_flatten_enabled=True)
