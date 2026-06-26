@@ -1,6 +1,6 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchChartPayload, fetchReplayTimeline, fetchSpreadSummary } from "../api/chart";
 import { ContextStrip } from "../components/ContextStrip";
 import { Inspector } from "../components/Inspector";
@@ -9,12 +9,14 @@ import { TopBar } from "../components/TopBar";
 import { TradingChart } from "../components/TradingChart";
 import type { NewsResponse } from "../api/chart";
 import { useChartStore } from "../store/chartStore";
+import type { ChartPayload, PriceZone } from "../types";
 
 type ChartPageProps = {
   newsData?: NewsResponse | null;
 };
 
 export function ChartPage({ newsData }: ChartPageProps) {
+  const queryClient = useQueryClient();
   const mode = window.location.pathname === "/replay-chart" ? "replay" : "dashboard";
   const isReplayRoute = mode === "replay";
   const symbol = useChartStore((state) => state.symbol);
@@ -50,6 +52,34 @@ export function ChartPage({ newsData }: ChartPageProps) {
     staleTime: 10_000,
     enabled: !isReplayRoute || (replayStart !== null && replayAt !== null),
   });
+
+  const refreshChart = useCallback(() => {
+    void chartQuery.refetch();
+  }, [chartQuery.refetch]);
+
+  const handleZonePersisted = useCallback(
+    (zone: PriceZone) => {
+      queryClient.setQueriesData<ChartPayload>({ queryKey: ["chart"] }, (current) => {
+        if (!current) return current;
+        let replaced = false;
+        const zones = current.layers.zones.map((existing) => {
+          if (existing.id !== zone.id) return existing;
+          replaced = true;
+          return zone;
+        });
+        if (!replaced) return current;
+        return {
+          ...current,
+          layers: {
+            ...current.layers,
+            zones,
+          },
+        };
+      });
+      void chartQuery.refetch();
+    },
+    [chartQuery.refetch, queryClient],
+  );
 
   const spreadQuery = useQuery({
     queryKey: ["spread", symbol],
@@ -98,7 +128,7 @@ export function ChartPage({ newsData }: ChartPageProps) {
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-950 text-slate-100">
-      <TopBar mode={mode} isFetching={chartQuery.isFetching || timelineQuery.isFetching} onRefresh={() => chartQuery.refetch()} newsData={newsData} />
+      <TopBar mode={mode} isFetching={chartQuery.isFetching || timelineQuery.isFetching} onRefresh={refreshChart} newsData={newsData} />
       <main className="grid min-h-0 grid-cols-[minmax(0,1fr)_340px]">
         <section className={`grid min-h-0 ${isReplayRoute ? "grid-rows-[auto_auto_minmax(0,1fr)]" : "grid-rows-[auto_minmax(0,1fr)]"}`}>
           <ContextStrip payload={chartQuery.data} onContextUpdated={() => chartQuery.refetch()} />
@@ -118,12 +148,17 @@ export function ChartPage({ newsData }: ChartPageProps) {
               </div>
             </div>
           ) : chartQuery.data ? (
-            <TradingChart payload={chartQuery.data} spread={spreadQuery.data ?? null} onEntityCreated={() => chartQuery.refetch()} />
+            <TradingChart
+              payload={chartQuery.data}
+              spread={spreadQuery.data ?? null}
+              onEntityCreated={refreshChart}
+              onZonePersisted={handleZonePersisted}
+            />
           ) : (
             <div className="grid place-items-center bg-ink-950 text-sm text-slate-500">Loading chart...</div>
           )}
         </section>
-        <Inspector payload={chartQuery.data} onZoneUpdated={() => chartQuery.refetch()} />
+        <Inspector payload={chartQuery.data} onZoneUpdated={refreshChart} />
       </main>
     </div>
   );

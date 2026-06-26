@@ -31,6 +31,7 @@ type TradingChartProps = {
   payload: ChartPayload;
   spread?: SpreadSummary | null;
   onEntityCreated: () => void;
+  onZonePersisted?: (zone: PriceZone) => void;
 };
 
 type ZoneBox = {
@@ -132,7 +133,7 @@ const REPLAY_VISIBLE_BARS = 120;
 const VERTICAL_FOCUS_BARS = 14;
 
 
-export function TradingChart({ payload, spread, onEntityCreated }: TradingChartProps) {
+export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -171,9 +172,12 @@ export function TradingChart({ payload, spread, onEntityCreated }: TradingChartP
   const importantZonesOnlyRef = useRef(importantZonesOnly);
   const maxVisibleZonesRef = useRef(maxVisibleZones);
   const addEntityKindRef = useRef(addEntityKind);
+  const onEntityCreatedRef = useRef(onEntityCreated);
+  const onZonePersistedRef = useRef(onZonePersisted);
   const handledZoneFocusRequestRef = useRef<number | null>(null);
   const handledTradeFocusRequestRef = useRef<number | null>(null);
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
+  const persistedZoneDraftRef = useRef<PriceZone | null>(null);
   const candleDataRef = useRef<CandleDatum[]>([]);
   const appliedCandleKeyRef = useRef<string | null>(null);
   const appliedViewKeyRef = useRef<string | null>(null);
@@ -212,6 +216,8 @@ export function TradingChart({ payload, spread, onEntityCreated }: TradingChartP
   importantZonesOnlyRef.current = importantZonesOnly;
   maxVisibleZonesRef.current = maxVisibleZones;
   addEntityKindRef.current = addEntityKind;
+  onEntityCreatedRef.current = onEntityCreated;
+  onZonePersistedRef.current = onZonePersisted;
   drawPreviewZoneRef.current = drawPreviewZone;
   candleDataRef.current = candleData;
 
@@ -489,12 +495,12 @@ export function TradingChart({ payload, spread, onEntityCreated }: TradingChartP
       setAddEntityKind(null);
       setSelected({ kind: "zone", entity: created });
       restoreLockedViewport(chartRef.current, lockedViewportRef);
-      onEntityCreated();
+      onEntityCreatedRef.current();
     } catch (err) {
       updateDrawPreview(null);
       setDrawError(err instanceof Error ? err.message : "Could not create entity.");
     }
-  }, [onEntityCreated, setAddEntityKind, setSelected, stopOverlayInteractionSync, updateDrawPreview]);
+  }, [setAddEntityKind, setSelected, stopOverlayInteractionSync, updateDrawPreview]);
 
   const beginZoneDrag = useCallback(
     (event: ReactPointerEvent<HTMLElement>, box: ZoneBox, mode: ZoneDragMode) => {
@@ -592,14 +598,19 @@ export function TradingChart({ payload, spread, onEntityCreated }: TradingChartP
           reason: "chart drag resize/move",
           trade_modes: defaultTradeModesForZone(zone),
         });
+        persistedZoneDraftRef.current = updated;
         updateDraftZone(updated, { preserveViewport: false });
-        onEntityCreated();
+        if (onZonePersistedRef.current) {
+          onZonePersistedRef.current(updated);
+        } else {
+          onEntityCreatedRef.current();
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Could not save zone drag.";
         setDrawError(message);
       }
     },
-    [onEntityCreated, updateDraftZone],
+    [updateDraftZone],
   );
 
   const finishZoneDrag = useCallback(() => {
@@ -645,14 +656,27 @@ export function TradingChart({ payload, spread, onEntityCreated }: TradingChartP
 
   useEffect(() => {
     if (selected?.kind === "zone") {
+      const persistedDraft = persistedZoneDraftRef.current;
+      if (persistedDraft?.id === selected.entity.id) {
+        const selectedOverrideAt = String(selected.entity.metadata?.last_human_override_at ?? "");
+        const draftOverrideAt = String(persistedDraft.metadata?.last_human_override_at ?? "");
+        if (!selectedOverrideAt || (draftOverrideAt && selectedOverrideAt < draftOverrideAt)) {
+          draftZoneRef.current = persistedDraft;
+          scheduleOverlayRecalc();
+          return;
+        }
+        persistedZoneDraftRef.current = null;
+      }
       draftZoneRef.current = selected.entity;
     } else {
+      persistedZoneDraftRef.current = null;
       draftZoneRef.current = null;
     }
     scheduleOverlayRecalc();
   }, [scheduleOverlayRecalc, selected]);
 
   useEffect(() => {
+    payloadRef.current = payload;
     scheduleOverlayRecalc();
   }, [importantZonesOnly, maxVisibleZones, payload, scheduleOverlayRecalc, showStructure, showZones]);
 
