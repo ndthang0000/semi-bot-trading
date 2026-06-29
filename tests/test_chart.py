@@ -5,6 +5,8 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from semi_bot_trading.chart import build_chart_payload, filter_traded_setup_candidates
 from semi_bot_trading.db import connect, init_db
@@ -71,6 +73,42 @@ class ChartPayloadTest(unittest.TestCase):
                 filtered = filter_traded_setup_candidates(conn, "XAUUSD", [candidate])
 
         self.assertEqual([], filtered)
+
+    def test_live_strategy_candle_is_opt_in_for_setup_evaluation(self) -> None:
+        captured_lengths: list[int] = []
+
+        def fake_build_setup_candidates(**kwargs):
+            captured_lengths.append(len(kwargs["candles"]))
+            return []
+
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_chart_data(conn)
+                seed_live_candle(conn)
+                strategy_config = SimpleNamespace(timeframe="M15")
+
+                with patch("semi_bot_trading.chart.build_setup_candidates", side_effect=fake_build_setup_candidates):
+                    build_chart_payload(
+                        conn,
+                        "XAUUSD",
+                        "M15",
+                        limit=2,
+                        strategy_config=strategy_config,
+                        structure_timeframe="H1",
+                    )
+                    build_chart_payload(
+                        conn,
+                        "XAUUSD",
+                        "M15",
+                        limit=2,
+                        strategy_config=strategy_config,
+                        structure_timeframe="H1",
+                        include_live_strategy_candle=True,
+                    )
+
+        self.assertEqual([2, 3], captured_lengths)
 
 
 def seed_chart_data(conn) -> None:
@@ -144,6 +182,21 @@ def seed_chart_data(conn) -> None:
         VALUES ('ctx2', 'XAUUSD', 'H1', 'bias', 'bullish', 'bullish', NULL,
                 0.9, 'bullish', 0.9, 'bot', '2026-01-01T00:00:00+00:00',
                 NULL, 'active', '{}')
+        """
+    )
+    conn.commit()
+
+
+def seed_live_candle(conn) -> None:
+    conn.execute(
+        """
+        INSERT INTO live_candles (
+            id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+        )
+        VALUES (
+            'live-m15', 'XAUUSD', 'M15', '2026-01-01T00:30:00+00:00',
+            '2026-01-01T00:45:00+00:00', 2003, 2006, 2002, 2005, 50, 'test'
+        )
         """
     )
     conn.commit()

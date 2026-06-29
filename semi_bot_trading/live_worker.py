@@ -243,6 +243,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
                 strategy_config=config.strategy,
                 candidate_zone_timeframes={config.bias.timeframe},
                 macro_trend_config=config.macro_trend,
+                include_live_strategy_candle=env.live_evaluate_intrabar,
             )
             queue_setup_alerts(conn, config, env, payload["layers"].get("setup_candidates", []))
             maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)

@@ -1167,6 +1167,50 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
         self.assertEqual("long", candidates[0]["direction"])
 
+    def test_zone_reaction_v2_support_internal_only_can_promote_from_slow_reaction(self) -> None:
+        candles = [candle("00:15", 102, 109, 101, 108)]
+        support = zone("support", "bullish", 100, 110)
+        support["source"] = "human"
+        support["metadata"] = {"human_created": True, "trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bearish", "trending", macro_trend="down"),
+            candles,
+            [
+                point("BOS", "up", "00:15", "bos1"),
+                point("marubozu_bullish", "up", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual(["internal_reject"], candidates[0]["metadata"]["trade_modes"])
+        self.assertTrue(candidates[0]["metadata"]["context_bypass"])
+
+    def test_zone_reaction_v2_support_internal_only_surfaces_waiting_state(self) -> None:
+        candles = [candle("00:15", 102, 109, 101, 108)]
+        support = zone("support", "bullish", 100, 110)
+        support["source"] = "human"
+        support["metadata"] = {"human_created": True, "trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bearish", "trending", macro_trend="down"),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
+        self.assertEqual(["internal_reject"], candidates[0]["metadata"]["trade_modes"])
+
     def test_zone_reaction_v2_resistance_internal_reject_short(self) -> None:
         candles = [candle("00:15", 108, 109, 101, 102)]
 

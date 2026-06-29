@@ -623,8 +623,9 @@ def evaluate_zone_reaction_v2(
     # trade_modes governs which reaction families a zone may trade. Human-created
     # or human-adjusted zones bypass context gates for the allowed family: the
     # thesis is explicit even when the UI uses the zone-type default trade modes.
-    required_mode = "internal_reject" if reaction.state == "internal_reject" else "reject"
-    if required_mode not in zone_trade_modes(zone):
+    trade_modes = zone_trade_modes(zone)
+    required_mode = zone_reaction_required_mode(reaction, trade_modes)
+    if required_mode not in trade_modes:
         return []
     context_bypass = zone_has_explicit_trade_mode(zone, required_mode) or zone_is_human_thesis(zone)
 
@@ -659,6 +660,9 @@ def evaluate_zone_reaction_v2(
         has_price_action_trigger=bool(recent_price_action_trigger_ids),
         has_current_trigger=current_has_internal_trigger,
     )
+    required_mode = zone_reaction_required_mode(reaction, trade_modes)
+    if required_mode not in trade_modes:
+        return []
     if reaction.state == "internal_reject":
         trigger_ids = unique_ids([*recent_structure_trigger_ids, *recent_price_action_trigger_ids])
         structure_trigger_ids = recent_structure_trigger_ids
@@ -756,7 +760,7 @@ def evaluate_zone_reaction_v2(
             "h1_regime": regime,
             "macro_trend": macro_trend,
             "context_bypass": context_bypass,
-            "trade_modes": zone_trade_modes(zone),
+            "trade_modes": trade_modes,
             "overlays": sorted(overlays),
             "trigger_types": trigger_types,
             "structure_trigger_ids": structure_trigger_ids,
@@ -780,6 +784,14 @@ def evaluate_zone_reaction_v2(
         },
     )
     return [candidate]
+
+
+def zone_reaction_required_mode(reaction: ReactionResult, trade_modes: list[str]) -> str:
+    if reaction.state == "internal_reject":
+        return "internal_reject"
+    if reaction.state in {"slow_reaction", "waiting_bos"} and "internal_reject" in trade_modes:
+        return "internal_reject"
+    return "reject"
 
 
 # ---------------------------------------------------------------------------

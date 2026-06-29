@@ -285,7 +285,87 @@ class LiveIntegrationTest(unittest.TestCase):
             detectors.assert_not_called()
             build_payload.assert_called_once()
             self.assertEqual({"H1"}, build_payload.call_args.kwargs["candidate_zone_timeframes"])
+            self.assertFalse(build_payload.call_args.kwargs["include_live_strategy_candle"])
             self.assertEqual([[{"id": "candidate-1", "status": "eligible"}]], execute_calls)
+
+    def test_live_worker_passes_intrabar_flag_to_setup_evaluation(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            config = replace(load_config(), database=db_path)
+            closed_at = datetime(2026, 1, 1, 0, 15, tzinfo=UTC)
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                upsert_candles(
+                    conn,
+                    [
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe=config.strategy.timeframe,
+                            open_time=closed_at,
+                            close_time=closed_at + timedelta(minutes=15),
+                            open=4220,
+                            high=4230,
+                            low=4210,
+                            close=4225,
+                            volume=1,
+                            source="test",
+                        )
+                    ],
+                )
+            finally:
+                conn.close()
+
+            env = RuntimeEnv(
+                mt5_login=None,
+                mt5_password=None,
+                mt5_server=None,
+                mt5_path=None,
+                mt5_symbol="XAUUSDm",
+                mt5_magic=260612,
+                telegram_token=None,
+                telegram_chat_id=None,
+                execution_enabled=False,
+                live_order_volume=0.01,
+                max_open_positions_per_symbol=1,
+                max_trades_per_day=10,
+                poll_seconds=15,
+                poll_at_seconds=(1, 16, 31, 46),
+                max_entry_drift_price=2.0,
+                max_spread_price=2.0,
+                live_evaluate_intrabar=True,
+                chart_url_base="http://127.0.0.1:5173",
+                account_label="Test",
+                account_profile="personal",
+                risk_per_trade_pct=None,
+                secret_key="",
+                admin_username="admin",
+                admin_password_hash=None,
+                allowed_origins=[],
+                environment="development",
+                weekend_flatten_enabled=False,
+                weekend_flatten_timezone="America/New_York",
+                weekend_no_new_trades_time="12:00",
+                weekend_flatten_time="15:30",
+            )
+            state = LiveWorkerState(broker_symbol="XAUUSDm", last_closed_m15=closed_at.isoformat())
+
+            class FakeClient:
+                pass
+
+            with (
+                patch("semi_bot_trading.live_worker.sync_mt5_candles"),
+                patch("semi_bot_trading.live_worker.sync_closed_positions"),
+                patch("semi_bot_trading.live_worker.run_live_detectors"),
+                patch("semi_bot_trading.live_worker.snapshot_account"),
+                patch("semi_bot_trading.live_worker.snapshot_spread"),
+                patch("semi_bot_trading.live_worker.build_chart_payload", return_value={"layers": {"setup_candidates": []}}) as build_payload,
+                patch("semi_bot_trading.live_worker.queue_setup_alerts"),
+                patch("semi_bot_trading.live_worker.send_pending_telegram_alerts"),
+            ):
+                run_live_iteration(config, env, FakeClient(), state)
+
+        self.assertTrue(build_payload.call_args.kwargs["include_live_strategy_candle"])
 
     def test_run_live_detectors_only_builds_zones_for_bias_timeframe(self) -> None:
         # H1 is the only zone/context timeframe. M15 must still get swing/break

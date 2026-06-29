@@ -622,6 +622,7 @@ def build_chart_payload(
     candidate_zone_timeframes: set[str] | None = None,
     allowed_playbooks: set[str] | None = None,
     macro_trend_config: Any | None = None,
+    include_live_strategy_candle: bool = False,
 ) -> dict[str, Any]:
     candles = load_chart_candles(conn, symbol, timeframe, limit, start, end, start_index)
     if not candles:
@@ -672,6 +673,12 @@ def build_chart_payload(
         # after the current H1 candle opens are invisible until the next H1 close.
         strategy_end = None if is_latest_mode else range_end
         strategy_candles = load_chart_candles(conn, symbol, strategy_config.timeframe, 240, end=strategy_end)
+        if include_live_strategy_candle and is_latest_mode:
+            live_strategy_candle = load_live_candle(conn, symbol, strategy_config.timeframe)
+            if live_strategy_candle is not None and (
+                not strategy_candles or live_strategy_candle["time"] > strategy_candles[-1]["time"]
+            ):
+                strategy_candles = [*strategy_candles, live_strategy_candle]
         context_candles = load_chart_candles(conn, symbol, effective_structure_timeframe, 240, end=range_end)
         if strategy_candles:
             setup_candidates = build_setup_candidates(

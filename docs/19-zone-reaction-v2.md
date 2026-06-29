@@ -89,6 +89,7 @@ Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 - Default theo zone type: `support`/`resistance` = `["reject"]`, `fvg` = `["reject", "internal_reject"]`.
 - Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR, stop limit) van ap dung.
 - He qua: bot SR zone khong con trade `internal_reject` theo default; muon internal reject tren SR zone cu the thi human set `trade_modes = ["reject", "internal_reject"]`.
+- Neu human set SR zone chi `trade_modes = ["internal_reject"]`, cac state tien-xac-nhan nhu `slow_reaction`/`waiting_bos` van duoc emit len UI de debug va cho BOS/CHOCH + price action; chung chi thanh `eligible` khi promote duoc thanh `internal_reject`.
 - Metadata candidate ghi `context_bypass` va `trade_modes` de debug.
 
 ## Context Rules
@@ -294,6 +295,8 @@ LIVE_EVALUATE_INTRABAR=true
 ```
 
 Khi bat, worker se build setup candidates moi poll bang live candle moi nhat. Dieu nay giup ghi nhan touch som hon, nhung cung co nghia live execution co the vao lenh truoc khi nen M15 dong. Khi de `false`, bot chi evaluate setup khi co M15 dong nen moi.
+
+Luu y: intrabar candle chi them OHLC dang chay vao strategy evaluation. Structure/price-action detectors van chi cap nhat tren nen M15 da dong, nen cac setup can BOS/CHOCH + PA (nhu `internal_reject` tren SR zone) van phai doi trigger confirmed tru khi trigger do da co san trong reaction window.
 
 ## Backtest Zone Loss Cooldown
 
