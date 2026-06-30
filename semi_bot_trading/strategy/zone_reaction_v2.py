@@ -567,6 +567,11 @@ def promote_internal_reject_if_confirmed(
         reason = [f"Internal reject inside {side} after {penetration:.2f} ATR penetration."]
 
     metadata["internal_reject_reason"] = reason[0]
+    confirmation_reason = (
+        "M15 BOS/CHOCH and price action confirmed inside zone."
+        if requires_structure
+        else "M15 price action confirmed inside zone."
+    )
     return reaction_v2(
         "internal_reject",
         direction,
@@ -574,7 +579,7 @@ def promote_internal_reject_if_confirmed(
         candle,
         [
             *reason,
-            "M15 BOS/CHOCH and price action confirmed inside zone.",
+            confirmation_reason,
         ],
         float(base_reaction.metadata.get("breakout_buffer", 0.0)),
         {

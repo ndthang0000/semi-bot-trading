@@ -164,8 +164,9 @@ require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
 internal_reject_enabled = true
 internal_reject_requires_structure = false
-# SR zones keep the stricter BOS/CHOCH requirement; PA-only inside SR backtested badly.
-internal_reject_sr_requires_structure = true
+# SR internal reject can trigger from strong PA alone; human SR zones often encode
+# the structure thesis already, while bot zones still need PA/RR/stop quality.
+internal_reject_sr_requires_structure = false
 internal_reject_requires_price_action = true
 internal_reject_watch_after_fvg_fill_bars = 8
 internal_reject_min_fvg_fill_ratio = 0.4

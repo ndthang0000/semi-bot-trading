@@ -145,6 +145,7 @@ class LiveIntegrationTest(unittest.TestCase):
                             "entry": 4112.791,
                             "stop_loss": 4085.95656,
                             "take_profit": [4179.8771],
+                            "metadata": {"zone_type": "fvg"},
                             "reason": ["Reaction V2: slow_reaction."],
                         }
                     ],
@@ -157,7 +158,76 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertEqual(1, len(alerts))
         self.assertEqual("H1", alerts[0].timeframe)
         self.assertTrue(message.startswith("[XAUUSD H1] [WAIT] zone-reaction-v2 LONG"))
+        self.assertIn("Zone type: FVG", message)
         self.assertIn("Context H1 / trigger M15", message)
+
+    def test_blocked_setup_alert_includes_block_reason(self) -> None:
+        config = load_config()
+        env = RuntimeEnv(
+            mt5_login=None,
+            mt5_password=None,
+            mt5_server=None,
+            mt5_path=None,
+            mt5_symbol="XAUUSDm",
+            mt5_magic=260612,
+            telegram_token=None,
+            telegram_chat_id=None,
+            execution_enabled=False,
+            live_order_volume=0.01,
+            max_open_positions_per_symbol=1,
+            max_trades_per_day=10,
+            poll_seconds=15.0,
+            poll_at_seconds=(1, 16, 31, 46),
+            max_entry_drift_price=2.0,
+            max_spread_price=2.0,
+            live_evaluate_intrabar=False,
+            chart_url_base="http://127.0.0.1:5173",
+            account_label="Test",
+            account_profile="personal",
+            risk_per_trade_pct=None,
+            secret_key="",
+            admin_username="admin",
+            admin_password_hash=None,
+            allowed_origins=[],
+            environment="development",
+            weekend_flatten_enabled=False,
+            weekend_flatten_timezone="America/New_York",
+            weekend_no_new_trades_time="12:00",
+            weekend_flatten_time="15:30",
+        )
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                queue_setup_alerts(
+                    conn,
+                    config,
+                    env,
+                    [
+                        {
+                            "id": "candidate-blocked-macro",
+                            "timeframe": "M15",
+                            "playbook": "zone_reaction_v2",
+                            "direction": "long",
+                            "status": "blocked",
+                            "entry": 4024.95,
+                            "stop_loss": 3997.59,
+                            "take_profit": [4093.36],
+                            "reason": ["Reaction V2: reject."],
+                            "blocked_reason": ["Macro trend down blocks Zone Reaction V2 long."],
+                        }
+                    ],
+                )
+                alerts = pending_alerts(conn)
+                message = format_alert_message(alerts[0])
+            finally:
+                conn.close()
+
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("watch", alerts[0].severity)
+        self.assertTrue(message.startswith("[XAUUSD H1] [BLOCK] zone-reaction-v2 LONG"))
+        self.assertIn("Macro trend down blocks Zone Reaction V2 long.", message)
 
     def test_runtime_env_reads_dotenv_without_overwriting_process_env(self) -> None:
         previous_symbol = os.environ.get("MT5_SYMBOL")

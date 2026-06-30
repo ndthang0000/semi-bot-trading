@@ -179,5 +179,6 @@ TELEGRAM_CHAT_ID
 CHART_URL_BASE
 ```
 
-The live worker queues Telegram alerts for new important zones, setup candidates,
-and execution events, then sends pending alerts without blocking detector logic.
+The live worker queues Telegram alerts for new important zones, setup candidates
+(`eligible`, `waiting_confirmation`, and `blocked` with block reasons), and
+execution events, then sends pending alerts without blocking detector logic.

@@ -601,24 +601,29 @@ def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zone
 
 def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, candidates: list[dict[str, Any]]) -> None:
     for candidate in candidates:
-        if candidate.get("status") not in {"eligible", "waiting_confirmation"}:
+        if candidate.get("status") not in {"eligible", "waiting_confirmation", "blocked"}:
             continue
         trigger_timeframe = str(candidate.get("timeframe") or config.strategy.timeframe).upper()
         context_timeframe = config.bias.timeframe.upper()
+        status = str(candidate.get("status") or "")
+        reasons = list(candidate.get("blocked_reason") or candidate.get("reason") or [])[:5]
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        zone_type = candidate.get("zone_type") or metadata.get("zone_type")
         payload = {
-            "title": "Setup candidate",
+            "title": "Setup blocked" if status == "blocked" else "Setup candidate",
             "setup": {
                 "id": candidate.get("id"),
                 "playbook": candidate.get("playbook"),
                 "direction": candidate.get("direction"),
-                "status": candidate.get("status"),
+                "zone_type": zone_type,
+                "status": status,
                 "entry": candidate.get("entry"),
                 "stop_loss": candidate.get("stop_loss"),
                 "take_profit": candidate.get("take_profit"),
                 "context_timeframe": context_timeframe,
                 "trigger_timeframe": trigger_timeframe,
             },
-            "reason": list(candidate.get("reason") or [])[:5],
+            "reason": reasons,
             "action": "Auto execution is enabled." if env.execution_enabled else "Execution is disabled; observe manually.",
             "chart_url": env.chart_url_base,
         }
@@ -627,10 +632,10 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
             symbol=config.symbol,
             timeframe=context_timeframe,
             event_type="setup_candidate",
-            severity="important" if candidate.get("status") == "eligible" else "watch",
+            severity="important" if status == "eligible" else "watch",
             entity_ids=[str(candidate.get("id"))],
             payload=payload,
-            dedupe_key=f"setup:{candidate.get('id')}:{candidate.get('status')}",
+            dedupe_key=f"setup:{candidate.get('id')}:{status}",
         )
 
 

@@ -272,18 +272,26 @@ def _fmt_setup(alert: AlertEvent) -> str:
     playbook = str(setup.get("playbook", "")).replace("_", "-")
     direction = str(setup.get("direction", "")).upper()
     status = str(setup.get("status", ""))
+    zone_type = setup_zone_type_label(setup.get("zone_type"))
     entry = setup.get("entry", "?")
     sl = setup.get("stop_loss", "?")
     tp = _tp_str(setup.get("take_profit"))
     context_tf = str(setup.get("context_timeframe") or alert.timeframe or "").upper()
     trigger_tf = str(setup.get("trigger_timeframe") or "").upper()
 
-    status_tag = "[READY]" if status == "eligible" else "[WAIT]"
+    if status == "eligible":
+        status_tag = "[READY]"
+    elif status == "blocked":
+        status_tag = "[BLOCK]"
+    else:
+        status_tag = "[WAIT]"
     sym_tf = "[" + alert.symbol + " " + alert.timeframe + "]"
     lines = [
         sym_tf + " " + status_tag + " " + playbook + " " + direction,
         "Entry " + str(entry) + "  SL " + str(sl) + "  TP " + tp,
     ]
+    if zone_type:
+        lines.append("Zone type: " + zone_type)
     if trigger_tf and trigger_tf != context_tf:
         lines.append("Context " + context_tf + " / trigger " + trigger_tf)
     reasons = _clean_reasons(p.get("reason"))
@@ -293,6 +301,18 @@ def _fmt_setup(alert: AlertEvent) -> str:
     if chart:
         lines.append(str(chart))
     return "\n".join(lines)
+
+
+def setup_zone_type_label(value: object) -> str:
+    raw = str(value or "").strip()
+    labels = {
+        "fvg": "FVG",
+        "support": "Support",
+        "resistance": "Resistance",
+        "order_block": "Order Block",
+        "consolidation": "Consolidation",
+    }
+    return labels.get(raw, raw.replace("_", " ").title() if raw else "")
 
 
 # ---------------------------------------------------------------------------

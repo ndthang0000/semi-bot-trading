@@ -65,7 +65,7 @@ require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
 internal_reject_enabled = true
 internal_reject_requires_structure = false
-internal_reject_sr_requires_structure = true
+internal_reject_sr_requires_structure = false
 internal_reject_requires_price_action = true
 internal_reject_watch_after_fvg_fill_bars = 8
 internal_reject_min_fvg_fill_ratio = 0.4
@@ -188,7 +188,7 @@ Dieu kien `internal_reject`:
 
 - Zone type: `support`, `resistance`, hoac `fvg`.
 - Candle M15 da touch/di vao zone va close van nam trong zone.
-- Structure trigger (`BOS`/`CHOCH` cung huong entry) la bat buoc cho SR zone (`internal_reject_sr_requires_structure = true`) nhung khong bat buoc cho FVG (`internal_reject_requires_structure = false`). Backtest 60k nen cho thay PA-only ben trong SR la knife-catching (support long -5.5R/23 trades), trong khi FVG fill + PA dao chieu hoat dong on.
+- Structure trigger (`BOS`/`CHOCH` cung huong entry) khong bat buoc cho SR zone khi `internal_reject_sr_requires_structure = false`; SR internal reject co the vao bang price action manh trong zone. FVG cung khong bat buoc structure theo `internal_reject_requires_structure = false`.
 - Co price action trigger cung huong entry: `engulfing`, `pinbar`, `marubozu`, `morning/evening star`, hoac `displacement`.
 - Structure trigger va price action duoc phep nam trong cung reaction window `internal_reject_watch_after_fvg_fill_bars`, khong bat buoc cung mot nen M15. Tuy nhien it nhat mot trigger phai xuat hien o nen signal hien tai de tranh reuse tin hieu cu.
 - FVG phai fill it nhat `internal_reject_min_fvg_fill_ratio = 0.4`.
