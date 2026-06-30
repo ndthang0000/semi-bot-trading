@@ -9,9 +9,9 @@ import {
   LineSeries,
   LineStyle,
 } from "lightweight-charts";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Newspaper } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createManualZone, updateZoneOverride } from "../api/chart";
+import { createManualZone, updateZoneOverride, type NewsEvent, type NewsResponse } from "../api/chart";
 import { toUnixTime } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
 import type {
@@ -30,6 +30,7 @@ import type {
 type TradingChartProps = {
   payload: ChartPayload;
   spread?: SpreadSummary | null;
+  newsData?: NewsResponse | null;
   onEntityCreated: () => void;
   onZonePersisted?: (zone: PriceZone) => void;
 };
@@ -67,6 +68,14 @@ type M15TriggerMarker = {
   trigger: M15TriggerOverlay;
   x: number;
   y: number;
+};
+
+type NewsTimelineMarker = {
+  event: NewsEvent;
+  x: number;
+  y: number;
+  chartWidth: number;
+  chartHeight: number;
 };
 
 type CandleDatum = {
@@ -129,11 +138,12 @@ type ManualZoneSpec = {
 const MIN_ZONE_HEIGHT = 0.01;
 const MIN_ZONE_DURATION_SECONDS = 60;
 const RIGHT_OFFSET_BARS = 18;
+const NEWS_AXIS_HORIZON_HOURS = 168;
 const REPLAY_VISIBLE_BARS = 120;
 const VERTICAL_FOCUS_BARS = 14;
 
 
-export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted }: TradingChartProps) {
+export function TradingChart({ payload, spread, newsData, onEntityCreated, onZonePersisted }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -155,10 +165,13 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
   const [swingDots, setSwingDots] = useState<SwingDot[]>([]);
   const [tradeBoxes, setTradeBoxes] = useState<TradeBox[]>([]);
   const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
+  const [newsTimelineMarkers, setNewsTimelineMarkers] = useState<NewsTimelineMarker[]>([]);
+  const [hoveredNewsMarker, setHoveredNewsMarker] = useState<NewsTimelineMarker | null>(null);
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
   const [drawPreviewZone, setDrawPreviewZone] = useState<PriceZone | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
-  const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean } | null>(null);
+  const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean; chartHeight: number } | null>(null);
+  const [pointerY, setPointerY] = useState<number | null>(null);
   const scheduledRecalcRef = useRef<number | null>(null);
   const interactionRecalcRef = useRef<number | null>(null);
   const wheelStopRef = useRef<number | null>(null);
@@ -174,6 +187,7 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
   const addEntityKindRef = useRef(addEntityKind);
   const onEntityCreatedRef = useRef(onEntityCreated);
   const onZonePersistedRef = useRef(onZonePersisted);
+  const newsDataRef = useRef(newsData);
   const handledZoneFocusRequestRef = useRef<number | null>(null);
   const handledTradeFocusRequestRef = useRef<number | null>(null);
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
@@ -218,6 +232,7 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
   addEntityKindRef.current = addEntityKind;
   onEntityCreatedRef.current = onEntityCreated;
   onZonePersistedRef.current = onZonePersisted;
+  newsDataRef.current = newsData;
   drawPreviewZoneRef.current = drawPreviewZone;
   candleDataRef.current = candleData;
 
@@ -300,12 +315,14 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
       if (x < -12 || x > plotWidth + 12 || y < -12 || y > height + 12) return [];
       return [{ trigger, x, y }];
     });
+    const newsMarkers = buildNewsTimelineMarkers(newsDataRef.current?.events ?? [], toUnixTime(lastCandle.time), plotWidth, height, timeScale);
 
     setZoneBoxes(zones);
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
     setSwingDots(visibleSwings);
     setTradeBoxes(trades);
     setM15TriggerMarkers(m15Triggers);
+    setNewsTimelineMarkers(newsMarkers);
 
     const priceY = series.priceToCoordinate(lastCandle.close);
     if (typeof priceY === "number" && priceY >= 0 && priceY <= height) {
@@ -313,6 +330,7 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
         priceY,
         scaleWidth: chart.priceScale("right").width(),
         isUp: lastCandle.close >= lastCandle.open,
+        chartHeight: height,
       });
     }
   }, []);
@@ -768,7 +786,7 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
     scaleAnchorSeriesRef.current = scaleAnchorSeries;
     zigzagSeriesRef.current = zigzagSeries;
     candleSeries.setData(candleDataRef.current);
-    scaleAnchorSeries.setData(buildScaleAnchorData(candleDataRef.current));
+    scaleAnchorSeries.setData(buildScaleAnchorData(candleDataRef.current, newsDataRef.current?.events ?? []));
     zigzagSeries.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
@@ -949,7 +967,7 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
 
     // Full reload path (window change, symbol/timeframe change, or replay mode).
     series.setData(candleData);
-    scaleAnchorSeriesRef.current?.setData(buildScaleAnchorData(candleData));
+    scaleAnchorSeriesRef.current?.setData(buildScaleAnchorData(candleData, newsDataRef.current?.events ?? []));
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
@@ -992,8 +1010,26 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
     scheduleOverlayRecalc();
   }, [candleData, candleKey, payload.range.limit, payload.range.start_index, payload.replay?.enabled, scheduleOverlayRecalc, viewKey]);
 
+  useEffect(() => {
+    const chart = chartRef.current;
+    const anchorSeries = scaleAnchorSeriesRef.current;
+    if (!chart || !anchorSeries) return;
+
+    const viewport = readCurrentViewport(chart);
+    anchorSeries.setData(buildScaleAnchorData(candleDataRef.current, newsData?.events ?? []));
+    restoreViewport(chart, viewport);
+    scheduleOverlayRecalc();
+  }, [newsData, scheduleOverlayRecalc]);
+
   return (
-    <div className="relative h-full min-h-[540px] overflow-hidden bg-[#080b10]">
+    <div
+      className="relative h-full min-h-[540px] overflow-hidden bg-[#080b10]"
+      onMouseLeave={() => setPointerY(null)}
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setPointerY(event.clientY - rect.top);
+      }}
+    >
       <div
         ref={containerRef}
         className="absolute inset-0"
@@ -1164,6 +1200,28 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
             </div>
           );
         })}
+        {newsTimelineMarkers.map((marker) => {
+          const { event, x, y } = marker;
+          const className =
+            event.tier === 1
+              ? "border-red-300 bg-red-950/95 text-red-100 shadow-[0_0_10px_rgba(248,113,113,0.45)]"
+              : "border-red-400/70 bg-ink-950/95 text-red-200 shadow-[0_0_8px_rgba(248,113,113,0.25)]";
+          return (
+            <div
+              key={event.id}
+              className={`pointer-events-auto absolute z-[28] flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border ${className}`}
+              style={{ left: x, top: y }}
+              onMouseEnter={() => setHoveredNewsMarker(marker)}
+              onMouseLeave={() => setHoveredNewsMarker(null)}
+            >
+              <Newspaper size={11} strokeWidth={2.6} />
+              <span className="sr-only">{event.country} news</span>
+            </div>
+          );
+        })}
+        {hoveredNewsMarker ? (
+          <NewsTimelineTooltip marker={hoveredNewsMarker} />
+        ) : null}
         {tradeBoxes.map((box) => {
           const trade = box.trade;
           const isLong = trade.direction === "long" || trade.side === "buy";
@@ -1213,13 +1271,13 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
                 }}
               />
               <span
-                className={`absolute left-1 top-1 rounded border px-1.5 py-0.5 text-[10px] font-black tracking-wide shadow-lg ${
+                className={`absolute left-1 top-1 rounded border px-1 py-0.5 text-[10px] font-black tracking-wide shadow-lg ${
                   isLong
                     ? "border-cyan-200/90 bg-cyan-950/95 text-cyan-100"
                     : "border-fuchsia-200/90 bg-fuchsia-950/95 text-fuchsia-100"
                 }`}
               >
-                {isLong ? "LONG" : "SHORT"} · {trade.pnl_r?.toFixed(2) ?? "--"}R
+                {trade.pnl_r?.toFixed(2) ?? "--"}R
               </span>
             </button>
           );
@@ -1231,6 +1289,8 @@ export function TradingChart({ payload, spread, onEntityCreated, onZonePersisted
           priceY={candleLabel.priceY}
           scaleWidth={candleLabel.scaleWidth}
           isUp={candleLabel.isUp}
+          chartHeight={candleLabel.chartHeight}
+          pointerY={pointerY}
           spread={spread}
         />
       ) : null}
@@ -1248,12 +1308,16 @@ function CandleCountdown({
   priceY,
   scaleWidth,
   isUp,
+  chartHeight,
+  pointerY,
   spread,
 }: {
   timeframe: string;
   priceY: number;
   scaleWidth: number;
   isUp: boolean;
+  chartHeight: number;
+  pointerY: number | null;
   spread?: SpreadSummary | null;
 }) {
   const tfSecs = TIMEFRAME_SECONDS[timeframe] ?? 3600;
@@ -1276,9 +1340,23 @@ function CandleCountdown({
   const bg = isUp ? "#2fbd85" : "#e35d68";
 
   const currentSpread = spread?.latest?.spread ?? null;
+  const labelHeight = 20;
+  const cursorLabelHalfHeight = 14;
+  const defaultTop = priceY + 10;
+  let top = defaultTop;
+  if (
+    pointerY !== null
+    && defaultTop < pointerY + cursorLabelHalfHeight
+    && defaultTop + labelHeight > pointerY - cursorLabelHalfHeight
+  ) {
+    const aboveTop = priceY - labelHeight - 12;
+    const belowTop = priceY + 32;
+    top = pointerY >= priceY ? aboveTop : belowTop;
+  }
+  top = clampNumber(top, 0, Math.max(0, chartHeight - labelHeight));
 
   return (
-    <div className="pointer-events-none absolute z-20 flex items-stretch justify-end gap-1" style={{ right: 0, top: priceY + 10, height: 20 }}>
+    <div className="pointer-events-none absolute z-20 flex items-stretch justify-end gap-1" style={{ right: 0, top, height: labelHeight }}>
       {currentSpread !== null ? <SpreadBadge spread={currentSpread} /> : null}
       <div
         className="flex items-center justify-center font-mono text-[11px] font-semibold text-white"
@@ -1298,6 +1376,51 @@ function SpreadBadge({ spread }: { spread: number }) {
   return (
     <div className={`flex items-center border border-white/10 bg-ink-950/90 px-1.5 font-mono text-[10px] font-bold ${colorClass}`}>
       S {spread.toFixed(2)}
+    </div>
+  );
+}
+
+function NewsTimelineTooltip({ marker }: { marker: NewsTimelineMarker }) {
+  const { event, x, y } = marker;
+  const left = clampNumber(x - 132, 8, Math.max(8, marker.chartWidth - 272));
+  const top = clampNumber(y - 152, 8, Math.max(8, marker.chartHeight - 150));
+  const tierClass = event.tier === 1 ? "border-red-400/70 bg-red-500/15 text-red-200" : "border-red-400/40 bg-red-500/10 text-red-300";
+  const rows = [
+    { label: "Impact", value: event.impact },
+    { label: "Forecast", value: event.forecast },
+    { label: "Previous", value: event.previous },
+    { label: "Blackout", value: `${event.blackout_before_min}/${event.blackout_after_min}m` },
+  ].filter((row) => row.value !== null && row.value !== "");
+
+  return (
+    <div
+      className="pointer-events-none absolute z-[70] w-[264px] rounded-md border border-ink-600 bg-ink-950/95 p-3 text-xs text-slate-200 shadow-2xl shadow-black/60"
+      style={{ left, top }}
+    >
+      <div className="mb-2 flex items-start gap-2">
+        <span className={`mt-0.5 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase ${tierClass}`}>
+          T{event.tier}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-slate-50">{event.title}</div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            {event.country} - {formatNewsEventDateTime(event.scheduled_at)}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1">
+        {rows.map((row) => (
+          <div key={row.label} className="contents">
+            <span className="text-slate-500">{row.label}</span>
+            <span className="min-w-0 truncate text-slate-200">{row.value}</span>
+          </div>
+        ))}
+      </div>
+      {event.is_active_blackout ? (
+        <div className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-semibold uppercase text-red-200">
+          Active blackout
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2038,7 +2161,38 @@ function buildFocusedPriceRange(
   };
 }
 
-function buildScaleAnchorData(candles: CandleDatum[]): Array<{ time: CandleDatum["time"]; value: number }> {
+function buildNewsTimelineMarkers(
+  events: NewsEvent[],
+  lastCandleTime: CandleDatum["time"],
+  chartWidth: number,
+  chartHeight: number,
+  timeScale: ReturnType<IChartApi["timeScale"]>,
+): NewsTimelineMarker[] {
+  const horizon = Number(lastCandleTime) + NEWS_AXIS_HORIZON_HOURS * 3600;
+  const y = clampNumber(chartHeight - 24, 18, Math.max(18, chartHeight - 18));
+
+  return events.flatMap((event) => {
+    const timestamp = Number(toUnixTime(event.scheduled_at));
+    if (!Number.isFinite(timestamp) || timestamp > horizon) return [];
+    const x = timeScale.timeToCoordinate(timestamp as CandleDatum["time"]);
+    if (x === null || x < -12 || x > chartWidth + 12) return [];
+    return [{ event, x, y, chartWidth, chartHeight }];
+  });
+}
+
+function formatNewsEventDateTime(isoString: string): string {
+  const scheduled = new Date(isoString);
+  return scheduled.toLocaleString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function buildScaleAnchorData(candles: CandleDatum[], events: NewsEvent[] = []): Array<{ time: CandleDatum["time"]; value: number }> {
   const last = candles.at(-1);
   if (!last) return [];
 
@@ -2050,11 +2204,46 @@ function buildScaleAnchorData(candles: CandleDatum[]): Array<{ time: CandleDatum
   const minimumHalfRange = Math.max(averageRange * 5, last.close * 0.0045, 1);
   const halfRange = Math.max(high - last.close, last.close - low, minimumHalfRange) * 1.08;
   const previousTime = candles.at(-2)?.time ?? ((last.time - 1) as CandleDatum["time"]);
+  const intervalSeconds = inferCandleIntervalSeconds(candles);
+  const futureEnd = futureAxisEndTime(Number(last.time), intervalSeconds, events);
+  const anchorTimes = new Set<number>([Number(previousTime), Number(last.time)]);
 
-  return [
-    { time: previousTime, value: last.close + halfRange },
-    { time: last.time, value: last.close - halfRange },
-  ];
+  for (let time = Number(last.time) + intervalSeconds; time <= futureEnd; time += intervalSeconds) {
+    anchorTimes.add(time);
+  }
+
+  for (const event of events) {
+    const timestamp = Number(toUnixTime(event.scheduled_at));
+    if (Number.isFinite(timestamp) && timestamp > Number(last.time) && timestamp <= futureEnd) {
+      anchorTimes.add(timestamp);
+    }
+  }
+
+  return [...anchorTimes]
+    .sort((a, b) => a - b)
+    .map((time, index) => ({
+      time: time as CandleDatum["time"],
+      value: index % 2 === 0 ? last.close + halfRange : last.close - halfRange,
+    }));
+}
+
+function inferCandleIntervalSeconds(candles: CandleDatum[]): number {
+  for (let index = candles.length - 1; index > 0; index -= 1) {
+    const interval = Number(candles[index].time) - Number(candles[index - 1].time);
+    if (interval > 0) return interval;
+  }
+  return 3600;
+}
+
+function futureAxisEndTime(lastTime: number, intervalSeconds: number, events: NewsEvent[]): number {
+  const defaultEnd = lastTime + RIGHT_OFFSET_BARS * intervalSeconds;
+  const horizonEnd = lastTime + NEWS_AXIS_HORIZON_HOURS * 3600;
+  const latestNewsTime = events.reduce((latest, event) => {
+    const timestamp = Number(toUnixTime(event.scheduled_at));
+    if (!Number.isFinite(timestamp) || timestamp <= lastTime || timestamp > horizonEnd) return latest;
+    return Math.max(latest, timestamp);
+  }, defaultEnd);
+  return Math.min(Math.max(defaultEnd, latestNewsTime + 6 * 3600), horizonEnd);
 }
 
 function defaultTradeModesForZone(zone: PriceZone): ZoneTradeMode[] {

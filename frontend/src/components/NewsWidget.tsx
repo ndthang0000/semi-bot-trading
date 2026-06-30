@@ -160,7 +160,7 @@ function NewsDropdown({ events }: NewsDropdownProps) {
   if (events.length === 0) {
     return (
       <div className="px-4 py-5 text-center text-xs text-slate-500">
-        No high-impact events in the next 48 hours
+        No high-impact events in the next 7 days
       </div>
     );
   }
@@ -243,7 +243,7 @@ export function useNewsData(): NewsResponse | null {
     let cancelled = false;
     const load = async () => {
       try {
-        const result = await fetchNews(48);
+        const result = await fetchNews(168);
         if (!cancelled) setData(result);
       } catch {
         // silently ignore — news widget is non-critical

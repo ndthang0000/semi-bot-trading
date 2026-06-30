@@ -151,6 +151,7 @@ export function ChartPage({ newsData }: ChartPageProps) {
             <TradingChart
               payload={chartQuery.data}
               spread={spreadQuery.data ?? null}
+              newsData={newsData}
               onEntityCreated={refreshChart}
               onZonePersisted={handleZonePersisted}
             />
