@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.smc_zones import (
     FVG_DETECTOR,
     LIQUIDITY_DETECTOR,
     ORDER_BLOCK_DETECTOR,
+    apply_persisted_fvg_mitigation,
     detect_consolidation_zones,
     detect_fvg_zones,
     detect_liquidity_sweep_zones,
@@ -23,6 +28,58 @@ def candle_at(iso_time: str, open_: float, high: float, low: float, close: float
 
 
 class SmcZoneTest(unittest.TestCase):
+    def test_persisted_fvg_mitigates_when_filled_for_all_sources(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.executemany(
+                    """
+                    INSERT INTO candles (
+                        id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+                    )
+                    VALUES (?, 'XAUUSD', 'H1', ?, ?, ?, ?, ?, ?, 100, 'test')
+                    """,
+                    [
+                        ("c1", "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00", 101, 104, 100, 103),
+                        ("c2", "2026-01-01T01:00:00+00:00", "2026-01-01T02:00:00+00:00", 103, 104, 95, 96),
+                    ],
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO price_zones (
+                        id, symbol, timeframe, detector, zone_type, direction, price_low, price_high,
+                        start_time, end_time, valid_from, valid_until, invalidated_at,
+                        invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
+                        effective_confidence, effective_weight, status, source, metadata_json
+                    )
+                    VALUES (?, 'XAUUSD', 'H1', ?, 'fvg', 'bullish', 100, 110,
+                            '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                            '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                            NULL, NULL, '2026-01-01T00:00:00+00:00',
+                            0.9, 0.8, 0.9, 0.8, 'active', ?, ?)
+                    """,
+                    [
+                        ("bot-fvg", "fvg_v1", "bot", "{}"),
+                        ("human-fvg", "human_manual_v1", "human", '{"human_created": true}'),
+                        ("mixed-fvg", "fvg_v1", "mixed", '{"human_adjusted": true}'),
+                    ],
+                )
+                updates = apply_persisted_fvg_mitigation(conn, "XAUUSD", "H1")
+                rows = conn.execute("SELECT * FROM price_zones ORDER BY id").fetchall()
+
+        self.assertEqual(3, updates)
+        self.assertEqual(["bot-fvg", "human-fvg", "mixed-fvg"], [row["id"] for row in rows])
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            self.assertEqual("mitigated", row["status"])
+            self.assertEqual("2026-01-01T01:00:00+00:00", row["end_time"])
+            self.assertEqual(row["end_time"], row["valid_until"])
+            self.assertEqual(row["end_time"], row["invalidated_at"])
+            self.assertEqual("filled", metadata["fill_state"])
+            self.assertEqual("fvg_fill_threshold", metadata["mitigated_rule"])
+            self.assertEqual(row["source"], metadata["fvg_lifecycle_applied_to_source"])
+
     def test_detects_bullish_fvg(self) -> None:
         candles = [
             candle("00:00", 100, 101, 99, 100),
@@ -90,7 +147,7 @@ class SmcZoneTest(unittest.TestCase):
             candle("03:00", 100, 102, 99, 101),
             candle("04:00", 101, 111, 100, 110),
             candle("05:00", 112, 115, 112, 114),
-            candle("06:00", 114, 115, 103, 104),
+            candle("06:00", 114, 115, 101, 104),
         ]
 
         zones = detect_fvg_zones(candles, "XAUUSD", "H1", max_width_atr_ratio=0)

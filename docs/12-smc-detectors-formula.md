@@ -218,10 +218,12 @@ M15 max_active_days = 1
 M15 decay_start_days = 0.5
 ```
 
+Rule này áp dụng cho mọi FVG đã lưu trong `price_zones`, bất kể `source = bot`, `human`, hay `mixed`. FVG do human vẽ/chỉnh được bảo vệ khỏi detector overwrite, nhưng vẫn phải tuân thủ lifecycle fill/mitigation như bot FVG.
+
 Nếu:
 
 ```text
-fill_ratio >= 0.80
+fill_ratio >= 0.95
 ```
 
 Thì:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from dataclasses import replace
 from sqlite3 import Connection
@@ -282,6 +283,137 @@ def apply_fvg_fill_state(
         max_active_days=max_active_days,
         decay_start_days=decay_start_days,
     )
+
+
+def apply_persisted_fvg_mitigation(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    fill_threshold: float = 0.95,
+    partial_fill_threshold: float = 0.50,
+) -> int:
+    """Apply FVG fill lifecycle to persisted zones from any source.
+
+    Detector refresh already handles fresh bot FVGs, but human/mixed FVG rows are
+    protected from replacement. This pass makes every persisted FVG obey the same
+    fill/mitigation rule regardless of source.
+    """
+
+    candles = load_candle_slices(conn, symbol, timeframe)
+    if not candles:
+        return 0
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM price_zones
+        WHERE symbol = ?
+          AND timeframe = ?
+          AND zone_type = 'fvg'
+          AND status = 'active'
+        ORDER BY detected_at
+        """,
+        (symbol, timeframe),
+    ).fetchall()
+    updates = 0
+    for row in rows:
+        width = max(float(row["price_high"]) - float(row["price_low"]), 0.00001)
+        detected_at = str(row["detected_at"] or row["valid_from"] or row["start_time"])
+        valid_until = row["valid_until"]
+        fill_ratio = 0.0
+        fill_time: str | None = None
+        for candle in candles:
+            if candle.open_time <= detected_at:
+                continue
+            if valid_until and candle.open_time > str(valid_until):
+                break
+            if row["direction"] == "bullish":
+                if candle.low >= float(row["price_high"]):
+                    continue
+                fill_ratio = max(fill_ratio, (float(row["price_high"]) - max(candle.low, float(row["price_low"]))) / width)
+            else:
+                if candle.high <= float(row["price_low"]):
+                    continue
+                fill_ratio = max(fill_ratio, (min(candle.high, float(row["price_high"])) - float(row["price_low"])) / width)
+            if fill_ratio >= fill_threshold:
+                fill_time = candle.open_time
+                break
+
+        if fill_ratio < partial_fill_threshold:
+            continue
+
+        metadata = _metadata_from_json(row["metadata_json"])
+        previous_fill_ratio = float(metadata.get("fill_ratio") or 0.0)
+        next_fill_ratio = round(min(fill_ratio, 1.0), 4)
+        if fill_ratio < fill_threshold and metadata.get("fill_state") == "partial" and previous_fill_ratio >= next_fill_ratio:
+            continue
+        metadata.update(
+            {
+                "fill_ratio": next_fill_ratio,
+                "fvg_lifecycle_applied_to_source": row["source"],
+            }
+        )
+        if fill_ratio >= fill_threshold and fill_time is not None:
+            metadata.update(
+                {
+                    "fill_state": "filled",
+                    "mitigated_rule": "fvg_fill_threshold",
+                    "mitigated_at": fill_time,
+                }
+            )
+            conn.execute(
+                """
+                UPDATE price_zones
+                SET status = 'mitigated',
+                    end_time = ?,
+                    valid_until = ?,
+                    invalidated_at = ?,
+                    effective_weight = ?,
+                    effective_confidence = ?,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    fill_time,
+                    fill_time,
+                    fill_time,
+                    round(float(row["bot_weight"]) * 0.25, 4),
+                    round(float(row["bot_confidence"]) * 0.70, 4),
+                    json.dumps(metadata, sort_keys=True),
+                    row["id"],
+                ),
+            )
+            updates += 1
+        else:
+            metadata["fill_state"] = "partial"
+            conn.execute(
+                """
+                UPDATE price_zones
+                SET effective_weight = ?,
+                    effective_confidence = ?,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    round(float(row["bot_weight"]) * 0.60, 4),
+                    round(float(row["bot_confidence"]) * 0.85, 4),
+                    json.dumps(metadata, sort_keys=True),
+                    row["id"],
+                ),
+            )
+            updates += 1
+    return updates
+
+
+def _metadata_from_json(raw: str | None) -> dict[str, object]:
+    if not raw:
+        return {}
+    try:
+        metadata = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def detect_order_block_zones(

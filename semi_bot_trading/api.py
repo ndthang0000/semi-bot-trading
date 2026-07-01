@@ -48,6 +48,7 @@ from .db import connect, init_db
 from .news_calendar import active_news_blackout, upcoming_news_events
 from .replay_chart import build_realtime_replay_payload
 from .runtime_env import load_runtime_env
+from .smc_zones import apply_persisted_fvg_mitigation
 from .spread import spread_summary
 
 
@@ -204,6 +205,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
             with connect(config.database) as conn:
                 init_db(conn)
                 expire_context_overrides(conn, utc_now_iso())
+                apply_persisted_fvg_mitigation(conn, symbol or config.symbol, config.bias.timeframe)
                 if replay_at:
                     if replay_start is None:
                         raise HTTPException(status_code=422, detail="replay_start is required when replay_at is provided")

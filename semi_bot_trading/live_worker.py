@@ -22,7 +22,7 @@ from .news_calendar import active_news_blackout, should_notify_news
 from .price_action import detect_and_store_price_action_patterns
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
-from .smc_zones import detect_and_store_smc_zones
+from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zones
 from .spread import record_spread_snapshot
 from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
@@ -217,6 +217,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         if has_new_closed_m15:
             before_zone_ids = current_zone_ids(conn, config.symbol)
             run_live_detectors(conn, config, config.symbol)
+            apply_persisted_fvg_mitigation(conn, config.symbol, config.bias.timeframe)
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
             state.last_closed_m15 = latest_m15
@@ -233,6 +234,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             # latest closed candle can miss a setup that becomes eligible after
             # a human zone edit or a delayed DB sync; restarting the worker would
             # reset last_closed_m15 and execute the same setup, which is unsafe.
+            apply_persisted_fvg_mitigation(conn, config.symbol, config.bias.timeframe)
             payload = build_chart_payload(
                 conn,
                 symbol=config.symbol,
