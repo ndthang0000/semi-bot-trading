@@ -10,6 +10,7 @@ from semi_bot_trading.strategy import (
     classify_zone_reaction_v2,
     compute_sr_breakout_v1_levels,
     compute_zone_reaction_v2_levels,
+    evaluate_zone_reaction_v2,
 )
 
 
@@ -123,6 +124,9 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_max_stop_distance=30.0,
     zone_reaction_v2_reject_wide_stop_fallback="atr",
     zone_reaction_v2_reject_atr_stop=1.2,
+    zone_reaction_v2_impulse_limit_range_atr=4.0,
+    zone_reaction_v2_impulse_limit_extension_atr=1.0,
+    zone_reaction_v2_impulse_limit_expiry_bars=8,
     zone_reaction_v2_require_trigger_for_fakeout=True,
     zone_reaction_v2_fakeout_max_reaction_depth_atr=1.5,
     zone_reaction_v2_internal_reject_enabled=True,
@@ -272,6 +276,107 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("2026-01-01T00:45:00+00:00", candidates[0]["metadata"]["as_of"])
         self.assertTrue(candidates[0]["metadata"]["carried_forward"])
         self.assertEqual("2026-01-01T01:00:00+00:00", candidates[0]["metadata"]["carried_forward_current_as_of"])
+
+    def test_human_zone_does_not_use_signal_candle_opened_before_zone_activation(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 109, 111),
+            candle("00:15", 111, 113, 110, 112),
+            candle("00:30", 100, 116, 99, 115),
+        ]
+        human_zone = zone("support", "bullish", 100, 105)
+        human_zone.update(
+            {
+                "detector": "human_manual_v1",
+                "source": "human",
+                "created_at": "2026-01-01 00:44:17",
+                "metadata": {
+                    "human_created": True,
+                    "last_human_override_at": "2026-01-01T00:44:17+00:00",
+                    "trade_modes": ["reject"],
+                },
+            }
+        )
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [human_zone],
+            contexts(),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual([], candidates)
+
+    def test_human_zone_can_use_next_signal_candle_after_zone_activation(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 109, 111),
+            candle("00:15", 111, 113, 110, 112),
+            candle("00:30", 112, 113, 110, 111),
+            candle("00:45", 100, 116, 99, 115),
+        ]
+        human_zone = zone("support", "bullish", 100, 105)
+        human_zone.update(
+            {
+                "detector": "human_manual_v1",
+                "source": "human",
+                "created_at": "2026-01-01 00:44:17",
+                "metadata": {
+                    "human_created": True,
+                    "last_human_override_at": "2026-01-01T00:44:17+00:00",
+                    "trade_modes": ["reject"],
+                },
+            }
+        )
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [human_zone],
+            contexts(),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("2026-01-01T00:45:00+00:00", candidates[0]["metadata"]["as_of"])
+
+    def test_zone_reaction_v2_impulse_reject_uses_limit_at_zone_high(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 109, 111),
+            candle("00:15", 111, 113, 110, 112),
+            candle("00:30", 100, 151, 100, 118),
+        ]
+        support = zone("support", "bullish", 100, 105)
+        reaction = classify_zone_reaction_v2(support, candles, atr=10, config=CONFIG)
+
+        candidates = evaluate_zone_reaction_v2(
+            "XAUUSD",
+            support,
+            reaction,
+            last_close=118,
+            atr=10,
+            bias="bullish",
+            secondary_bias=None,
+            regime="trending",
+            overlays=set(),
+            structure_points=[],
+            zones=[support],
+            config=CONFIG,
+            as_of="2026-01-01T00:30:00+00:00",
+        )
+
+        self.assertEqual(1, len(candidates))
+        candidate = candidates[0].to_chart()
+        self.assertEqual("limit", candidate["metadata"]["order_type"])
+        self.assertEqual("impulse_retest_limit", candidate["metadata"]["entry_model"])
+        self.assertEqual(105, candidate["entry"])
+        self.assertEqual("2026-01-01T02:45:00+00:00", candidate["expires_at"])
+        self.assertEqual(8, candidate["metadata"]["impulse_limit_expiry_bars"])
+        self.assertGreater(candidate["metadata"]["impulse_limit_range_atr"], 4)
+        self.assertGreater(candidate["metadata"]["impulse_limit_extension_atr"], 1)
 
     def test_bullish_strong_reject_accepts_bullish_candle_body(self) -> None:
         candles = [

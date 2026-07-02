@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from ..config import StrategyConfig
@@ -179,6 +180,41 @@ def zone_is_human_thesis(zone: dict[str, Any]) -> bool:
         or metadata.get("human_created") is True
         or metadata.get("human_adjusted") is True
     )
+
+
+def parse_utc_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def zone_human_activation_time(zone: dict[str, Any]) -> datetime | None:
+    if not zone_is_human_thesis(zone):
+        return None
+    metadata = zone.get("metadata") if isinstance(zone.get("metadata"), dict) else {}
+    candidates = [
+        parse_utc_datetime(zone.get("created_at")),
+        parse_utc_datetime(metadata.get("last_human_override_at")),
+    ]
+    active_candidates = [item for item in candidates if item is not None]
+    return max(active_candidates) if active_candidates else None
+
+
+def zone_can_use_signal_candle(zone: dict[str, Any], candle: dict[str, Any]) -> bool:
+    activation_time = zone_human_activation_time(zone)
+    if activation_time is None:
+        return True
+    candle_time = parse_utc_datetime(candle.get("time"))
+    if candle_time is None:
+        return True
+    return candle_time >= activation_time
 
 
 def zone_allows_breakout(zone: dict[str, Any], config: StrategyConfig) -> bool:

@@ -26,6 +26,7 @@ class MT5OrderRequest:
     comment: str
     magic: int
     entry_price: float | None = None
+    expires_at: str | None = None
 
 
 class MT5BrokerClient:
@@ -192,6 +193,12 @@ class MT5BrokerClient:
             "type_time": self.mt5.ORDER_TIME_GTC,
             "type_filling": self.order_filling_mode(request.broker_symbol),
         }
+        if request.expires_at:
+            expires_at = datetime.fromisoformat(request.expires_at.replace("Z", "+00:00"))
+            if expires_at.tzinfo is not None:
+                expires_at = expires_at.astimezone(UTC)
+            payload["type_time"] = self.mt5.ORDER_TIME_SPECIFIED
+            payload["expiration"] = int(expires_at.timestamp())
         result = self.mt5.order_send(payload)
         if result is None:
             raise RuntimeError(f"MT5 order_send failed: {self.mt5.last_error()}")

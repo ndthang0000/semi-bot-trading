@@ -113,6 +113,7 @@ def _make_pricing_plan(**overrides) -> ExecutionPricingPlan:
         entry_price=3000.0,
         stop_loss=2980.0,
         take_profit=[3040.0],
+        expires_at=None,
         current_price=3000.0,
         signal_entry=3000.0,
         signal_stop_loss=2980.0,
@@ -267,6 +268,27 @@ class TestBuildExecutionPricingPlan(unittest.TestCase):
                           entry=3000.0, stop=3020.0, tp=[2960.0])
         self.assertEqual("limit", plan.order_type)
         self.assertEqual(3000.0, plan.entry_price)
+
+    def test_strategy_limit_order_is_preserved(self):
+        candidate = _make_candidate(
+            metadata={
+                "zone_type": "support",
+                "order_type": "limit",
+                "entry_model": "impulse_retest_limit",
+                "limit_order_expires_at": "2026-01-01T03:00:00+00:00",
+            },
+            expires_at="2026-01-01T03:00:00+00:00",
+        )
+        client = _fake_client(current_price=3020.0)
+
+        plan = build_execution_pricing_plan(client, "XAUUSDm", candidate, 2.0)
+
+        self.assertEqual("limit", plan.order_type)
+        self.assertEqual(3000.0, plan.entry_price)
+        self.assertEqual(2980.0, plan.stop_loss)
+        self.assertEqual([3040.0, 3060.0], plan.take_profit)
+        self.assertEqual("2026-01-01T03:00:00+00:00", plan.expires_at)
+        self.assertEqual("impulse_retest_limit", plan.drift_action)
 
     # ── max_entry_drift_price = 0 disables all drift logic ───────────────────
     def test_drift_disabled_when_max_zero(self):

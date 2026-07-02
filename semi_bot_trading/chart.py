@@ -277,7 +277,7 @@ def load_chart_zones(
         SELECT id, detector, zone_type, direction, price_low, price_high,
                start_time, end_time, valid_from, valid_until, invalidated_at,
                invalidated_by_structure_point_id, detected_at, effective_weight,
-               effective_confidence, status, source, metadata_json
+               effective_confidence, status, source, metadata_json, created_at, updated_at
         FROM price_zones
         WHERE {' AND '.join(clauses)}
         ORDER BY status ASC, effective_weight DESC, detected_at DESC
@@ -331,6 +331,8 @@ def load_chart_zones(
             "invalidated_at": invalidated_at,
             "invalidated_by_structure_point_id": row["invalidated_by_structure_point_id"] if invalidated_at else None,
             "detected_at": row["detected_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
             "weight": float(row["effective_weight"]),
             "confidence": float(row["effective_confidence"]),
             "metadata": metadata,

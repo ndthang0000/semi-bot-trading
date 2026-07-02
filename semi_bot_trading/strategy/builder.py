@@ -13,6 +13,7 @@ from .helpers import (
     parse_overlays,
     playbook_allowed,
     status_rank,
+    zone_can_use_signal_candle,
     zone_eligible_for_sr_breakout_v1,
     zone_eligible_for_zone_reaction_v2,
     zone_trade_disabled_after_sweep,
@@ -67,7 +68,10 @@ def build_setup_candidates(
     ]
 
     active_reaction_zones = [
-        zone for zone in playable_zones if zone_eligible_for_zone_reaction_v2(zone, candles, config)
+        zone
+        for zone in playable_zones
+        if zone_eligible_for_zone_reaction_v2(zone, candles, config)
+        and zone_can_use_signal_candle(zone, last_candle)
     ]
     for zone in active_reaction_zones:
         # Zone Reaction V2 remains the reject-family playbook; breakout setups
@@ -120,8 +124,11 @@ def build_setup_candidates(
         breakout_candles = context_candles or candles
         breakout_slices = chart_candles_to_slices(breakout_candles)
         breakout_atr = latest_atr(breakout_slices, period=config.atr_period) or latest_range(breakout_candles) or atr
+        breakout_last_candle = breakout_candles[-1] if breakout_candles else None
         for zone in playable_zones:
             if not zone_eligible_for_sr_breakout_v1(zone, breakout_candles, config):
+                continue
+            if breakout_last_candle is not None and not zone_can_use_signal_candle(zone, breakout_last_candle):
                 continue
             candidates.extend(
                 evaluate_sr_breakout_v1(
@@ -195,6 +202,8 @@ def _carry_forward_zone_reaction_v2(
     start_index = max(0, len(candles) - lookback - 1)
     for index in range(len(candles) - 2, start_index - 1, -1):
         signal_candles = candles[: index + 1]
+        if not zone_can_use_signal_candle(zone, signal_candles[-1]):
+            continue
         signal_reaction = classify_zone_reaction_v2(zone, signal_candles, atr, config)
         if signal_reaction.state in {"far", "approaching"}:
             continue

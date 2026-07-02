@@ -43,6 +43,7 @@ class ExecutionPricingPlan:
     entry_price: float
     stop_loss: float
     take_profit: list[float]
+    expires_at: str | None
     current_price: float
     signal_entry: float
     signal_stop_loss: float
@@ -927,6 +928,9 @@ def build_execution_pricing_plan(
     direction_sign = 1.0 if direction == "long" else -1.0
     drift = (current_price - signal_entry) * direction_sign
     adverse_drift = max(drift, 0.0)
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    requested_order_type = str(metadata.get("order_type") or "").lower()
+    candidate_expires_at = candidate.get("expires_at") or metadata.get("limit_order_expires_at")
 
     entry_price = signal_entry
     stop_loss = signal_stop
@@ -934,10 +938,13 @@ def build_execution_pricing_plan(
     order_type = "market"
     drift_action = "market_favorable_or_flat"
 
+    if requested_order_type == "limit":
+        order_type = "limit"
+        drift_action = str(metadata.get("entry_model") or "limit_from_strategy")
     # Positive drift means price moved against the planned entry. Small adverse
     # drift is still marketable, but risk must be recalculated from the real
     # entry. Large adverse drift becomes a limit order at the original signal.
-    if max_entry_drift_price > 0 and adverse_drift > max_entry_drift_price:
+    elif max_entry_drift_price > 0 and adverse_drift > max_entry_drift_price:
         order_type = "limit"
         drift_action = "limit_after_adverse_drift"
     elif max_entry_drift_price > 0 and adverse_drift > 0:
@@ -964,6 +971,7 @@ def build_execution_pricing_plan(
         entry_price=entry_price,
         stop_loss=stop_loss,
         take_profit=take_profit,
+        expires_at=str(candidate_expires_at) if candidate_expires_at else None,
         current_price=current_price,
         signal_entry=signal_entry,
         signal_stop_loss=signal_stop,
@@ -1035,6 +1043,7 @@ def execute_candidate(
             "entry_price": exec_entry,
             "stop_loss": exec_stop,
             "take_profit": exec_take_profit,
+            "expires_at": pricing_plan.expires_at if pricing_plan else candidate.get("expires_at"),
             "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
             "adverse_drift": pricing_plan.adverse_drift if pricing_plan else 0.0,
         },
@@ -1051,7 +1060,7 @@ def execute_candidate(
             suggested_stop_loss, suggested_take_profit_json, risk_reward,
             created_at, expires_at
         )
-        VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             idea_id,
@@ -1066,6 +1075,7 @@ def execute_candidate(
             json.dumps(exec_take_profit),
             candidate.get("risk_reward") or 0,
             now,
+            pricing_plan.expires_at if pricing_plan else candidate.get("expires_at"),
         ),
     )
     conn.execute(
@@ -1108,6 +1118,7 @@ def execute_candidate(
             comment=f"{candidate['playbook']} {candidate['id'][:8]}",
             magic=env.mt5_magic,
             entry_price=exec_entry if exec_order_type == "limit" else None,
+            expires_at=pricing_plan.expires_at if pricing_plan else None,
         )
         if exec_order_type == "limit":
             result = client.place_limit_order(mt5_request)

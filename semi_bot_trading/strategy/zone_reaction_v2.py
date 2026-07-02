@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from ..config import StrategyConfig
+from ..timeframes import timeframe_delta
 from .helpers import (
     _is_pinbar_reject,
     average_body,
@@ -15,6 +17,7 @@ from .helpers import (
     fvg_fill_ratio,
     inside_zone_close_position,
     internal_reject_window_metadata,
+    parse_utc_datetime,
     reaction,
     reaction_v2,
     sr_penetration_atr,
@@ -702,6 +705,27 @@ def evaluate_zone_reaction_v2(
         stop_fallback_atr_timeframe=stop_fallback_atr_timeframe,
         level_metadata=level_metadata,
     )
+    order_type = "market"
+    entry_model = "market_reject"
+    limit_order_expires_at: str | None = None
+    impulse_limit_metadata = maybe_apply_impulse_retest_limit(
+        zone=zone,
+        direction=direction,
+        reaction=reaction,
+        entry=entry,
+        stop=stop,
+        atr=atr,
+        as_of=as_of,
+        config=config,
+    )
+    if impulse_limit_metadata:
+        order_type = "limit"
+        entry_model = "impulse_retest_limit"
+        entry = impulse_limit_metadata["entry"]
+        take_profit = impulse_limit_metadata["take_profit"]
+        rr = impulse_limit_metadata["risk_reward"]
+        limit_order_expires_at = impulse_limit_metadata["limit_order_expires_at"]
+        level_metadata.update(impulse_limit_metadata["metadata"])
     stop_distance = abs(entry - stop) if entry is not None and stop is not None else None
     if reaction.state != "approaching":
         # Approaching zones stay "watching": entry/stop are placeholders until the
@@ -741,9 +765,12 @@ def evaluate_zone_reaction_v2(
         trigger_point_ids=trigger_ids,
         reason=reasons + reaction.reason,
         blocked_reason=blocked,
-        expires_at=None,
+        expires_at=limit_order_expires_at,
         metadata={
             "as_of": as_of,
+            "order_type": order_type,
+            "entry_model": entry_model,
+            "limit_order_expires_at": limit_order_expires_at,
             "zone_type": zone.get("type"),
             "zone_timeframe": zone.get("timeframe"),
             "zone_direction": zone.get("direction"),
@@ -785,10 +812,89 @@ def evaluate_zone_reaction_v2(
             "confluence_count": confluence["confluence_count"],
             "confluence_types": confluence["confluence_types"],
             "confluence_score_bonus": confluence["confluence_score_bonus"],
+            **{key: value for key, value in level_metadata.items() if str(key).startswith("impulse_limit")},
             **reaction.metadata,
         },
     )
     return [candidate]
+
+
+def maybe_apply_impulse_retest_limit(
+    *,
+    zone: dict[str, Any],
+    direction: str,
+    reaction: ReactionResult,
+    entry: float | None,
+    stop: float | None,
+    atr: float,
+    as_of: str,
+    config: StrategyConfig,
+) -> dict[str, Any] | None:
+    if reaction.state != "reject" or entry is None or stop is None or atr <= 0:
+        return None
+    range_threshold = config.zone_reaction_v2_impulse_limit_range_atr
+    extension_threshold = config.zone_reaction_v2_impulse_limit_extension_atr
+    expiry_bars = config.zone_reaction_v2_impulse_limit_expiry_bars
+    if range_threshold <= 0 or extension_threshold <= 0 or expiry_bars <= 0:
+        return None
+
+    reaction_range = float(reaction.metadata.get("reaction_high") or 0.0) - float(
+        reaction.metadata.get("reaction_low") or 0.0
+    )
+    if direction == "long":
+        zone_edge = float(zone["price_high"])
+        extension = entry - zone_edge
+        limit_entry = zone_edge
+        risk = limit_entry - stop
+        take_profit = [limit_entry + risk * config.zone_reaction_v2_rr_minimum]
+    else:
+        zone_edge = float(zone["price_low"])
+        extension = zone_edge - entry
+        limit_entry = zone_edge
+        risk = stop - limit_entry
+        take_profit = [limit_entry - risk * config.zone_reaction_v2_rr_minimum]
+
+    if reaction_range <= atr * range_threshold or extension <= atr * extension_threshold:
+        return None
+    if risk <= 0:
+        return None
+
+    expiry = impulse_limit_expiry(as_of, config.timeframe, expiry_bars)
+    metadata = {
+        "impulse_limit": True,
+        "impulse_limit_reason": "reject_range_and_extension",
+        "impulse_limit_signal_entry": round(entry, 5),
+        "impulse_limit_entry": round(limit_entry, 5),
+        "impulse_limit_zone_edge": round(zone_edge, 5),
+        "impulse_limit_extension": round(extension, 5),
+        "impulse_limit_extension_atr": round(extension / atr, 4),
+        "impulse_limit_range": round(reaction_range, 5),
+        "impulse_limit_range_atr": round(reaction_range / atr, 4),
+        "impulse_limit_range_threshold_atr": range_threshold,
+        "impulse_limit_extension_threshold_atr": extension_threshold,
+        "impulse_limit_expiry_bars": expiry_bars,
+    }
+    return {
+        "entry": limit_entry,
+        "take_profit": take_profit,
+        "risk_reward": config.zone_reaction_v2_rr_minimum,
+        "limit_order_expires_at": expiry,
+        "metadata": metadata,
+    }
+
+
+def impulse_limit_expiry(as_of: str, timeframe: str, expiry_bars: int) -> str | None:
+    signal_time = parse_utc_datetime(as_of)
+    if signal_time is None:
+        return None
+    try:
+        delta = timeframe_delta(timeframe)
+    except Exception:
+        delta = timedelta(minutes=15)
+    # The setup appears after the signal candle closes, so add one extra candle
+    # before counting the future bars the limit order may wait for a retest.
+    expires_at = signal_time + delta * (expiry_bars + 1)
+    return expires_at.replace(microsecond=0).isoformat()
 
 
 def zone_reaction_required_mode(reaction: ReactionResult, trade_modes: list[str]) -> str:
