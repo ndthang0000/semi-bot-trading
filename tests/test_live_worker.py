@@ -37,6 +37,7 @@ from semi_bot_trading.live_worker import (
     live_candidate_already_executed,
     live_fvg_trade_count_for_zone,
     live_trade_count_today,
+    manage_open_trade_partial_take_profit,
     maybe_weekend_flatten,
     maybe_execute_candidates,
     sync_closed_positions,
@@ -83,6 +84,10 @@ def _make_env(**overrides) -> RuntimeEnv:
         weekend_flatten_timezone="America/New_York",
         weekend_no_new_trades_time="12:00",
         weekend_flatten_time="15:30",
+        partial_take_profit_enabled=True,
+        partial_take_profit_r=1.25,
+        partial_take_profit_fraction=0.5,
+        partial_take_profit_be_buffer=0.0,
     )
     defaults.update(overrides)
     return RuntimeEnv(**defaults)
@@ -162,8 +167,14 @@ def _fake_client(
             "order": "33333", "deal": "0", "price": 0, "retcode": 10008
         }
     client.get_open_position_tickets.return_value = open_tickets or set()
+    client.get_open_positions.return_value = [
+        {"ticket": ticket, "side": "buy", "volume": 0.01, "price_open": 3000.0, "sl": 2980.0, "tp": 3040.0}
+        for ticket in (open_tickets or set())
+    ]
     client.get_closed_deal_for_position.return_value = closed_deal
     client.get_symbol_contract_size.return_value = contract_size
+    client.close_partial_position.return_value = {"order": "partial-order", "deal": "partial-deal", "price": current_price, "retcode": 10009}
+    client.modify_position_sltp.return_value = {"order": "modify-order", "retcode": 10009}
     return client
 
 
@@ -492,6 +503,149 @@ class TestExecuteCandidate(unittest.TestCase):
         orders = self._order_rows()
         tp = json.loads(orders[0]["take_profit_json"])
         self.assertEqual([3040.0, 3060.0], tp)
+
+
+class TestPartialTakeProfit(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._tmp.name)
+        self._config = replace(load_config(), database=self._db_path)
+        self._env = _make_env()
+
+    def tearDown(self):
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def _insert_open_order(self, *, side: str = "buy", done: bool = False) -> None:
+        now = "2026-07-03T10:00:00+00:00"
+        metadata = {
+            "broker_order_id": "11111",
+            "broker_deal_id": "22222",
+            "initial_stop_loss": 2980.0,
+            "initial_quantity": 0.02,
+            "partial_take_profit": {
+                "enabled": True,
+                "trigger_r": 1.25,
+                "trigger_price": 3025.0 if side == "buy" else 2975.0,
+                "fraction": 0.5,
+                "breakeven_stop": 3000.0,
+                "final_take_profit": 3050.0 if side == "buy" else 2950.0,
+                "done": done,
+            },
+        }
+        self._conn.execute(
+            """INSERT INTO trade_ideas
+               (id, symbol, direction, playbook, status, entry_zone_id,
+                related_zone_ids_json, context_snapshot_json, suggested_entry,
+                suggested_stop_loss, suggested_take_profit_json, risk_reward, created_at)
+               VALUES ('idea-partial', 'XAUUSD', ?, 'zone_reaction_v2', 'approved', NULL,
+                       '[]', '{}', 3000, 2980, '[3050]', 2.5, ?)""",
+            ("long" if side == "buy" else "short", now),
+        )
+        self._conn.execute(
+            """INSERT INTO trade_orders
+               (id, trade_idea_id, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity,
+                opened_at, source, metadata_json, created_at)
+               VALUES ('order-partial', 'idea-partial', 'XAUUSD', ?, 'market', 'filled',
+                       3000, 2980, '[3050]', 0.02, ?, 'live', ?, ?)""",
+            (side, now, json.dumps(metadata), now),
+        )
+        self._conn.commit()
+
+    def _metadata(self) -> dict:
+        row = self._conn.execute("SELECT metadata_json FROM trade_orders WHERE id = 'order-partial'").fetchone()
+        return json.loads(row["metadata_json"])
+
+    def test_partial_take_profit_waits_until_trigger_price(self):
+        self._insert_open_order()
+        client = _fake_client(current_price=3024.0, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.02, "price_open": 3000.0, "sl": 2980.0, "tp": 3050.0}
+        ]
+
+        manage_open_trade_partial_take_profit(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        client.close_partial_position.assert_not_called()
+        client.modify_position_sltp.assert_not_called()
+
+    def test_partial_take_profit_closes_half_and_moves_stop_to_entry(self):
+        self._insert_open_order()
+        client = _fake_client(current_price=3025.5, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.02, "price_open": 3000.0, "sl": 2980.0, "tp": 3050.0}
+        ]
+
+        manage_open_trade_partial_take_profit(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        client.close_partial_position.assert_called_once_with(
+            "XAUUSDm",
+            position_ticket="11111",
+            side="buy",
+            volume=0.01,
+            magic=self._env.mt5_magic,
+            comment="partial 1.25R",
+        )
+        client.modify_position_sltp.assert_called_once_with(
+            "XAUUSDm",
+            position_ticket="11111",
+            stop_loss=3000.0,
+            take_profit=3050.0,
+            magic=self._env.mt5_magic,
+            comment="BE after partial",
+        )
+        row = self._conn.execute("SELECT stop_loss, metadata_json FROM trade_orders WHERE id = 'order-partial'").fetchone()
+        self.assertEqual(3000.0, row["stop_loss"])
+        metadata = json.loads(row["metadata_json"])
+        self.assertTrue(metadata["partial_take_profit"]["done"])
+        self.assertEqual(0.01, metadata["partial_take_profit"]["closed_volume"])
+
+    def test_partial_take_profit_does_not_repeat_after_done(self):
+        self._insert_open_order(done=True)
+        client = _fake_client(current_price=3026.0, open_tickets={"11111"})
+
+        manage_open_trade_partial_take_profit(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        client.close_partial_position.assert_not_called()
+
+    def test_partial_take_profit_infers_done_when_position_volume_already_reduced(self):
+        self._insert_open_order()
+        client = _fake_client(current_price=3026.0, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.01, "price_open": 3000.0, "sl": 2980.0, "tp": 3050.0}
+        ]
+
+        manage_open_trade_partial_take_profit(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        client.close_partial_position.assert_not_called()
+        client.modify_position_sltp.assert_called_once()
+        metadata = self._metadata()
+        self.assertTrue(metadata["partial_take_profit"]["done"])
+        self.assertTrue(metadata["partial_take_profit"]["inferred_from_position_volume"])
+
+    def test_partial_take_profit_retries_break_even_after_previous_modify_failure(self):
+        self._insert_open_order(done=True)
+        metadata = self._metadata()
+        metadata["partial_take_profit"]["breakeven_applied"] = False
+        metadata["partial_take_profit"]["modify_error"] = "temporary failure"
+        self._conn.execute(
+            "UPDATE trade_orders SET metadata_json = ? WHERE id = 'order-partial'",
+            (json.dumps(metadata),),
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3026.0, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.01, "price_open": 3000.0, "sl": 2980.0, "tp": 3050.0}
+        ]
+
+        manage_open_trade_partial_take_profit(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        client.close_partial_position.assert_not_called()
+        client.modify_position_sltp.assert_called_once()
+        metadata = self._metadata()
+        self.assertTrue(metadata["partial_take_profit"]["breakeven_applied"])
+        self.assertIsNone(metadata["partial_take_profit"]["modify_error"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

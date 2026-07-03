@@ -46,6 +46,10 @@ class RuntimeEnv:
     weekend_flatten_timezone: str = "America/New_York"
     weekend_no_new_trades_time: str = "12:00"
     weekend_flatten_time: str = "15:30"
+    partial_take_profit_enabled: bool = True
+    partial_take_profit_r: float = 1.25
+    partial_take_profit_fraction: float = 0.5
+    partial_take_profit_be_buffer: float = 0.0
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -99,6 +103,10 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         weekend_flatten_timezone=env_text("WEEKEND_FLATTEN_TIMEZONE", "America/New_York") or "America/New_York",
         weekend_no_new_trades_time=env_text("WEEKEND_NO_NEW_TRADES_TIME", "12:00") or "12:00",
         weekend_flatten_time=env_text("WEEKEND_FLATTEN_TIME", "15:30") or "15:30",
+        partial_take_profit_enabled=env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True),
+        partial_take_profit_r=env_float("PARTIAL_TAKE_PROFIT_R", 1.25) or 1.25,
+        partial_take_profit_fraction=env_float("PARTIAL_TAKE_PROFIT_FRACTION", 0.5) or 0.5,
+        partial_take_profit_be_buffer=env_float("PARTIAL_TAKE_PROFIT_BE_BUFFER", 0.0) or 0.0,
     )
 
 

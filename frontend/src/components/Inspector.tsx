@@ -712,6 +712,9 @@ function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kin
   const blockedReasons = readStringList(metadata.blocked_reason);
   const triggerTypes = readStringList(candidateMetadata.trigger_types);
   const takeProfit = firstTakeProfitPrice(trade.take_profit);
+  const partialPlan = readObject(metadata.partial_take_profit);
+  const partialDone = partialPlan.done === true;
+  const breakevenApplied = partialPlan.breakeven_applied === true;
   const statusNote = tradeStatusNote(trade.status);
   return (
     <div className="grid gap-3 text-sm">
@@ -736,6 +739,15 @@ function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kin
         <TradeMetric label="PnL R" value={trade.pnl_r === null ? "--" : `${trade.pnl_r.toFixed(2)}R`} />
         <TradeMetric label="Score" value={formatUnknownNumber(metadata.score)} />
       </div>
+
+      {Object.keys(partialPlan).length > 0 ? (
+        <div className="grid gap-2 rounded-md border border-emerald-400/25 bg-emerald-400/[0.06] p-3">
+          <TradeMetric label="Partial" value={partialDone ? "done" : "armed"} />
+          <TradeMetric label="Trigger" value={`${formatUnknownNumber(partialPlan.trigger_r)}R @ ${price(readNumber(partialPlan.trigger_price))}`} />
+          <TradeMetric label="Closed" value={partialDone ? `${formatUnknownNumber(partialPlan.closed_volume)} lot` : "--"} />
+          <TradeMetric label="BE" value={breakevenApplied ? price(readNumber(partialPlan.breakeven_stop)) : partialDone ? "pending" : price(readNumber(partialPlan.breakeven_stop))} />
+        </div>
+      ) : null}
 
       <div className="grid gap-2">
         <Detail label="Opened" value={compactTime(trade.opened_at)} />
@@ -1458,6 +1470,10 @@ function readObject(value: unknown): Record<string, unknown> {
 function readStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null {

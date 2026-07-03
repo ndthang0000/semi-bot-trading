@@ -617,6 +617,10 @@ MT5_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
 EXECUTION_ENABLED=false
 LIVE_ORDER_VOLUME=0.01
 LIVE_EVALUATE_INTRABAR=false
+PARTIAL_TAKE_PROFIT_ENABLED=true
+PARTIAL_TAKE_PROFIT_R=1.25
+PARTIAL_TAKE_PROFIT_FRACTION=0.5
+PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 ```
 
 `MT5_PATH` must point to `terminal64.exe`, not only the MetaTrader install
@@ -629,6 +633,10 @@ Set `LIVE_EVALUATE_INTRABAR=true` only if the live worker should evaluate setup
 candidates on every poll using MT5's still-forming live candle. This helps catch
 wick touches/rejections before the candle closes, while detectors still update
 only on closed candles.
+
+Partial TP/BE defaults close 50% at `+1.25R`, then move the remaining position's
+SL to entry. Keep `PARTIAL_TAKE_PROFIT_ENABLED=true` for the current operating
+plan.
 
 ## 11. Windows Scheduled Task cho economic calendar
 

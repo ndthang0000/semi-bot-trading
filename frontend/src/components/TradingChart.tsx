@@ -1226,6 +1226,9 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
           const trade = box.trade;
           const isLong = trade.direction === "long" || trade.side === "buy";
           const isSelected = selected?.kind === "trade" && selected.entity.id === trade.id;
+          const partialPlan = readObject(trade.metadata.partial_take_profit);
+          const partialDone = partialPlan.done === true;
+          const breakevenApplied = partialPlan.breakeven_applied === true;
           const label = `${trade.playbook} ${trade.direction} ${trade.status} ${trade.pnl_r?.toFixed(2) ?? "--"}R`;
           return (
             <button
@@ -1279,6 +1282,11 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
               >
                 {trade.pnl_r?.toFixed(2) ?? "--"}R
               </span>
+              {partialDone ? (
+                <span className="absolute bottom-1 left-1 rounded border border-emerald-200/80 bg-emerald-950/95 px-1 py-0.5 text-[9px] font-black text-emerald-100 shadow-lg">
+                  {breakevenApplied ? "P/BE" : "P"}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -1543,6 +1551,10 @@ function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null 
   if (typeof first === "number") return first;
   if (first && typeof first.price === "number") return first.price;
   return null;
+}
+
+function readObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function chartXForTradeTime(

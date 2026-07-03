@@ -125,6 +125,10 @@ class LiveIntegrationTest(unittest.TestCase):
             weekend_flatten_timezone="America/New_York",
             weekend_no_new_trades_time="12:00",
             weekend_flatten_time="15:30",
+            partial_take_profit_enabled=True,
+            partial_take_profit_r=1.25,
+            partial_take_profit_fraction=0.5,
+            partial_take_profit_be_buffer=0.0,
         )
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
@@ -194,6 +198,10 @@ class LiveIntegrationTest(unittest.TestCase):
             weekend_flatten_timezone="America/New_York",
             weekend_no_new_trades_time="12:00",
             weekend_flatten_time="15:30",
+            partial_take_profit_enabled=True,
+            partial_take_profit_r=1.25,
+            partial_take_profit_fraction=0.5,
+            partial_take_profit_be_buffer=0.0,
         )
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
@@ -325,6 +333,10 @@ class LiveIntegrationTest(unittest.TestCase):
                 weekend_flatten_timezone="America/New_York",
                 weekend_no_new_trades_time="12:00",
                 weekend_flatten_time="15:30",
+                partial_take_profit_enabled=True,
+                partial_take_profit_r=1.25,
+                partial_take_profit_fraction=0.5,
+                partial_take_profit_be_buffer=0.0,
             )
             state = LiveWorkerState(
                 broker_symbol="XAUUSDm",
@@ -417,6 +429,10 @@ class LiveIntegrationTest(unittest.TestCase):
                 weekend_flatten_timezone="America/New_York",
                 weekend_no_new_trades_time="12:00",
                 weekend_flatten_time="15:30",
+                partial_take_profit_enabled=True,
+                partial_take_profit_r=1.25,
+                partial_take_profit_fraction=0.5,
+                partial_take_profit_be_buffer=0.0,
             )
             state = LiveWorkerState(broker_symbol="XAUUSDm", last_closed_m15=closed_at.isoformat())
 

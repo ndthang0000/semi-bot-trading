@@ -205,6 +205,26 @@ WEEKEND_FLATTEN_TIME=15:30
 
 Dung timezone New York de tu dong dung khi DST doi gio; tranh hard-code gio Viet Nam.
 
+## Partial TP / Break-even
+
+Live worker quan ly lenh dang mo bang rule mac dinh:
+
+- Khi trade dat `+1.25R`, dong `50%` volume.
+- Sau khi partial close thanh cong, doi SL cua position con lai ve entry, cong/tru buffer neu co.
+- Phan con lai giu TP cuoi cua setup, hien tai thuong la `2.5R`.
+- Metadata `trade_orders.metadata_json.partial_take_profit` ghi `armed/done`, trigger price, closed volume va BE SL de UI/debug.
+
+Config `.env`:
+
+```text
+PARTIAL_TAKE_PROFIT_ENABLED=true
+PARTIAL_TAKE_PROFIT_R=1.25
+PARTIAL_TAKE_PROFIT_FRACTION=0.5
+PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
+```
+
+Rule nay chi ap dung cho `trade_orders.source = live` dang `filled`; pending limit order phai filled thanh position truoc khi duoc quan ly.
+
 ## Spread Monitoring
 
 Live worker lưu bid/ask/spread của XAUUSD mỗi vòng poll vào `spread_snapshots`. Spread được lưu theo price unit giống `MAX_SPREAD_PRICE`, ví dụ XAUUSD spread `1.20` nghĩa là ask-bid lệch 1.20 USD.

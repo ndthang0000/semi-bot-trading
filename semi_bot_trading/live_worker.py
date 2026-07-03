@@ -212,6 +212,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
+            manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
             maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
@@ -1142,6 +1143,17 @@ def execute_candidate(
             (broker_order_id or broker_deal_id, json.dumps(result, sort_keys=True, default=str), now, request_id),
         )
         order_status = "pending_fill" if exec_order_type == "limit" else "filled"
+        trade_metadata = _build_trade_metadata(candidate, broker_order_id, broker_deal_id, now)
+        trade_metadata.update(
+            _partial_take_profit_metadata(
+                env=env,
+                side=side,
+                entry_price=fill_price,
+                stop_loss=exec_stop,
+                take_profit=exec_take_profit[0],
+                quantity=volume,
+            )
+        )
         conn.execute(
             """
             INSERT INTO trade_orders (
@@ -1163,10 +1175,7 @@ def execute_candidate(
                 json.dumps(exec_take_profit),
                 volume,
                 now,
-                json.dumps(
-                    _build_trade_metadata(candidate, broker_order_id, broker_deal_id, now),
-                    sort_keys=True,
-                ),
+                json.dumps(trade_metadata, sort_keys=True),
                 now,
             ),
         )
@@ -1213,6 +1222,264 @@ def execute_candidate(
             payload={"title": "Live order failed", "reason": [str(exc)]},
             dedupe_key=f"live-order-failed:{candidate['id']}:{request_id}",
         )
+
+
+def _partial_take_profit_metadata(
+    *,
+    env: RuntimeEnv,
+    side: str,
+    entry_price: float,
+    stop_loss: float,
+    take_profit: float,
+    quantity: float,
+) -> dict[str, Any]:
+    risk = abs(entry_price - stop_loss)
+    enabled = bool(env.partial_take_profit_enabled and risk > 0 and quantity > 0)
+    fraction = min(max(float(env.partial_take_profit_fraction), 0.0), 1.0)
+    trigger_r = max(float(env.partial_take_profit_r), 0.0)
+    if side == "buy":
+        trigger_price = entry_price + risk * trigger_r
+        breakeven_stop = entry_price + float(env.partial_take_profit_be_buffer)
+    else:
+        trigger_price = entry_price - risk * trigger_r
+        breakeven_stop = entry_price - float(env.partial_take_profit_be_buffer)
+    return {
+        "initial_stop_loss": stop_loss,
+        "initial_quantity": quantity,
+        "partial_take_profit": {
+            "enabled": enabled,
+            "trigger_r": trigger_r,
+            "trigger_price": round(trigger_price, 5),
+            "fraction": fraction,
+            "breakeven_stop": round(breakeven_stop, 5),
+            "final_take_profit": take_profit,
+            "done": False,
+        },
+    }
+
+
+def manage_open_trade_partial_take_profit(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> None:
+    """Partial-close 50% at the configured R milestone and move the rest to BE."""
+    if not env.execution_enabled or not env.partial_take_profit_enabled or not broker_symbol:
+        return
+    rows = conn.execute(
+        """
+        SELECT id, side, entry_price, stop_loss, take_profit_json, quantity, metadata_json
+        FROM trade_orders
+        WHERE symbol = ? AND status IN ('filled', 'pending_fill') AND source = 'live'
+        """,
+        (config.symbol,),
+    ).fetchall()
+    if not rows:
+        return
+    try:
+        open_positions = client.get_open_positions(broker_symbol)
+    except AttributeError:
+        return
+    positions_by_ticket = {str(position.get("ticket")): position for position in open_positions}
+    if not positions_by_ticket:
+        return
+
+    updated_any = False
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        plan = metadata.get("partial_take_profit")
+        if not isinstance(plan, dict) or not plan.get("enabled"):
+            continue
+        broker_order_id = str(metadata.get("broker_order_id") or "")
+        broker_deal_id = str(metadata.get("broker_deal_id") or "")
+        position = positions_by_ticket.get(broker_order_id) or positions_by_ticket.get(broker_deal_id)
+        if position is None:
+            continue
+        side = str(row["side"]).lower()
+        close_side = "sell" if side == "buy" else "buy"
+        try:
+            current_close_price = float(client.current_price_for_side(broker_symbol, close_side))
+            entry = float(row["entry_price"])
+            trigger_price = float(plan["trigger_price"])
+            position_volume = float(position.get("volume") or row["quantity"])
+            fraction = min(max(float(plan.get("fraction") or 0.0), 0.0), 1.0)
+            initial_quantity = float(metadata.get("initial_quantity") or row["quantity"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if position_volume <= 0 or fraction <= 0:
+            continue
+        be_stop = float(plan.get("breakeven_stop") or entry)
+        final_tp = float(plan.get("final_take_profit") or (json.loads(row["take_profit_json"] or "[]") or [0])[0])
+        ticket = str(position["ticket"])
+        if plan.get("done"):
+            if plan.get("breakeven_applied"):
+                continue
+            modify_result, modify_error = _try_apply_break_even(
+                client,
+                broker_symbol=broker_symbol,
+                position_ticket=ticket,
+                stop_loss=be_stop,
+                take_profit=final_tp,
+                magic=env.mt5_magic,
+            )
+            if modify_error is not None:
+                queue_alert(
+                    conn,
+                    symbol=config.symbol,
+                    timeframe=config.strategy.timeframe,
+                    event_type="execution_event",
+                    severity="critical",
+                    entity_ids=[row["id"]],
+                    payload={"title": "Break-even move retry failed", "reason": [modify_error]},
+                    dedupe_key=f"partial-be-retry-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
+                )
+                continue
+            now = utc_now_iso()
+            plan["breakeven_applied"] = True
+            plan["modify_result"] = modify_result
+            plan["modify_error"] = None
+            metadata["partial_take_profit"] = plan
+            metadata["stop_management_state"] = "partial_taken_be"
+            metadata["current_stop_loss"] = be_stop
+            conn.execute(
+                """
+                UPDATE trade_orders
+                SET stop_loss = ?, metadata_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (be_stop, json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
+            )
+            updated_any = True
+            continue
+        reached = current_close_price >= trigger_price if side == "buy" else current_close_price <= trigger_price
+        if not reached:
+            continue
+        target_remaining_volume = _round_lot_volume(initial_quantity * (1.0 - fraction))
+        already_partially_closed = target_remaining_volume > 0 and position_volume <= target_remaining_volume + 1e-9
+        close_result: dict[str, Any] | None = None
+        close_volume = 0.0
+        if already_partially_closed:
+            close_volume = _round_lot_volume(max(initial_quantity - position_volume, 0.0))
+        else:
+            close_volume = _round_lot_volume(position_volume * fraction)
+            if close_volume <= 0 or close_volume >= position_volume:
+                close_volume = _round_lot_volume(position_volume / 2)
+            if close_volume <= 0 or close_volume >= position_volume:
+                continue
+            try:
+                close_result = client.close_partial_position(
+                    broker_symbol,
+                    position_ticket=ticket,
+                    side=side,
+                    volume=close_volume,
+                    magic=env.mt5_magic,
+                    comment="partial 1.25R",
+                )
+            except Exception as exc:
+                queue_alert(
+                    conn,
+                    symbol=config.symbol,
+                    timeframe=config.strategy.timeframe,
+                    event_type="execution_event",
+                    severity="critical",
+                    entity_ids=[row["id"]],
+                    payload={"title": "Partial TP failed", "reason": [str(exc)]},
+                    dedupe_key=f"partial-tp-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
+                )
+                continue
+        modify_result, modify_error = _try_apply_break_even(
+            client,
+            broker_symbol=broker_symbol,
+            position_ticket=ticket,
+            stop_loss=be_stop,
+            take_profit=final_tp,
+            magic=env.mt5_magic,
+        )
+        if modify_error is not None:
+            queue_alert(
+                conn,
+                symbol=config.symbol,
+                timeframe=config.strategy.timeframe,
+                event_type="execution_event",
+                severity="critical",
+                entity_ids=[row["id"]],
+                payload={"title": "Break-even move failed after partial TP", "reason": [modify_error]},
+                dedupe_key=f"partial-be-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
+            )
+        now = utc_now_iso()
+        plan.update(
+            {
+                "done": True,
+                "done_at": now,
+                "closed_volume": close_volume,
+                "remaining_volume_estimate": round(max(position_volume - close_volume, 0.0), 4),
+                "close_price": current_close_price,
+                "breakeven_applied": modify_error is None,
+                "close_result": close_result,
+                "modify_result": modify_result,
+                "modify_error": modify_error,
+                "inferred_from_position_volume": already_partially_closed,
+            }
+        )
+        metadata["partial_take_profit"] = plan
+        metadata["stop_management_state"] = "partial_taken_be" if modify_error is None else "partial_taken_be_failed"
+        metadata["current_stop_loss"] = be_stop
+        conn.execute(
+            """
+            UPDATE trade_orders
+            SET stop_loss = ?, metadata_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (be_stop if modify_error is None else row["stop_loss"], json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
+        )
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="important",
+            entity_ids=[row["id"]],
+            payload={
+                "title": "Partial TP + break-even" if modify_error is None else "Partial TP done; break-even pending",
+                "reason": [
+                    f"Closed {close_volume:g} lot at ~{current_close_price:.2f}",
+                    f"Moved SL to {be_stop:.2f}" if modify_error is None else f"BE move failed: {modify_error}",
+                ],
+            },
+            dedupe_key=f"partial-tp:{row['id']}",
+        )
+        updated_any = True
+    if updated_any:
+        conn.commit()
+
+
+def _try_apply_break_even(
+    client: MT5BrokerClient,
+    *,
+    broker_symbol: str,
+    position_ticket: str,
+    stop_loss: float,
+    take_profit: float,
+    magic: int,
+) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        result = client.modify_position_sltp(
+            broker_symbol,
+            position_ticket=position_ticket,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            magic=magic,
+            comment="BE after partial",
+        )
+    except Exception as exc:
+        return None, str(exc)
+    return result, None
+
+
+def _round_lot_volume(value: float) -> float:
+    return round(max(value, 0.0), 2)
 
 
 def sync_closed_positions(
@@ -1288,7 +1555,7 @@ def sync_closed_positions(
         pnl_r: float | None = None
         try:
             entry = float(row["entry_price"])
-            stop  = float(row["stop_loss"])
+            stop  = float(metadata.get("initial_stop_loss") or row["stop_loss"])
             qty   = float(row["quantity"])
             close_px = float(deal["price"])
             side = str(row["side"])  # "buy" or "sell"

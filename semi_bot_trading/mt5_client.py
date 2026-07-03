@@ -295,6 +295,93 @@ class MT5BrokerClient:
             results.append(data)
         return results
 
+    def get_open_positions(self, broker_symbol: str) -> list[dict[str, Any]]:
+        """Return open positions for a symbol with the fields needed by the risk manager."""
+        positions = self.mt5.positions_get(symbol=broker_symbol)
+        if not positions:
+            return []
+        result: list[dict[str, Any]] = []
+        for position in positions:
+            side = "buy" if int(position.type) == self.mt5.POSITION_TYPE_BUY else "sell"
+            result.append(
+                {
+                    "ticket": str(position.ticket),
+                    "side": side,
+                    "volume": float(position.volume),
+                    "price_open": float(position.price_open),
+                    "sl": float(getattr(position, "sl", 0.0) or 0.0),
+                    "tp": float(getattr(position, "tp", 0.0) or 0.0),
+                }
+            )
+        return result
+
+    def close_partial_position(
+        self,
+        broker_symbol: str,
+        *,
+        position_ticket: str,
+        side: str,
+        volume: float,
+        magic: int,
+        comment: str = "partial tp",
+    ) -> dict[str, Any]:
+        """Close part of an open position at market and return the MT5 response."""
+        self.ensure_symbol(broker_symbol)
+        close_side = "sell" if side.lower() == "buy" else "buy"
+        order_type = self.mt5.ORDER_TYPE_SELL if close_side == "sell" else self.mt5.ORDER_TYPE_BUY
+        price = self.current_price_for_side(broker_symbol, close_side)
+        payload = {
+            "action": self.mt5.TRADE_ACTION_DEAL,
+            "symbol": broker_symbol,
+            "volume": float(volume),
+            "type": order_type,
+            "position": int(position_ticket),
+            "price": price,
+            "deviation": 30,
+            "magic": magic,
+            "comment": comment[:31],
+            "type_time": self.mt5.ORDER_TIME_GTC,
+            "type_filling": self.order_filling_mode(broker_symbol),
+        }
+        result = self.mt5.order_send(payload)
+        if result is None:
+            raise RuntimeError(f"MT5 partial close failed: {self.mt5.last_error()}")
+        data = result._asdict()
+        retcode = int(data.get("retcode", -1))
+        if retcode != self.mt5.TRADE_RETCODE_DONE:
+            raise RuntimeError(f"MT5 partial close rejected retcode={retcode}: {data}")
+        return data
+
+    def modify_position_sltp(
+        self,
+        broker_symbol: str,
+        *,
+        position_ticket: str,
+        stop_loss: float,
+        take_profit: float,
+        magic: int,
+        comment: str = "move sl be",
+    ) -> dict[str, Any]:
+        """Modify SL/TP on an open position."""
+        self.ensure_symbol(broker_symbol)
+        payload = {
+            "action": self.mt5.TRADE_ACTION_SLTP,
+            "symbol": broker_symbol,
+            "position": int(position_ticket),
+            "sl": float(stop_loss),
+            "tp": float(take_profit),
+            "magic": magic,
+            "comment": comment[:31],
+        }
+        result = self.mt5.order_send(payload)
+        if result is None:
+            raise RuntimeError(f"MT5 modify SL/TP failed: {self.mt5.last_error()}")
+        data = result._asdict()
+        retcode = int(data.get("retcode", -1))
+        if retcode != self.mt5.TRADE_RETCODE_DONE:
+            raise RuntimeError(f"MT5 modify SL/TP rejected retcode={retcode}: {data}")
+        return data
+
     def get_open_position_tickets(self, broker_symbol: str) -> set[str]:
         """Return ticket IDs of all currently open positions for the symbol."""
         positions = self.mt5.positions_get(symbol=broker_symbol)
@@ -316,19 +403,29 @@ class MT5BrokerClient:
         deals = self.mt5.history_deals_get(position=ticket)
         if not deals:
             return None
+        close_deals: list[Any] = []
         for deal in deals:
             if int(deal.entry) == 1:  # DEAL_ENTRY_OUT
-                close_time = datetime.fromtimestamp(int(deal.time), tz=UTC)
-                return {
-                    "price": float(deal.price),
-                    "profit": float(deal.profit),
-                    "swap": float(getattr(deal, "swap", 0) or 0),
-                    "commission": float(getattr(deal, "commission", 0) or 0),
-                    "time_iso": close_time.replace(microsecond=0).isoformat(),
-                    "volume": float(deal.volume),
-                    "deal_ticket": str(deal.ticket),
-                }
-        return None
+                close_deals.append(deal)
+        if not close_deals:
+            return None
+        total_volume = sum(float(deal.volume) for deal in close_deals)
+        weighted_price = (
+            sum(float(deal.price) * float(deal.volume) for deal in close_deals) / total_volume
+            if total_volume > 0
+            else float(close_deals[-1].price)
+        )
+        latest_deal = max(close_deals, key=lambda item: int(item.time))
+        close_time = datetime.fromtimestamp(int(latest_deal.time), tz=UTC)
+        return {
+            "price": weighted_price,
+            "profit": sum(float(deal.profit) for deal in close_deals),
+            "swap": sum(float(getattr(deal, "swap", 0) or 0) for deal in close_deals),
+            "commission": sum(float(getattr(deal, "commission", 0) or 0) for deal in close_deals),
+            "time_iso": close_time.replace(microsecond=0).isoformat(),
+            "volume": total_volume,
+            "deal_ticket": ",".join(str(deal.ticket) for deal in close_deals),
+        }
 
     def mt5_timeframe(self, timeframe: str) -> int:
         key = timeframe.upper()
