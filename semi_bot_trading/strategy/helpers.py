@@ -198,13 +198,7 @@ def parse_utc_datetime(value: Any) -> datetime | None:
 def zone_human_activation_time(zone: dict[str, Any]) -> datetime | None:
     if not zone_is_human_thesis(zone):
         return None
-    metadata = zone.get("metadata") if isinstance(zone.get("metadata"), dict) else {}
-    candidates = [
-        parse_utc_datetime(zone.get("created_at")),
-        parse_utc_datetime(metadata.get("last_human_override_at")),
-    ]
-    active_candidates = [item for item in candidates if item is not None]
-    return max(active_candidates) if active_candidates else None
+    return parse_utc_datetime(zone.get("created_at"))
 
 
 def zone_can_use_signal_candle(zone: dict[str, Any], candle: dict[str, Any]) -> bool:

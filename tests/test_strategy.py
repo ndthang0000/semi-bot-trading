@@ -343,6 +343,40 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(1, len(candidates))
         self.assertEqual("2026-01-01T00:45:00+00:00", candidates[0]["metadata"]["as_of"])
 
+    def test_human_zone_adjustment_does_not_reset_signal_activation(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 109, 111),
+            candle("00:15", 111, 113, 110, 112),
+            candle("00:30", 100, 116, 99, 115),
+        ]
+        human_zone = zone("support", "bullish", 100, 105)
+        human_zone.update(
+            {
+                "detector": "human_manual_v1",
+                "source": "human",
+                "created_at": "2026-01-01 00:10:00",
+                "metadata": {
+                    "human_adjusted": True,
+                    "human_created": True,
+                    "last_human_override_at": "2026-01-01T00:44:17+00:00",
+                    "trade_modes": ["reject"],
+                },
+            }
+        )
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [human_zone],
+            contexts(),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("2026-01-01T00:30:00+00:00", candidates[0]["metadata"]["as_of"])
+
     def test_zone_reaction_v2_impulse_reject_uses_limit_at_zone_high(self) -> None:
         candles = [
             candle("00:00", 110, 112, 109, 111),

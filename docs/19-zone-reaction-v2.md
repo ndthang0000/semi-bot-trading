@@ -91,7 +91,7 @@ Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 
 - Default theo zone type: `support`/`resistance` = `["reject"]`, `fvg` = `["reject", "internal_reject"]`.
 - Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR, stop limit) van ap dung.
-- Trong live mode, human manual zone chi duoc generate setup tu candle co open time bang hoac sau thoi diem zone duoc tao/chinh gan nhat (`created_at`/`last_human_override_at`). `visual_start` chi de ve chart, khong duoc dung de backdate setup tren candle da mo truoc khi human ve/chinh zone.
+- Trong live mode, human manual zone chi duoc generate setup tu candle co open time bang hoac sau thoi diem zone duoc tao (`created_at`). Cac lan human keo/chinh zone sau do (`last_human_override_at`) khong reset activation, vi trader co the tinh chinh zone cho phu hop thi truong khi gia dang chay. `visual_start` chi de ve chart, khong duoc dung de backdate setup tren candle da mo truoc khi human ve zone.
 - He qua: bot SR zone khong con trade `internal_reject` theo default; muon internal reject tren SR zone cu the thi human set `trade_modes = ["reject", "internal_reject"]`.
 - Neu human set SR zone chi `trade_modes = ["internal_reject"]`, cac state tien-xac-nhan nhu `slow_reaction`/`waiting_bos` van duoc emit len UI de debug va cho BOS/CHOCH + price action; chung chi thanh `eligible` khi promote duoc thanh `internal_reject`.
 - Metadata candidate ghi `context_bypass` va `trade_modes` de debug.
