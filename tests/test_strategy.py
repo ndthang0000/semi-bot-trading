@@ -378,6 +378,33 @@ class StrategyTest(unittest.TestCase):
         self.assertGreater(candidate["metadata"]["impulse_limit_range_atr"], 4)
         self.assertGreater(candidate["metadata"]["impulse_limit_extension_atr"], 1)
 
+    def test_zone_reaction_v2_does_not_trade_invalidated_sr_zone(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 109, 111),
+            candle("00:15", 111, 113, 110, 112),
+            candle("00:30", 100, 116, 99, 115),
+        ]
+        invalidated_support = zone("support", "bullish", 100, 105)
+        invalidated_support.update(
+            {
+                "status": "invalidated",
+                "invalidated_at": "2026-01-01T00:15:00+00:00",
+                "valid_until": "2026-01-01T00:15:00+00:00",
+            }
+        )
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [invalidated_support],
+            contexts(),
+            candles,
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual([], candidates)
+
     def test_bullish_strong_reject_accepts_bullish_candle_body(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),

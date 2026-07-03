@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from tempfile import TemporaryDirectory
+import json
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from semi_bot_trading.zones import (
     CandleSlice,
     PriceZone,
     SwingPoint,
+    apply_and_store_zone_lifecycle,
     apply_lifecycle_to_zones,
     apply_lifecycle_to_zone,
     detect_support_resistance_zones,
@@ -351,6 +353,118 @@ class ZoneDetectorTest(unittest.TestCase):
         self.assertEqual(updated.status, "invalidated")
         self.assertEqual(updated.end_time, "2026-01-01T05:00:00+00:00")
         self.assertLess(updated.effective_weight, zone.effective_weight)
+
+    def test_store_lifecycle_invalidates_human_sr_after_creation_breakout(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.executemany(
+                    """
+                    INSERT INTO candles (
+                        id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+                    )
+                    VALUES (?, 'XAUUSD', 'H1', ?, ?, ?, ?, ?, ?, 100, 'test')
+                    """,
+                    [
+                        ("c1", "2026-01-01T10:00:00+00:00", "2026-01-01T11:00:00+00:00", 103, 105, 101, 103),
+                        ("c2", "2026-01-01T11:00:00+00:00", "2026-01-01T12:00:00+00:00", 103, 104, 94, 95),
+                    ],
+                )
+                conn.execute(
+                    """
+                    INSERT INTO price_zones (
+                        id, symbol, timeframe, detector, zone_type, direction,
+                        price_low, price_high, start_time, end_time, valid_from, valid_until,
+                        invalidated_at, invalidated_by_structure_point_id, detected_at,
+                        bot_confidence, bot_weight, effective_confidence, effective_weight,
+                        status, source, metadata_json, created_at
+                    )
+                    VALUES (
+                        'human-support', 'XAUUSD', 'H1', 'human_manual_v1', 'support', 'bullish',
+                        100, 105, '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                        '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                        NULL, NULL, '2026-01-01T00:00:00+00:00',
+                        1.0, 0.8, 1.0, 0.8, 'active', 'human',
+                        '{"human_created": true, "last_human_override_at": "2026-01-01T10:30:00+00:00"}',
+                        '2026-01-01 10:30:00'
+                    )
+                    """
+                )
+
+                updates = apply_and_store_zone_lifecycle(
+                    conn,
+                    "XAUUSD",
+                    "H1",
+                    close_break_buffer=0.0,
+                    recent_touch_lookback_candles=10,
+                    age_decay_per_100_candles=0.08,
+                    freshness_bonus=0.15,
+                    invalidation_weight_multiplier=0.15,
+                )
+                row = conn.execute("SELECT * FROM price_zones WHERE id = 'human-support'").fetchone()
+
+        metadata = json.loads(row["metadata_json"])
+        self.assertGreaterEqual(updates, 1)
+        self.assertEqual("invalidated", row["status"])
+        self.assertEqual("2026-01-01T11:00:00+00:00", row["invalidated_at"])
+        self.assertEqual(row["invalidated_at"], row["end_time"])
+        self.assertEqual(row["invalidated_at"], row["valid_until"])
+        self.assertEqual("human", metadata["sr_lifecycle_applied_to_source"])
+        self.assertEqual("2026-01-01T10:30:00+00:00", metadata["sr_lifecycle_start"])
+
+    def test_store_lifecycle_does_not_backdate_human_sr_invalidation_before_creation(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.executemany(
+                    """
+                    INSERT INTO candles (
+                        id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+                    )
+                    VALUES (?, 'XAUUSD', 'H1', ?, ?, ?, ?, ?, ?, 100, 'test')
+                    """,
+                    [
+                        ("c1", "2026-01-01T09:00:00+00:00", "2026-01-01T10:00:00+00:00", 103, 104, 94, 95),
+                        ("c2", "2026-01-01T10:00:00+00:00", "2026-01-01T11:00:00+00:00", 103, 105, 101, 103),
+                    ],
+                )
+                conn.execute(
+                    """
+                    INSERT INTO price_zones (
+                        id, symbol, timeframe, detector, zone_type, direction,
+                        price_low, price_high, start_time, end_time, valid_from, valid_until,
+                        invalidated_at, invalidated_by_structure_point_id, detected_at,
+                        bot_confidence, bot_weight, effective_confidence, effective_weight,
+                        status, source, metadata_json, created_at
+                    )
+                    VALUES (
+                        'human-support', 'XAUUSD', 'H1', 'human_manual_v1', 'support', 'bullish',
+                        100, 105, '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                        '2026-01-01T00:00:00+00:00', '2026-01-03T00:00:00+00:00',
+                        NULL, NULL, '2026-01-01T00:00:00+00:00',
+                        1.0, 0.8, 1.0, 0.8, 'active', 'human',
+                        '{"human_created": true, "last_human_override_at": "2026-01-01T10:30:00+00:00"}',
+                        '2026-01-01 10:30:00'
+                    )
+                    """
+                )
+
+                apply_and_store_zone_lifecycle(
+                    conn,
+                    "XAUUSD",
+                    "H1",
+                    close_break_buffer=0.0,
+                    recent_touch_lookback_candles=10,
+                    age_decay_per_100_candles=0.08,
+                    freshness_bonus=0.15,
+                    invalidation_weight_multiplier=0.15,
+                )
+                row = conn.execute("SELECT * FROM price_zones WHERE id = 'human-support'").fetchone()
+
+        self.assertEqual("active", row["status"])
+        self.assertIsNone(row["invalidated_at"])
 
     def test_false_break_refines_support_and_disables_parent_for_trade(self) -> None:
         swings = [

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from sqlite3 import Connection
 from typing import Any
 
@@ -1274,6 +1275,172 @@ def load_price_zones(conn: Connection, symbol: str, timeframe: str, detector: st
     return zones
 
 
+def parse_utc_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def isoformat_utc(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat()
+
+
+def human_zone_lifecycle_start(row: Any, metadata: dict[str, Any]) -> str:
+    candidates = [
+        parse_utc_datetime(row["detected_at"]),
+        parse_utc_datetime(row["created_at"]),
+        parse_utc_datetime(metadata.get("last_human_override_at")),
+    ]
+    active_candidates = [item for item in candidates if item is not None]
+    if not active_candidates:
+        return str(row["detected_at"])
+    return isoformat_utc(max(active_candidates))
+
+
+def price_zone_from_row(row: Any, *, lifecycle_detected_at: str | None = None) -> PriceZone:
+    metadata = json.loads(row["metadata_json"] or "{}")
+    return PriceZone(
+        symbol=row["symbol"],
+        timeframe=row["timeframe"],
+        detector=row["detector"],
+        zone_type=row["zone_type"],
+        direction=row["direction"],
+        price_low=float(row["price_low"]),
+        price_high=float(row["price_high"]),
+        start_time=row["start_time"],
+        end_time=row["end_time"],
+        valid_from=row["valid_from"],
+        valid_until=row["valid_until"],
+        invalidated_at=row["invalidated_at"],
+        invalidated_by_structure_point_id=row["invalidated_by_structure_point_id"],
+        detected_at=lifecycle_detected_at or row["detected_at"],
+        bot_confidence=float(row["bot_confidence"]),
+        bot_weight=float(row["bot_weight"]),
+        effective_confidence=float(row["effective_confidence"]),
+        effective_weight=float(row["effective_weight"]),
+        status=row["status"],
+        source=row["source"],
+        metadata=metadata,
+    )
+
+
+def load_human_sr_lifecycle_rows(conn: Connection, symbol: str, timeframe: str) -> list[Any]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM price_zones
+        WHERE symbol = ?
+          AND timeframe = ?
+          AND zone_type IN ('support', 'resistance')
+          AND status = 'active'
+        ORDER BY start_time
+        """,
+        (symbol, timeframe),
+    ).fetchall()
+    selected: list[Any] = []
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        if (
+            row["source"] in {"human", "mixed"}
+            or row["detector"] == "human_manual_v1"
+            or metadata.get("human_created") is True
+            or metadata.get("human_adjusted") is True
+        ):
+            selected.append(row)
+    return selected
+
+
+def apply_and_store_human_sr_lifecycle(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    candles: list[CandleSlice],
+    close_break_buffer: float,
+    recent_touch_lookback_candles: int,
+    age_decay_per_100_candles: float,
+    freshness_bonus: float,
+    invalidation_weight_multiplier: float,
+    close_break_buffer_atr_multiplier: float = 0.0,
+    reaction_window_candles: int = 5,
+    min_reaction_atr: float = 0.8,
+    strong_reaction_atr: float = 1.5,
+    recent_reaction_count: int = 3,
+    max_healthy_touches: int = 3,
+    weak_touch_penalty: float = 0.08,
+    too_many_touches_penalty: float = 0.06,
+    linger_penalty: float = 0.10,
+) -> int:
+    updates = 0
+    for row in load_human_sr_lifecycle_rows(conn, symbol, timeframe):
+        metadata = json.loads(row["metadata_json"] or "{}")
+        lifecycle_start = human_zone_lifecycle_start(row, metadata)
+        zone = price_zone_from_row(row, lifecycle_detected_at=lifecycle_start)
+        updated = apply_lifecycle_to_zone(
+            zone,
+            candles,
+            close_break_buffer,
+            recent_touch_lookback_candles,
+            age_decay_per_100_candles,
+            freshness_bonus,
+            invalidation_weight_multiplier,
+            close_break_buffer_atr_multiplier,
+            reaction_window_candles,
+            min_reaction_atr,
+            strong_reaction_atr,
+            recent_reaction_count,
+            max_healthy_touches,
+            weak_touch_penalty,
+            too_many_touches_penalty,
+            linger_penalty,
+        )
+        if updated.status != "invalidated" or not updated.invalidated_at:
+            continue
+        persisted_metadata = dict(updated.metadata)
+        persisted_metadata["sr_lifecycle_applied_to_source"] = row["source"]
+        persisted_metadata["sr_lifecycle_start"] = lifecycle_start
+        conn.execute(
+            """
+            UPDATE price_zones
+            SET end_time = ?,
+                valid_until = ?,
+                invalidated_at = ?,
+                invalidated_by_structure_point_id = ?,
+                bot_confidence = ?,
+                bot_weight = ?,
+                effective_confidence = ?,
+                effective_weight = ?,
+                status = 'invalidated',
+                metadata_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                updated.invalidated_at,
+                updated.invalidated_at,
+                updated.invalidated_at,
+                updated.invalidated_by_structure_point_id,
+                updated.bot_confidence,
+                updated.bot_weight,
+                updated.effective_confidence,
+                updated.effective_weight,
+                json.dumps(persisted_metadata, sort_keys=True),
+                row["id"],
+            ),
+        )
+        updates += 1
+    return updates
+
+
 def apply_and_store_zone_lifecycle(
     conn: Connection,
     symbol: str,
@@ -1319,7 +1486,29 @@ def apply_and_store_zone_lifecycle(
         false_break_refine_max_width_atr_multiplier,
         false_break_parent_weight_multiplier,
     )
-    return replace_price_zones(conn, symbol, timeframe, SR_DETECTOR, updated)
+    bot_count = replace_price_zones(conn, symbol, timeframe, SR_DETECTOR, updated)
+    human_count = apply_and_store_human_sr_lifecycle(
+        conn,
+        symbol,
+        timeframe,
+        candles,
+        close_break_buffer,
+        recent_touch_lookback_candles,
+        age_decay_per_100_candles,
+        freshness_bonus,
+        invalidation_weight_multiplier,
+        close_break_buffer_atr_multiplier,
+        reaction_window_candles,
+        min_reaction_atr,
+        strong_reaction_atr,
+        recent_reaction_count,
+        max_healthy_touches,
+        weak_touch_penalty,
+        too_many_touches_penalty,
+        linger_penalty,
+    )
+    conn.commit()
+    return bot_count + human_count
 
 
 def zone_summary(conn: Connection, symbol: str, timeframe: str | None = None, limit: int = 20) -> list[dict[str, object]]:
