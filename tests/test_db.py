@@ -11,6 +11,85 @@ from semi_bot_trading.db import connect, init_db
 
 
 class DbMigrationTest(unittest.TestCase):
+    def test_account_label_indexes_are_created_after_legacy_columns_migrate(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "legacy.sqlite3"
+            with closing(connect(db_path)) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE trade_orders (
+                        id TEXT PRIMARY KEY,
+                        trade_idea_id TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        side TEXT NOT NULL,
+                        order_type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        entry_price REAL,
+                        stop_loss REAL NOT NULL,
+                        take_profit_json TEXT NOT NULL DEFAULT '[]',
+                        quantity REAL NOT NULL,
+                        opened_at TEXT,
+                        closed_at TEXT,
+                        close_price REAL,
+                        pnl REAL,
+                        pnl_r REAL,
+                        source TEXT NOT NULL,
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE execution_requests (
+                        id TEXT PRIMARY KEY,
+                        trade_idea_id TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        broker_symbol TEXT NOT NULL,
+                        side TEXT NOT NULL,
+                        order_type TEXT NOT NULL,
+                        quantity REAL NOT NULL,
+                        entry_price REAL,
+                        stop_loss REAL NOT NULL,
+                        take_profit_json TEXT NOT NULL DEFAULT '[]',
+                        risk_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                        context_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                        requested_by TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        broker_order_id TEXT,
+                        broker_result_json TEXT NOT NULL DEFAULT '{}',
+                        failure_reason TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE spread_snapshots (
+                        id TEXT PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        broker_symbol TEXT NOT NULL,
+                        bid REAL NOT NULL,
+                        ask REAL NOT NULL,
+                        spread REAL NOT NULL,
+                        snapshot_at TEXT NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'mt5',
+                        metadata_json TEXT NOT NULL DEFAULT '{}'
+                    );
+                    """
+                )
+                init_db(conn)
+                migrated_columns = {
+                    table: {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                    for table in ("trade_orders", "execution_requests", "spread_snapshots")
+                }
+                indexes = {
+                    row["name"]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'index'"
+                    ).fetchall()
+                }
+
+        self.assertIn("account_label", migrated_columns["trade_orders"])
+        self.assertIn("account_label", migrated_columns["execution_requests"])
+        self.assertIn("account_label", migrated_columns["spread_snapshots"])
+        self.assertIn("idx_trade_orders_account_lookup", indexes)
+        self.assertIn("idx_execution_requests_account_lookup", indexes)
+        self.assertIn("idx_spread_snapshots_account_symbol_time", indexes)
+
     def test_bot_sr_default_expiry_uses_detected_at_not_updated_at(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

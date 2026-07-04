@@ -166,9 +166,6 @@ CREATE TABLE IF NOT EXISTS trade_orders (
 CREATE INDEX IF NOT EXISTS idx_trade_orders_lookup
 ON trade_orders(symbol, status, opened_at, closed_at);
 
-CREATE INDEX IF NOT EXISTS idx_trade_orders_account_lookup
-ON trade_orders(account_label, symbol, status, opened_at, closed_at);
-
 CREATE TABLE IF NOT EXISTS trade_fills (
     id TEXT PRIMARY KEY,
     trade_order_id TEXT NOT NULL,
@@ -269,9 +266,6 @@ CREATE TABLE IF NOT EXISTS execution_requests (
 CREATE INDEX IF NOT EXISTS idx_execution_requests_lookup
 ON execution_requests(symbol, status, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_execution_requests_account_lookup
-ON execution_requests(account_label, symbol, status, created_at);
-
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,
@@ -364,8 +358,6 @@ CREATE TABLE IF NOT EXISTS spread_snapshots (
 CREATE INDEX IF NOT EXISTS idx_spread_snapshots_symbol_time
 ON spread_snapshots(symbol, snapshot_at);
 
-CREATE INDEX IF NOT EXISTS idx_spread_snapshots_account_symbol_time
-ON spread_snapshots(account_label, symbol, snapshot_at);
 """
 
 
@@ -390,10 +382,33 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "trade_orders", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "trade_orders", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
+    ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)
     expire_price_zones(conn)
     conn.commit()
+
+
+def ensure_account_scoped_indexes(conn: sqlite3.Connection) -> None:
+    """Create indexes that depend on migrated account_label columns."""
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_trade_orders_account_lookup
+        ON trade_orders(account_label, symbol, status, opened_at, closed_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_execution_requests_account_lookup
+        ON execution_requests(account_label, symbol, status, created_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_spread_snapshots_account_symbol_time
+        ON spread_snapshots(account_label, symbol, snapshot_at)
+        """
+    )
 
 
 def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
