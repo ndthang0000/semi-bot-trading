@@ -728,3 +728,32 @@ Chạy thủ công khi cần:
 ```powershell
 python -m semi_bot_trading.cli fetch-news
 ```
+
+## 12. VPS update script
+
+Pull latest code, install package, fetch news, restart API only:
+
+```powershell
+.\scripts\update.ps1
+```
+
+Restart API and Exness worker:
+
+```powershell
+.\scripts\update.ps1 -RestartWorker
+```
+
+Restart API, Exness worker, and FTMO worker:
+
+```powershell
+.\scripts\update.ps1 -RestartAllWorkers
+```
+
+Restart API and FTMO worker:
+
+```powershell
+.\scripts\update.ps1 -RestartFTMO
+```
+
+`BotWorkerFTMO` is optional; the script skips it if `C:\winsw\BotWorkerFTMO.exe`
+has not been created yet.
