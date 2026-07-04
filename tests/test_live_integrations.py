@@ -111,10 +111,13 @@ class LiveIntegrationTest(unittest.TestCase):
             poll_at_seconds=(1, 16, 31, 46),
             max_entry_drift_price=2.0,
             max_spread_price=2.0,
+            live_sync_candles=True,
+            live_run_detectors=True,
             live_evaluate_intrabar=False,
             chart_url_base="http://127.0.0.1:5173",
             account_label="Test",
             account_profile="personal",
+            account_balance_scale=None,
             risk_per_trade_pct=None,
             secret_key="",
             admin_username="admin",
@@ -184,10 +187,13 @@ class LiveIntegrationTest(unittest.TestCase):
             poll_at_seconds=(1, 16, 31, 46),
             max_entry_drift_price=2.0,
             max_spread_price=2.0,
+            live_sync_candles=True,
+            live_run_detectors=True,
             live_evaluate_intrabar=False,
             chart_url_base="http://127.0.0.1:5173",
             account_label="Test",
             account_profile="personal",
+            account_balance_scale=None,
             risk_per_trade_pct=None,
             secret_key="",
             admin_username="admin",
@@ -253,6 +259,8 @@ class LiveIntegrationTest(unittest.TestCase):
                             'MT5_SYMBOL="XAUUSDm"',
                             'EXECUTION_ENABLED="true"',
                             'LIVE_ORDER_VOLUME="0.02"',
+                            'LIVE_SYNC_CANDLES="false"',
+                            'LIVE_RUN_DETECTORS="false"',
                             'LIVE_EVALUATE_INTRABAR="true"',
                         ]
                     )
@@ -267,6 +275,8 @@ class LiveIntegrationTest(unittest.TestCase):
             self.assertEqual("XAUUSDcustom", env.mt5_symbol)
             self.assertTrue(env.execution_enabled)
             self.assertEqual(0.02, env.live_order_volume)
+            self.assertFalse(env.live_sync_candles)
+            self.assertFalse(env.live_run_detectors)
             self.assertTrue(env.live_evaluate_intrabar)
         finally:
             if previous_symbol is None:
@@ -319,10 +329,13 @@ class LiveIntegrationTest(unittest.TestCase):
                 poll_at_seconds=(1, 16, 31, 46),
                 max_entry_drift_price=2.0,
                 max_spread_price=2.0,
+                live_sync_candles=True,
+                live_run_detectors=True,
                 live_evaluate_intrabar=False,
                 chart_url_base="http://127.0.0.1:5173",
                 account_label="Test",
                 account_profile="personal",
+                account_balance_scale=None,
                 risk_per_trade_pct=None,
                 secret_key="",
                 admin_username="admin",
@@ -370,6 +383,103 @@ class LiveIntegrationTest(unittest.TestCase):
             self.assertFalse(build_payload.call_args.kwargs["include_live_strategy_candle"])
             self.assertEqual([[{"id": "candidate-1", "status": "eligible"}]], execute_calls)
 
+    def test_live_worker_can_skip_candle_sync_and_detectors_but_still_evaluate_setups(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            config = replace(load_config(), database=db_path)
+            closed_at = datetime(2026, 1, 1, 0, 15, tzinfo=UTC)
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                upsert_candles(
+                    conn,
+                    [
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe=config.strategy.timeframe,
+                            open_time=closed_at,
+                            close_time=closed_at + timedelta(minutes=15),
+                            open=4220,
+                            high=4230,
+                            low=4210,
+                            close=4225,
+                            volume=1,
+                            source="test",
+                        )
+                    ],
+                )
+            finally:
+                conn.close()
+
+            env = RuntimeEnv(
+                mt5_login=None,
+                mt5_password=None,
+                mt5_server=None,
+                mt5_path=None,
+                mt5_symbol="XAUUSDm",
+                mt5_magic=260613,
+                telegram_token=None,
+                telegram_chat_id=None,
+                execution_enabled=False,
+                live_order_volume=0.01,
+                max_open_positions_per_symbol=1,
+                max_trades_per_day=10,
+                poll_seconds=15,
+                poll_at_seconds=(1, 16, 31, 46),
+                max_entry_drift_price=2.0,
+                max_spread_price=2.0,
+                live_sync_candles=False,
+                live_run_detectors=False,
+                live_evaluate_intrabar=False,
+                chart_url_base="http://127.0.0.1:5173",
+                account_label="FTMO Demo",
+                account_profile="ftmo_challenge",
+                account_balance_scale=1.0,
+                risk_per_trade_pct=0.25,
+                secret_key="",
+                admin_username="admin",
+                admin_password_hash=None,
+                allowed_origins=[],
+                environment="development",
+                weekend_flatten_enabled=False,
+                weekend_flatten_timezone="America/New_York",
+                weekend_no_new_trades_time="12:00",
+                weekend_flatten_time="15:30",
+                partial_take_profit_enabled=True,
+                partial_take_profit_r=1.25,
+                partial_take_profit_fraction=0.5,
+                partial_take_profit_be_buffer=0.0,
+            )
+            state = LiveWorkerState(broker_symbol="XAUUSD", last_closed_m15=None)
+            execute_calls: list[list[dict[str, object]]] = []
+
+            class FakeClient:
+                pass
+
+            with (
+                patch("semi_bot_trading.live_worker.sync_mt5_candles") as sync_candles,
+                patch("semi_bot_trading.live_worker.sync_closed_positions"),
+                patch("semi_bot_trading.live_worker.run_live_detectors") as detectors,
+                patch("semi_bot_trading.live_worker.snapshot_account"),
+                patch("semi_bot_trading.live_worker.snapshot_spread"),
+                patch(
+                    "semi_bot_trading.live_worker.build_chart_payload",
+                    return_value={"layers": {"setup_candidates": [{"id": "candidate-ftmo", "status": "eligible"}]}},
+                ) as build_payload,
+                patch("semi_bot_trading.live_worker.queue_setup_alerts"),
+                patch("semi_bot_trading.live_worker.send_pending_telegram_alerts"),
+                patch(
+                    "semi_bot_trading.live_worker.maybe_execute_candidates",
+                    side_effect=lambda _conn, _config, _env, _client, candidates, _symbol: execute_calls.append(candidates),
+                ),
+            ):
+                run_live_iteration(config, env, FakeClient(), state)
+
+            sync_candles.assert_not_called()
+            detectors.assert_not_called()
+            build_payload.assert_called_once()
+            self.assertEqual([[{"id": "candidate-ftmo", "status": "eligible"}]], execute_calls)
+
     def test_live_worker_passes_intrabar_flag_to_setup_evaluation(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
@@ -415,10 +525,13 @@ class LiveIntegrationTest(unittest.TestCase):
                 poll_at_seconds=(1, 16, 31, 46),
                 max_entry_drift_price=2.0,
                 max_spread_price=2.0,
+                live_sync_candles=True,
+                live_run_detectors=True,
                 live_evaluate_intrabar=True,
                 chart_url_base="http://127.0.0.1:5173",
                 account_label="Test",
                 account_profile="personal",
+                account_balance_scale=None,
                 risk_per_trade_pct=None,
                 secret_key="",
                 admin_username="admin",

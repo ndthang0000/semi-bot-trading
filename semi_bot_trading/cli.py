@@ -689,7 +689,7 @@ def cmd_serve_chart(args: argparse.Namespace) -> None:
 def cmd_serve_api(args: argparse.Namespace) -> None:
     from .api import run_api_server
 
-    run_api_server(config_path=args.config, host=args.host, port=args.port, reload=args.reload)
+    run_api_server(config_path=args.config, host=args.host, port=args.port, reload=args.reload, env_path=args.env)
 
 
 def cmd_hash_password(args: argparse.Namespace) -> None:
@@ -755,8 +755,10 @@ def cmd_live_worker(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     env = load_runtime_env(args.env)
     print(
-        f"Starting live worker local_symbol={config.symbol} broker_symbol={env.mt5_symbol} "
+        f"Starting live worker account_label={env.account_label} profile={env.account_profile} "
+        f"local_symbol={config.symbol} broker_symbol={env.mt5_symbol} "
         f"execution_enabled={env.execution_enabled} poll_seconds={env.poll_seconds} "
+        f"sync_candles={env.live_sync_candles} run_detectors={env.live_run_detectors} "
         f"intrabar={env.live_evaluate_intrabar}"
     )
     run_live_worker(config, env, once=args.once)
@@ -768,9 +770,10 @@ def cmd_spread_summary(args: argparse.Namespace) -> None:
     symbol = args.symbol or config.symbol
     with connect(db_path) as conn:
         init_db(conn)
-        summary = spread_summary(conn, symbol, hours=args.hours)
+        summary = spread_summary(conn, symbol, account_label=args.account_label, hours=args.hours)
     latest = summary["latest"]
-    print(f"Spread summary symbol={symbol} hours={summary['hours']} db={db_path}")
+    label = f" account_label={args.account_label}" if args.account_label else ""
+    print(f"Spread summary symbol={symbol}{label} hours={summary['hours']} db={db_path}")
     print(f"count={summary['count']}")
     if latest:
         print(
@@ -1356,6 +1359,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Serve the FastAPI backend for the React frontend.",
     )
     add_common_config_arg(api_parser)
+    add_common_env_arg(api_parser)
     api_parser.add_argument("--host", default="127.0.0.1")
     api_parser.add_argument("--port", type=int, default=8000)
     api_parser.add_argument("--reload", action="store_true")
@@ -1386,6 +1390,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_config_arg(spread_summary_parser)
     add_common_db_arg(spread_summary_parser)
     spread_summary_parser.add_argument("--symbol")
+    spread_summary_parser.add_argument("--account-label", help="Filter spread snapshots to one live account label.")
     spread_summary_parser.add_argument("--hours", type=int, default=24, help="Lookback window in hours. Default: 24.")
     spread_summary_parser.set_defaults(func=cmd_spread_summary)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from contextlib import closing
 from tempfile import TemporaryDirectory
 
 from semi_bot_trading.db import connect, init_db
@@ -14,7 +15,7 @@ class SpreadSnapshotTest(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
             now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
-            with connect(db_path) as conn:
+            with closing(connect(db_path)) as conn:
                 init_db(conn)
                 for i, spread in enumerate([0.2, 0.5, 1.0, 2.0]):
                     record_spread_snapshot(
@@ -43,7 +44,7 @@ class SpreadSnapshotTest(unittest.TestCase):
             db_path = Path(temp_dir) / "test.sqlite3"
             old = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
             now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
-            with connect(db_path) as conn:
+            with closing(connect(db_path)) as conn:
                 init_db(conn)
                 record_spread_snapshot(
                     conn,

@@ -66,7 +66,9 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
     # Initialise DB schema once at startup, not on every poll iteration.
     with closing(connect(config.database)) as conn:
         init_db(conn)
-    state = LiveWorkerState(broker_symbol=client.resolve_symbol(env.mt5_symbol, config.symbol))
+    broker_symbol = client.resolve_symbol(env.mt5_symbol, config.symbol)
+    validate_live_account_startup(env, client, broker_symbol)
+    state = LiveWorkerState(broker_symbol=broker_symbol)
     try:
         while True:
             try:
@@ -128,6 +130,43 @@ def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
             time.sleep(delay_seconds)
 
 
+def validate_live_account_startup(env: RuntimeEnv, client: MT5BrokerClient, broker_symbol: str) -> None:
+    """Validate account/symbol metadata before the worker can evaluate execution."""
+    account = client.get_account_info()
+    trade_info: dict[str, Any] = {}
+    if hasattr(client, "get_symbol_trade_info"):
+        trade_info = dict(client.get_symbol_trade_info(broker_symbol))
+    else:
+        trade_info = {"trade_contract_size": client.get_symbol_contract_size(broker_symbol)}
+
+    contract_size = float(trade_info.get("trade_contract_size") or 0.0)
+    if contract_size <= 0:
+        raise RuntimeError(f"Invalid MT5 contract size for {broker_symbol}: {contract_size}")
+    if env.account_profile.lower().startswith("ftmo") and contract_size < 10:
+        raise RuntimeError(f"Refusing FTMO startup with suspicious contract size for {broker_symbol}: {contract_size}")
+    if env.account_profile.lower().startswith("ftmo") and env.account_balance_scale not in (None, 1.0):
+        raise RuntimeError("FTMO profile must use ACCOUNT_BALANCE_SCALE=1.0 or leave it unset")
+
+    logger.info(
+        "Live account validated label=%s profile=%s login=%s server=%s broker_symbol=%s "
+        "balance=%.2f equity=%.2f currency=%s contract_size=%.4f volume_min=%s volume_max=%s volume_step=%s "
+        "execution_enabled=%s",
+        env.account_label,
+        env.account_profile,
+        env.mt5_login,
+        env.mt5_server,
+        broker_symbol,
+        float(account.get("balance") or 0.0),
+        float(account.get("equity") or 0.0),
+        account.get("currency"),
+        contract_size,
+        trade_info.get("volume_min"),
+        trade_info.get("volume_max"),
+        trade_info.get("volume_step"),
+        env.execution_enabled,
+    )
+
+
 def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient) -> None:
     """Upsert the latest MT5 account metrics into account_snapshots (one row per label)."""
     try:
@@ -173,6 +212,7 @@ def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient)
 def snapshot_spread(
     conn: Connection,
     config: AppConfig,
+    env: RuntimeEnv,
     client: MT5BrokerClient,
     broker_symbol: str,
     now: datetime | None = None,
@@ -189,6 +229,7 @@ def snapshot_spread(
         conn,
         symbol=config.symbol,
         broker_symbol=broker_symbol,
+        account_label=env.account_label,
         bid=quote["bid"],
         ask=quote["ask"],
         spread=quote["spread"],
@@ -208,20 +249,23 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         # init_db is called once at startup in run_live_worker; skip here.
         snapshot_account(conn, env, client)
         if broker_symbol:
-            snapshot_spread(conn, config, client, broker_symbol, now)
-        sync_mt5_candles(conn, config, client, broker_symbol)
+            snapshot_spread(conn, config, env, client, broker_symbol, now)
+        if env.live_sync_candles:
+            sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
             manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
             maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
-        if has_new_closed_m15:
+        if env.live_run_detectors and has_new_closed_m15:
             before_zone_ids = current_zone_ids(conn, config.symbol)
             run_live_detectors(conn, config, config.symbol)
             apply_persisted_fvg_mitigation(conn, config.symbol, config.bias.timeframe)
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
+            state.last_closed_m15 = latest_m15
+        elif has_new_closed_m15:
             state.last_closed_m15 = latest_m15
 
         # Override H1 regime to "news" during active blackout windows so that
@@ -690,7 +734,7 @@ def maybe_execute_candidates(
             return
     if client.positions_count(broker_symbol) >= env.max_open_positions_per_symbol:
         return
-    if live_trade_count_today(conn, config.symbol) >= env.max_trades_per_day:
+    if live_trade_count_today(conn, config.symbol, account_label=env.account_label) >= env.max_trades_per_day:
         return
     eligible = [candidate for candidate in candidates if candidate.get("status") == "eligible"]
     eligible = candidates_after_live_fvg_trade_count(
@@ -698,11 +742,12 @@ def maybe_execute_candidates(
         config.symbol,
         eligible,
         config.strategy.zone_reaction_v2_fvg_max_trades_per_zone,
+        account_label=env.account_label,
     )
     if not eligible:
         return
     candidate = sorted(eligible, key=lambda item: float(item.get("score") or 0.0), reverse=True)[0]
-    if live_candidate_already_executed(conn, str(candidate["id"])):
+    if live_candidate_already_executed(conn, str(candidate["id"]), account_label=env.account_label):
         return
     try:
         pricing_plan = build_execution_pricing_plan(client, broker_symbol, candidate, env.max_entry_drift_price)
@@ -719,13 +764,14 @@ def maybe_execute_candidates(
         )
         return
     # Risk check: compute lot size and verify daily loss limit
-    risk_manager = build_risk_manager(client, env.account_profile, env.risk_per_trade_pct)
+    risk_manager = build_risk_manager(client, env.account_profile, env.risk_per_trade_pct, env.account_balance_scale)
     assessment = risk_manager.assess_trade(
         conn=conn,
         symbol=config.symbol,
         entry=pricing_plan.entry_price,
         stop_loss=pricing_plan.stop_loss,
         broker_symbol=broker_symbol,
+        account_label=env.account_label,
     )
     if not assessment.allowed:
         queue_alert(
@@ -793,7 +839,7 @@ def maybe_weekend_flatten(
         return False
 
     if cancelled:
-        _mark_live_pending_orders_cancelled(conn, config.symbol, utc_now_iso())
+        _mark_live_pending_orders_cancelled(conn, config.symbol, env.account_label, utc_now_iso())
     if closed:
         sync_closed_positions(conn, config, env, client, broker_symbol)
 
@@ -818,7 +864,7 @@ def maybe_weekend_flatten(
     return did_anything
 
 
-def _mark_live_pending_orders_cancelled(conn: Connection, symbol: str, now: str) -> None:
+def _mark_live_pending_orders_cancelled(conn: Connection, symbol: str, account_label: str, now: str) -> None:
     conn.execute(
         """
         UPDATE trade_orders
@@ -826,10 +872,11 @@ def _mark_live_pending_orders_cancelled(conn: Connection, symbol: str, now: str)
             closed_at = COALESCE(closed_at, ?),
             updated_at = ?
         WHERE symbol = ?
+          AND account_label = ?
           AND source = 'live'
           AND status = 'pending_fill'
         """,
-        (now, now, symbol),
+        (now, now, symbol, account_label),
     )
 
 
@@ -1032,11 +1079,14 @@ def execute_candidate(
     direction = str(candidate["direction"])
     side = "buy" if direction == "long" else "sell"
     now = utc_now_iso()
-    idea_id = f"live-idea-{candidate['id']}"
+    idea_id = live_trade_idea_id(str(candidate["id"]), account_label=env.account_label)
     request_id = f"exec-{uuid.uuid4()}"
     order_id = f"live-order-{uuid.uuid4()}"
     context_snapshot = {
         "source": "live",
+        "account_label": env.account_label,
+        "account_profile": env.account_profile,
+        "broker_symbol": broker_symbol,
         "setup_id": candidate["id"],
         "candidate": candidate,
         "pricing_plan": {
@@ -1082,15 +1132,16 @@ def execute_candidate(
     conn.execute(
         """
         INSERT INTO execution_requests (
-            id, trade_idea_id, symbol, broker_symbol, side, order_type, quantity,
+            id, trade_idea_id, account_label, symbol, broker_symbol, side, order_type, quantity,
             entry_price, stop_loss, take_profit_json, risk_snapshot_json,
             context_snapshot_json, requested_by, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'strategy', 'pending', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'strategy', 'pending', ?, ?)
         """,
         (
             request_id,
             idea_id,
+            env.account_label,
             config.symbol,
             broker_symbol,
             side,
@@ -1099,7 +1150,16 @@ def execute_candidate(
             exec_entry,
             exec_stop,
             json.dumps(exec_take_profit),
-            json.dumps({"execution_enabled": True, "volume": volume, "account_profile": env.account_profile}, sort_keys=True),
+            json.dumps(
+                {
+                    "execution_enabled": True,
+                    "volume": volume,
+                    "account_label": env.account_label,
+                    "account_profile": env.account_profile,
+                    "broker_symbol": broker_symbol,
+                },
+                sort_keys=True,
+            ),
             json.dumps(context_snapshot, sort_keys=True),
             now,
             now,
@@ -1144,6 +1204,9 @@ def execute_candidate(
         )
         order_status = "pending_fill" if exec_order_type == "limit" else "filled"
         trade_metadata = _build_trade_metadata(candidate, broker_order_id, broker_deal_id, now)
+        trade_metadata["account_label"] = env.account_label
+        trade_metadata["account_profile"] = env.account_profile
+        trade_metadata["broker_symbol"] = broker_symbol
         trade_metadata.update(
             _partial_take_profit_metadata(
                 env=env,
@@ -1157,15 +1220,16 @@ def execute_candidate(
         conn.execute(
             """
             INSERT INTO trade_orders (
-                id, trade_idea_id, symbol, side, order_type, status, entry_price,
+                id, trade_idea_id, account_label, symbol, side, order_type, status, entry_price,
                 stop_loss, take_profit_json, quantity, opened_at, source,
                 metadata_json, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?)
             """,
             (
                 order_id,
                 idea_id,
+                env.account_label,
                 config.symbol,
                 side,
                 exec_order_type,
@@ -1189,6 +1253,7 @@ def execute_candidate(
             entity_ids=[idea_id, order_id],
             payload={
                 "title": "Live limit order placed" if exec_order_type == "limit" else "Live order sent",
+                "account": env.account_label,
                 "setup": {
                     "playbook": candidate["playbook"],
                     "direction": direction,
@@ -1200,7 +1265,7 @@ def execute_candidate(
                 },
                 "reason": [f"MT5 broker order id: {broker_order_id}"],
             },
-            dedupe_key=f"live-order:{candidate['id']}",
+            dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",
         )
     except Exception as exc:
         conn.execute(
@@ -1220,7 +1285,7 @@ def execute_candidate(
             severity="critical",
             entity_ids=[idea_id],
             payload={"title": "Live order failed", "reason": [str(exc)]},
-            dedupe_key=f"live-order-failed:{candidate['id']}:{request_id}",
+            dedupe_key=f"live-order-failed:{env.account_label}:{candidate['id']}:{request_id}",
         )
 
 
@@ -1272,9 +1337,12 @@ def manage_open_trade_partial_take_profit(
         """
         SELECT id, side, entry_price, stop_loss, take_profit_json, quantity, metadata_json
         FROM trade_orders
-        WHERE symbol = ? AND status IN ('filled', 'pending_fill') AND source = 'live'
+        WHERE symbol = ?
+          AND account_label = ?
+          AND status IN ('filled', 'pending_fill')
+          AND source = 'live'
         """,
-        (config.symbol,),
+        (config.symbol, env.account_label),
     ).fetchall()
     if not rows:
         return
@@ -1500,9 +1568,12 @@ def sync_closed_positions(
         """
         SELECT id, side, entry_price, stop_loss, quantity, metadata_json
         FROM trade_orders
-        WHERE symbol = ? AND status IN ('filled', 'pending_fill') AND source = 'live'
+        WHERE symbol = ?
+          AND account_label = ?
+          AND status IN ('filled', 'pending_fill')
+          AND source = 'live'
         """,
-        (config.symbol,),
+        (config.symbol, env.account_label),
     ).fetchall()
     if not rows:
         return
@@ -1609,9 +1680,10 @@ def sync_closed_positions(
             entity_ids=[row["id"]],
             payload={
                 "title": "Live position closed",
+                "account": env.account_label,
                 "reason": [f"P&L: ${pnl_str}", f"Close: {close_price}"],
             },
-            dedupe_key=f"position-closed:{row['id']}",
+            dedupe_key=f"position-closed:{env.account_label}:{row['id']}",
         )
 
     if closed_any:
@@ -1650,7 +1722,7 @@ def new_zone_rows(conn: Connection, symbol: str, before_ids: set[str]) -> list[A
     return [row for row in rows if str(row["id"]) not in before_ids]
 
 
-def live_candidate_already_executed(conn: Connection, candidate_id: str) -> bool:
+def live_candidate_already_executed(conn: Connection, candidate_id: str, *, account_label: str = "Default") -> bool:
     """Return True when a non-failed execution request exists for this candidate.
 
     'pending'  — intent committed to DB before MT5 call; process may have crashed
@@ -1664,14 +1736,24 @@ def live_candidate_already_executed(conn: Connection, candidate_id: str) -> bool
         SELECT er.id
         FROM trade_ideas ti
         JOIN execution_requests er ON er.trade_idea_id = ti.id
-        WHERE ti.id = ? AND er.status IN ('pending', 'sent')
+        WHERE ti.id = ?
+          AND er.account_label = ?
+          AND er.status IN ('pending', 'sent')
         """,
-        (f"live-idea-{candidate_id}",),
+        (live_trade_idea_id(candidate_id, account_label=account_label), account_label),
     ).fetchone()
     return row is not None
 
 
-def live_trade_count_today(conn: Connection, symbol: str) -> int:
+def live_trade_idea_id(candidate_id: str, *, account_label: str = "Default") -> str:
+    if account_label == "Default":
+        return f"live-idea-{candidate_id}"
+    safe_label = "".join(ch.lower() if ch.isalnum() else "-" for ch in account_label).strip("-")
+    safe_label = "-".join(part for part in safe_label.split("-") if part) or "account"
+    return f"live-idea-{safe_label}-{candidate_id}"
+
+
+def live_trade_count_today(conn: Connection, symbol: str, *, account_label: str = "Default") -> int:
     """Count live trades that actually reached MT5 today.
 
     Counts trade_orders rows (source='live', status in filled/pending_fill/closed)
@@ -1685,11 +1767,12 @@ def live_trade_count_today(conn: Connection, symbol: str) -> int:
         SELECT COUNT(*) AS count
         FROM trade_orders
         WHERE symbol = ?
+          AND account_label = ?
           AND source = 'live'
           AND status IN ('filled', 'pending_fill', 'closed')
           AND opened_at >= ?
         """,
-        (symbol, day_prefix),
+        (symbol, account_label, day_prefix),
     ).fetchone()
     return int(row["count"])
 
@@ -1699,6 +1782,8 @@ def candidates_after_live_fvg_trade_count(
     symbol: str,
     candidates: list[dict[str, Any]],
     max_trades_per_zone: int,
+    *,
+    account_label: str = "Default",
 ) -> list[dict[str, Any]]:
     if max_trades_per_zone <= 0:
         return candidates
@@ -1709,17 +1794,24 @@ def candidates_after_live_fvg_trade_count(
         if candidate_zone_type(candidate) != "fvg" or not zone_id:
             filtered.append(candidate)
             continue
-        if live_fvg_trade_count_for_zone(conn, symbol, zone_id) < max_trades_per_zone:
+        if live_fvg_trade_count_for_zone(conn, symbol, zone_id, account_label=account_label) < max_trades_per_zone:
             filtered.append(candidate)
     return filtered
 
 
-def live_fvg_trade_count_for_zone(conn: Connection, symbol: str, zone_id: str) -> int:
+def live_fvg_trade_count_for_zone(
+    conn: Connection,
+    symbol: str,
+    zone_id: str,
+    *,
+    account_label: str = "Default",
+) -> int:
     row = conn.execute(
         """
         SELECT COUNT(*) AS count
         FROM trade_orders
         WHERE symbol = ?
+          AND account_label = ?
           AND source = 'live'
           AND json_extract(metadata_json, '$.primary_zone_id') = ?
           AND COALESCE(
@@ -1727,7 +1819,7 @@ def live_fvg_trade_count_for_zone(conn: Connection, symbol: str, zone_id: str) -
                 json_extract(metadata_json, '$.zone_type')
               ) = 'fvg'
         """,
-        (symbol, zone_id),
+        (symbol, account_label, zone_id),
     ).fetchone()
     return int(row["count"] or 0)
 

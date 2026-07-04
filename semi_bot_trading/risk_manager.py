@@ -17,7 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlite3 import Connection
-from typing import TYPE_CHECKING
+import math
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .mt5_client import MT5BrokerClient
@@ -30,6 +31,7 @@ class AccountProfile:
     max_daily_loss_pct: float   # halt when today's loss exceeds this % of balance
     max_total_drawdown_pct: float  # informational; logged but not enforced in this version
     max_trades_per_day: int
+    balance_scale: float = 1.0
 
 
 PROFILES: dict[str, AccountProfile] = {
@@ -39,6 +41,14 @@ PROFILES: dict[str, AccountProfile] = {
         max_daily_loss_pct=6.0,
         max_total_drawdown_pct=20.0,
         max_trades_per_day=10,
+    ),
+    "personal_cent": AccountProfile(
+        name="Personal Cent",
+        risk_per_trade_pct=1.0,
+        max_daily_loss_pct=6.0,
+        max_total_drawdown_pct=20.0,
+        max_trades_per_day=10,
+        balance_scale=0.01,
     ),
     "ftmo_challenge": AccountProfile(
         name="FTMO Challenge",
@@ -79,11 +89,13 @@ class RiskManager:
         client: "MT5BrokerClient",
         profile: AccountProfile,
         risk_per_trade_pct: float | None = None,
+        balance_scale: float | None = None,
     ) -> None:
         self.client = client
         self.profile = profile
         # Allow env-level override of risk %; otherwise use profile default.
         self._risk_pct = risk_per_trade_pct if risk_per_trade_pct is not None else profile.risk_per_trade_pct
+        self._balance_scale = balance_scale if balance_scale is not None else profile.balance_scale
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -96,6 +108,7 @@ class RiskManager:
         entry: float | None,
         stop_loss: float | None,
         broker_symbol: str,
+        account_label: str = "Default",
     ) -> RiskAssessment:
         """Return a RiskAssessment for the proposed trade.
 
@@ -118,10 +131,13 @@ class RiskManager:
         balance = account["balance"]
         if balance <= 0:
             return RiskAssessment(allowed=False, lot_size=0.0, reason=f"Invalid balance: {balance}")
+        risk_balance = balance * self._balance_scale
+        if risk_balance <= 0:
+            return RiskAssessment(allowed=False, lot_size=0.0, reason=f"Invalid risk-adjusted balance: {risk_balance}")
 
         # Daily loss check
-        daily_loss = get_today_realized_loss(conn, symbol)
-        daily_loss_limit = balance * self.profile.max_daily_loss_pct / 100.0
+        daily_loss = get_today_realized_loss(conn, symbol, account_label=account_label) * self._balance_scale
+        daily_loss_limit = risk_balance * self.profile.max_daily_loss_pct / 100.0
         if daily_loss >= daily_loss_limit:
             return RiskAssessment(
                 allowed=False,
@@ -129,31 +145,72 @@ class RiskManager:
                 reason=(
                     f"[{self.profile.name}] Daily loss limit reached: "
                     f"${daily_loss:.2f} >= ${daily_loss_limit:.2f} "
-                    f"({self.profile.max_daily_loss_pct}% of ${balance:.2f})"
+                    f"({self.profile.max_daily_loss_pct}% of risk balance ${risk_balance:.2f})"
                 ),
-                balance=balance,
+                balance=risk_balance,
                 daily_loss=daily_loss,
                 daily_loss_limit=daily_loss_limit,
             )
 
         # Risk amount — don't let a single trade exceed the remaining daily budget
-        risk_amount = balance * self._risk_pct / 100.0
+        risk_amount = risk_balance * self._risk_pct / 100.0
         remaining_budget = daily_loss_limit - daily_loss
         risk_amount = min(risk_amount, remaining_budget)
 
         # Lot size calculation
+        symbol_trade_info: dict[str, Any] = {}
         try:
-            contract_size = self.client.get_symbol_contract_size(broker_symbol)
-        except Exception:
+            if hasattr(self.client, "get_symbol_trade_info"):
+                symbol_trade_info = dict(self.client.get_symbol_trade_info(broker_symbol))
+                contract_size = float(symbol_trade_info.get("trade_contract_size") or 0.0)
+                if contract_size <= 0:
+                    raise RuntimeError(f"invalid trade_contract_size={contract_size}")
+            else:
+                contract_size = self.client.get_symbol_contract_size(broker_symbol)
+        except Exception as exc:
+            if self.profile.name.lower().startswith("ftmo"):
+                return RiskAssessment(
+                    allowed=False,
+                    lot_size=0.0,
+                    reason=f"[{self.profile.name}] blocked: could not read contract_size for {broker_symbol}: {exc}",
+                    balance=risk_balance,
+                    daily_loss=daily_loss,
+                    daily_loss_limit=daily_loss_limit,
+                )
             contract_size = 100.0  # safe fallback for XAUUSD
 
         # Sanity check: contract_size < 10 for a gold symbol almost always means
         # MT5 returned data for a cent-account or exotic symbol. Fall back to 100.
         if contract_size < 10:
+            if self.profile.name.lower().startswith("ftmo"):
+                return RiskAssessment(
+                    allowed=False,
+                    lot_size=0.0,
+                    reason=f"[{self.profile.name}] blocked: suspicious contract_size={contract_size} for {broker_symbol}",
+                    balance=risk_balance,
+                    daily_loss=daily_loss,
+                    daily_loss_limit=daily_loss_limit,
+                )
             contract_size = 100.0
 
         raw_lot = risk_amount / (stop_distance * contract_size)
-        lot_size = _clamp_lot(raw_lot)
+        volume_min = float(symbol_trade_info.get("volume_min") or MIN_LOT)
+        volume_max = float(symbol_trade_info.get("volume_max") or MAX_LOT)
+        volume_step = float(symbol_trade_info.get("volume_step") or 0.01)
+        if self.profile.name.lower().startswith("ftmo") and raw_lot < max(MIN_LOT, volume_min):
+            return RiskAssessment(
+                allowed=False,
+                lot_size=0.0,
+                reason=(
+                    f"[{self.profile.name}] blocked: calculated lot {raw_lot:.4f} is below "
+                    f"broker minimum {max(MIN_LOT, volume_min):.4f}; refusing to over-risk"
+                ),
+                balance=risk_balance,
+                risk_amount=risk_amount,
+                daily_loss=daily_loss,
+                daily_loss_limit=daily_loss_limit,
+            )
+        lot_size = _clamp_lot(raw_lot, volume_min=volume_min, volume_max=volume_max, volume_step=volume_step)
 
         clamped_warning = ""
         if raw_lot > MAX_LOT:
@@ -167,14 +224,16 @@ class RiskManager:
             lot_size=lot_size,
             reason=(
                 f"[{self.profile.name}] risk={self._risk_pct}% "
-                f"balance=${balance:.2f} "
+                f"balance_raw=${balance:.2f} "
+                f"balance_scale={self._balance_scale:.4f} "
+                f"risk_balance=${risk_balance:.2f} "
                 f"risk_amount=${risk_amount:.2f} "
                 f"stop={stop_distance:.5f} "
                 f"contract={contract_size} "
                 f"lots={lot_size}"
                 f"{clamped_warning}"
             ),
-            balance=balance,
+            balance=risk_balance,
             risk_amount=risk_amount,
             daily_loss=daily_loss,
             daily_loss_limit=daily_loss_limit,
@@ -185,7 +244,7 @@ class RiskManager:
 # Helpers
 # ------------------------------------------------------------------
 
-def get_today_realized_loss(conn: Connection, symbol: str) -> float:
+def get_today_realized_loss(conn: Connection, symbol: str, *, account_label: str = "Default") -> float:
     """Return today's total realized loss as a positive number (0 if profitable)."""
     day_prefix = datetime.now(timezone.utc).date().isoformat()
     row = conn.execute(
@@ -193,23 +252,42 @@ def get_today_realized_loss(conn: Connection, symbol: str) -> float:
         SELECT COALESCE(SUM(pnl), 0.0) AS total_pnl
         FROM trade_orders
         WHERE symbol = ?
+          AND account_label = ?
           AND status = 'closed'
           AND closed_at >= ?
         """,
-        (symbol, day_prefix),
+        (symbol, account_label, day_prefix),
     ).fetchone()
     total_pnl = float(row["total_pnl"])
     # Return the magnitude of losses; ignore profits (they don't reduce limits).
     return -total_pnl if total_pnl < 0 else 0.0
 
 
-def _clamp_lot(raw: float) -> float:
-    """Round to 2 decimal places and clamp within broker-safe bounds."""
-    rounded = round(raw, 2)
-    return max(MIN_LOT, min(MAX_LOT, rounded))
+def _clamp_lot(
+    raw: float,
+    *,
+    volume_min: float = MIN_LOT,
+    volume_max: float = MAX_LOT,
+    volume_step: float = 0.01,
+) -> float:
+    """Round down to broker volume step and clamp within local and broker caps."""
+    min_lot = max(MIN_LOT, float(volume_min or MIN_LOT))
+    max_lot = min(MAX_LOT, float(volume_max or MAX_LOT))
+    step = float(volume_step or 0.01)
+    if step <= 0:
+        step = 0.01
+    stepped = math.floor(max(raw, 0.0) / step) * step
+    decimals = max(0, min(8, len(f"{step:.8f}".rstrip("0").split(".")[-1])))
+    rounded = round(stepped, decimals)
+    return max(min_lot, min(max_lot, rounded))
 
 
-def build_risk_manager(client: "MT5BrokerClient", profile_name: str, risk_per_trade_pct: float | None) -> RiskManager:
+def build_risk_manager(
+    client: "MT5BrokerClient",
+    profile_name: str,
+    risk_per_trade_pct: float | None,
+    balance_scale: float | None = None,
+) -> RiskManager:
     """Construct a RiskManager from env-level config."""
     key = profile_name.lower().strip()
     if key not in PROFILES:
@@ -217,4 +295,4 @@ def build_risk_manager(client: "MT5BrokerClient", profile_name: str, risk_per_tr
             f"Unknown account profile '{profile_name}'. "
             f"Valid options: {', '.join(PROFILES)}"
         )
-    return RiskManager(client, PROFILES[key], risk_per_trade_pct)
+    return RiskManager(client, PROFILES[key], risk_per_trade_pct, balance_scale)

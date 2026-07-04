@@ -16,6 +16,7 @@ def record_spread_snapshot(
     *,
     symbol: str,
     broker_symbol: str,
+    account_label: str = "Default",
     bid: float,
     ask: float,
     spread: float | None = None,
@@ -30,11 +31,12 @@ def record_spread_snapshot(
     conn.execute(
         """
         INSERT INTO spread_snapshots (
-            id, symbol, broker_symbol, bid, ask, spread, snapshot_at, source, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, account_label, symbol, broker_symbol, bid, ask, spread, snapshot_at, source, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             snapshot_id,
+            account_label,
             symbol,
             broker_symbol,
             float(bid),
@@ -49,37 +51,49 @@ def record_spread_snapshot(
     return snapshot_id
 
 
-def latest_spread_snapshot(conn: Connection, symbol: str) -> dict[str, Any] | None:
+def latest_spread_snapshot(conn: Connection, symbol: str, *, account_label: str | None = None) -> dict[str, Any] | None:
+    account_clause = "AND account_label = ?" if account_label else ""
+    params: tuple[Any, ...] = (symbol, account_label) if account_label else (symbol,)
     row = conn.execute(
-        """
-        SELECT id, symbol, broker_symbol, bid, ask, spread, snapshot_at, source, metadata_json
+        f"""
+        SELECT id, account_label, symbol, broker_symbol, bid, ask, spread, snapshot_at, source, metadata_json
         FROM spread_snapshots
-        WHERE symbol = ?
+        WHERE symbol = ? {account_clause}
         ORDER BY snapshot_at DESC
         LIMIT 1
         """,
-        (symbol,),
+        params,
     ).fetchone()
     return _row_to_snapshot(row) if row else None
 
 
-def spread_summary(conn: Connection, symbol: str, *, hours: int = 24, now: datetime | None = None) -> dict[str, Any]:
+def spread_summary(
+    conn: Connection,
+    symbol: str,
+    *,
+    account_label: str | None = None,
+    hours: int = 24,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     now_dt = now or datetime.now(UTC)
     since = now_dt - timedelta(hours=max(1, int(hours)))
+    account_clause = "AND account_label = ?" if account_label else ""
+    params: tuple[Any, ...] = (symbol, since.isoformat(), account_label) if account_label else (symbol, since.isoformat())
     rows = conn.execute(
-        """
+        f"""
         SELECT spread
         FROM spread_snapshots
-        WHERE symbol = ? AND snapshot_at >= ?
+        WHERE symbol = ? AND snapshot_at >= ? {account_clause}
         ORDER BY snapshot_at
         """,
-        (symbol, since.isoformat()),
+        params,
     ).fetchall()
     values = sorted(float(row["spread"]) for row in rows)
-    latest = latest_spread_snapshot(conn, symbol)
+    latest = latest_spread_snapshot(conn, symbol, account_label=account_label)
     if not values:
         return {
             "symbol": symbol,
+            "account_label": account_label,
             "hours": int(hours),
             "count": 0,
             "latest": latest,
@@ -93,6 +107,7 @@ def spread_summary(conn: Connection, symbol: str, *, hours: int = 24, now: datet
         }
     return {
         "symbol": symbol,
+        "account_label": account_label,
         "hours": int(hours),
         "count": len(values),
         "latest": latest,
@@ -125,6 +140,7 @@ def _row_to_snapshot(row: Row) -> dict[str, Any]:
         metadata = {}
     return {
         "id": row["id"],
+        "account_label": row["account_label"],
         "symbol": row["symbol"],
         "broker_symbol": row["broker_symbol"],
         "bid": row["bid"],

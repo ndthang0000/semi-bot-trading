@@ -230,6 +230,25 @@ class MT5BrokerClient:
             return 100000.0  # safe default (standard forex lot)
         return float(info.trade_contract_size)
 
+    def get_symbol_trade_info(self, broker_symbol: str) -> dict[str, float | str | bool]:
+        """Return broker trading metadata used for risk and startup validation."""
+        info = self.mt5.symbol_info(broker_symbol)
+        if info is None:
+            raise RuntimeError(f"MT5 symbol not found: {broker_symbol}")
+        data = info._asdict()
+        return {
+            "name": str(data.get("name") or broker_symbol),
+            "visible": bool(data.get("visible")),
+            "trade_contract_size": float(data.get("trade_contract_size") or 0.0),
+            "volume_min": float(data.get("volume_min") or 0.01),
+            "volume_max": float(data.get("volume_max") or 100.0),
+            "volume_step": float(data.get("volume_step") or 0.01),
+            "digits": float(data.get("digits") or 0),
+            "point": float(data.get("point") or 0.0),
+            "trade_tick_size": float(data.get("trade_tick_size") or 0.0),
+            "trade_tick_value": float(data.get("trade_tick_value") or 0.0),
+        }
+
     def positions_count(self, broker_symbol: str) -> int:
         positions = self.mt5.positions_get(symbol=broker_symbol)
         if positions is None:

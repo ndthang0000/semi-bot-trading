@@ -160,6 +160,16 @@ Gợi ý:
 - Secret manager sau này.
 - Trading key chỉ dùng cho executor service.
 
+On VPS, prefer split env files:
+
+- `.env.api`: backend/API auth and CORS only. Do not store MT5 passwords here.
+- `.env.exness`: Exness live worker credentials and account risk settings.
+- `.env.ftmo`: FTMO live worker credentials and account risk settings.
+
+Start commands should pass the env explicitly, for example
+`serve-api --env .env.api`, `live-worker --env .env.exness`, and
+`live-worker --env .env.ftmo`.
+
 ## Observability
 
 Log cần có:
@@ -299,6 +309,29 @@ LIVE_ORDER_VOLUME
 MAX_OPEN_POSITIONS_PER_SYMBOL
 MAX_TRADES_PER_DAY
 ```
+
+Multi-account live operation uses one worker process per MT5 account. Each
+worker must have a unique `ACCOUNT_LABEL` and `MT5_MAGIC`; live execution,
+trade counts, daily loss, FVG-per-zone limits, spread snapshots, and order sync
+are scoped by `ACCOUNT_LABEL` so Exness and FTMO cannot contaminate each
+other's limits.
+
+Only one worker should normally own shared market data and detectors:
+`LIVE_SYNC_CANDLES=true` and `LIVE_RUN_DETECTORS=true`. Secondary account
+workers can set both flags to `false`; they still snapshot their account/spread,
+sync closed positions, manage partial TP/BE, apply weekend flatten, read setup
+candidates from the DB, run account-specific risk checks, and execute only for
+their own `ACCOUNT_LABEL`.
+
+FTMO accounts must use `ACCOUNT_PROFILE=ftmo_challenge` and should start with
+`EXECUTION_ENABLED=false`. FTMO startup validation fails closed if symbol
+metadata is missing or `trade_contract_size` is suspicious. Do not use cent
+balance scaling for FTMO; leave `ACCOUNT_BALANCE_SCALE` unset or set it to
+`1.0`.
+
+Exness cent accounts should use `ACCOUNT_PROFILE=personal_cent` or explicitly
+set `ACCOUNT_BALANCE_SCALE=0.01` when MT5 reports USD-equivalent balance in USC
+units, for example 1000 USD displayed as 100000 USC.
 
 `MT5_SYMBOL` is the broker symbol, for example `XAUUSDm` on an Exness cent
 account. The local project symbol remains `XAUUSD`.

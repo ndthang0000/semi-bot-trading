@@ -7,6 +7,9 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.api.example
+!.env.exness.example
+!.env.ftmo.example
 var/
 *.sqlite
 *.sqlite3

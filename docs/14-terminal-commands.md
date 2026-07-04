@@ -38,13 +38,13 @@ Trong docs này ưu tiên `python -m semi_bot_trading.cli` để chạy ổn nga
 Start FastAPI backend:
 
 ```bash
-python -m semi_bot_trading.cli serve-api --port 8000
+python -m semi_bot_trading.cli serve-api --port 8000 --env .env.api
 ```
 
 Start backend với auto reload khi sửa Python:
 
 ```bash
-python -m semi_bot_trading.cli serve-api --port 8000 --reload
+python -m semi_bot_trading.cli serve-api --port 8000 --env .env.api --reload
 ```
 
 Start React/Vite frontend:
@@ -60,16 +60,22 @@ Start backend và frontend cùng lúc trên Windows PowerShell:
 .\scripts\start-dev.ps1
 ```
 
+Run dev with explicit split env files:
+
+```powershell
+.\scripts\start-dev.ps1 -ApiEnv .env.api -WorkerEnv .env.exness
+```
+
 Start backend, frontend và MT5/Telegram live worker:
 
 ```powershell
-.\scripts\start-dev.ps1 -WithWorker
+.\scripts\start-dev.ps1 -WithWorker -ApiEnv .env.api -WorkerEnv .env.exness
 ```
 
 Bật auto execution cho live worker real account:
 
 ```powershell
-.\scripts\start-dev.ps1 -WithWorker -EnableExecution
+.\scripts\start-dev.ps1 -WithWorker -EnableExecution -ApiEnv .env.api -WorkerEnv .env.exness
 ```
 
 Mở UI:
@@ -593,14 +599,28 @@ python -m semi_bot_trading.cli telegram-test --message-key smoke-1
 Run one MT5 live-worker iteration without looping:
 
 ```powershell
-python -m semi_bot_trading.cli live-worker --once
+python -m semi_bot_trading.cli live-worker --env .env.exness --once
 ```
 
 Run continuous live worker:
 
 ```powershell
-python -m semi_bot_trading.cli live-worker
+python -m semi_bot_trading.cli live-worker --env .env.exness
 ```
+
+Run a separate FTMO worker from an untracked env file:
+
+```powershell
+python -m semi_bot_trading.cli live-worker --env .env.ftmo
+```
+
+For multi-account operation, run one worker process per MT5 terminal/account.
+Use a unique `ACCOUNT_LABEL`, `MT5_MAGIC`, `MT5_PATH`, and broker `MT5_SYMBOL`
+per account. Keep one primary data worker with `LIVE_SYNC_CANDLES=true` and
+`LIVE_RUN_DETECTORS=true`; secondary account workers such as FTMO can set both
+to `false` so they only read shared signals and manage their own account/orders.
+Keep FTMO with `EXECUTION_ENABLED=false` until startup validation, spread
+snapshots, risk sizing, and dry-run alerts look correct.
 
 Xem thống kê spread đã được live worker lưu:
 
@@ -611,16 +631,56 @@ python -m semi_bot_trading.cli spread-summary --hours 168
 
 Important environment values:
 
+Recommended VPS env layout:
+
+```text
+.env.api     Backend/API only: auth, CORS, UI URL. No MT5 password.
+.env.exness  Exness live worker: MT5 Exness credentials, data sync, detectors.
+.env.ftmo    FTMO live worker: MT5 FTMO credentials, account/order management.
+```
+
+Copy the tracked examples once, then edit the untracked real files locally:
+
+```powershell
+Copy-Item .env.api.example .env.api
+Copy-Item .env.exness.example .env.exness
+Copy-Item .env.ftmo.example .env.ftmo
+```
+
 ```text
 MT5_SYMBOL=XAUUSDm
 MT5_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
+ACCOUNT_LABEL=Exness Cent
+ACCOUNT_PROFILE=personal_cent
+ACCOUNT_BALANCE_SCALE=0.01
 EXECUTION_ENABLED=false
 LIVE_ORDER_VOLUME=0.01
 LIVE_EVALUATE_INTRABAR=false
+LIVE_SYNC_CANDLES=true
+LIVE_RUN_DETECTORS=true
 PARTIAL_TAKE_PROFIT_ENABLED=true
 PARTIAL_TAKE_PROFIT_R=1.25
 PARTIAL_TAKE_PROFIT_FRACTION=0.5
 PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
+```
+
+For FTMO, use a separate `.env.ftmo` file and verify the actual broker symbol
+inside FTMO MT5 before enabling execution. Typical starting values:
+
+```text
+MT5_LOGIN=<local FTMO login>
+MT5_PASSWORD=<local secret only>
+MT5_SERVER=FTMO-Demo
+MT5_PATH=C:\Program Files\MetaTrader 5 FTMO\terminal64.exe
+MT5_SYMBOL=XAUUSD
+MT5_MAGIC=260613
+ACCOUNT_LABEL=FTMO Demo
+ACCOUNT_PROFILE=ftmo_challenge
+ACCOUNT_BALANCE_SCALE=1.0
+LIVE_SYNC_CANDLES=false
+LIVE_RUN_DETECTORS=false
+EXECUTION_ENABLED=false
+RISK_PER_TRADE_PCT=0.25
 ```
 
 `MT5_PATH` must point to `terminal64.exe`, not only the MetaTrader install

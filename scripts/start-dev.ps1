@@ -3,7 +3,9 @@ param(
   [int]$FrontendPort = 5173,
   [switch]$WithWorker,
   [switch]$EnableExecution,
-  [string]$Env = ".env"
+  [string]$ApiEnv = ".env.api",
+  [string]$WorkerEnv = "",
+  [string]$Env = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,17 +13,19 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 Write-Host "Starting backend on http://127.0.0.1:$BackendPort"
 Write-Host "Starting frontend on http://127.0.0.1:$FrontendPort"
+$resolvedWorkerEnv = if ($WorkerEnv) { $WorkerEnv } elseif ($Env) { $Env } else { ".env.exness" }
+Write-Host "Backend env: $ApiEnv"
 if ($WithWorker) {
   $executionText = if ($EnableExecution) { "enabled" } else { "from .env" }
-  Write-Host "Starting MT5/Telegram live worker, execution=$executionText"
+  Write-Host "Starting MT5/Telegram live worker, env=$resolvedWorkerEnv, execution=$executionText"
 }
 Write-Host "Press Ctrl+C to stop all started processes."
 
 $backendJob = Start-Job -Name "reaction-zone-backend" -ScriptBlock {
-  param($RootPath, $Port)
+  param($RootPath, $Port, $EnvPath)
   Set-Location $RootPath
-  python -m semi_bot_trading.cli serve-api --port $Port
-} -ArgumentList $Root, $BackendPort
+  python -m semi_bot_trading.cli serve-api --port $Port --env $EnvPath
+} -ArgumentList $Root, $BackendPort, $ApiEnv
 
 $frontendJob = Start-Job -Name "reaction-zone-frontend" -ScriptBlock {
   param($RootPath, $Port)
@@ -39,7 +43,7 @@ if ($WithWorker) {
       $env:EXECUTION_ENABLED = "true"
     }
     python -m semi_bot_trading.cli live-worker --env $EnvPath
-  } -ArgumentList $Root, [bool]$EnableExecution, $Env
+  } -ArgumentList $Root, [bool]$EnableExecution, $resolvedWorkerEnv
   $jobs += $workerJob
 }
 

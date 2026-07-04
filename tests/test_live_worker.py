@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import unittest
+import uuid
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone as _tz
 from zoneinfo import ZoneInfoNotFoundError
@@ -70,10 +72,13 @@ def _make_env(**overrides) -> RuntimeEnv:
         poll_at_seconds=(1, 16, 31, 46),
         max_entry_drift_price=2.0,
         max_spread_price=2.0,
+        live_sync_candles=True,
+        live_run_detectors=True,
         live_evaluate_intrabar=False,
         chart_url_base="http://127.0.0.1:5173",
         account_label="Test",
         account_profile="personal",
+        account_balance_scale=None,
         risk_per_trade_pct=None,
         secret_key="",
         admin_username="admin",
@@ -442,7 +447,7 @@ class TestExecuteCandidate(unittest.TestCase):
 
         def capture_status(*args, **kwargs):
             # Read what's committed to DB at the moment MT5 is called
-            with connect(self._db_path) as check_conn:
+            with closing(connect(self._db_path)) as check_conn:
                 row = check_conn.execute(
                     "SELECT status FROM execution_requests"
                 ).fetchone()
@@ -493,7 +498,7 @@ class TestExecuteCandidate(unittest.TestCase):
         candidate = _make_candidate()
         self._run(client, candidate=candidate, pricing_plan=plan)
         # Check that live_candidate_already_executed returns True
-        self.assertTrue(live_candidate_already_executed(self._conn, candidate["id"]))
+        self.assertTrue(live_candidate_already_executed(self._conn, candidate["id"], account_label="Test"))
 
     # ── idempotent: second call for same candidate skipped by caller ──────────
     def test_multi_tp_stored_correctly(self):
@@ -545,10 +550,10 @@ class TestPartialTakeProfit(unittest.TestCase):
         )
         self._conn.execute(
             """INSERT INTO trade_orders
-               (id, trade_idea_id, symbol, side, order_type, status,
+               (id, trade_idea_id, account_label, symbol, side, order_type, status,
                 entry_price, stop_loss, take_profit_json, quantity,
                 opened_at, source, metadata_json, created_at)
-               VALUES ('order-partial', 'idea-partial', 'XAUUSD', ?, 'market', 'filled',
+               VALUES ('order-partial', 'idea-partial', 'Test', 'XAUUSD', ?, 'market', 'filled',
                        3000, 2980, '[3050]', 0.02, ?, 'live', ?, ?)""",
             (side, now, json.dumps(metadata), now),
         )
@@ -1012,10 +1017,10 @@ class TestWeekendFlatten(unittest.TestCase):
         )
         self._conn.execute(
             """INSERT INTO trade_orders
-               (id, trade_idea_id, symbol, side, order_type, status,
+               (id, trade_idea_id, account_label, symbol, side, order_type, status,
                 entry_price, stop_loss, take_profit_json, quantity,
                 opened_at, source, metadata_json, created_at)
-               VALUES ('order-pending', 'idea-pending', 'XAUUSD', 'buy', 'limit', 'pending_fill',
+               VALUES ('order-pending', 'idea-pending', 'Test', 'XAUUSD', 'buy', 'limit', 'pending_fill',
                        3000, 2980, '[3040]', 0.01, ?, 'live', '{}', ?)""",
             (now, now),
         )
@@ -1072,10 +1077,10 @@ class TestSyncClosedPositions(unittest.TestCase):
         })
         self._conn.execute(
             """INSERT INTO trade_orders
-               (id, trade_idea_id, symbol, side, order_type, status,
+               (id, trade_idea_id, account_label, symbol, side, order_type, status,
                 entry_price, stop_loss, take_profit_json, quantity,
                 opened_at, source, metadata_json, created_at)
-               VALUES (?, ?, 'XAUUSD', 'buy', 'market', ?, 3000, 2980, '[3040]',
+               VALUES (?, ?, 'Test', 'XAUUSD', 'buy', 'market', ?, 3000, 2980, '[3040]',
                        0.01, ?, 'live', ?, ?)""",
             (order_id, idea_id, status, now, metadata, now),
         )
@@ -1187,7 +1192,7 @@ class TestCandidatesAfterFvgTradeCount(unittest.TestCase):
                 opened_at, source, metadata_json, created_at)
                VALUES (?, ?, 'XAUUSD', 'buy', 'market', 'filled', 3000, 2980, '[3040]',
                        0.01, ?, 'live', ?, ?)""",
-            (f"ord-fvg-{zone_id}-{now}", idea_id, now, metadata, now),
+            (f"ord-fvg-{zone_id}-{uuid.uuid4()}", idea_id, now, metadata, now),
         )
         self._conn.commit()
 

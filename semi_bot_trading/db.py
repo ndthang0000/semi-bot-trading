@@ -142,6 +142,7 @@ ON trade_ideas(symbol, status, created_at);
 CREATE TABLE IF NOT EXISTS trade_orders (
     id TEXT PRIMARY KEY,
     trade_idea_id TEXT NOT NULL,
+    account_label TEXT NOT NULL DEFAULT 'Default',
     symbol TEXT NOT NULL,
     side TEXT NOT NULL,
     order_type TEXT NOT NULL,
@@ -164,6 +165,9 @@ CREATE TABLE IF NOT EXISTS trade_orders (
 
 CREATE INDEX IF NOT EXISTS idx_trade_orders_lookup
 ON trade_orders(symbol, status, opened_at, closed_at);
+
+CREATE INDEX IF NOT EXISTS idx_trade_orders_account_lookup
+ON trade_orders(account_label, symbol, status, opened_at, closed_at);
 
 CREATE TABLE IF NOT EXISTS trade_fills (
     id TEXT PRIMARY KEY,
@@ -241,6 +245,7 @@ ON live_candles(symbol, timeframe, open_time);
 CREATE TABLE IF NOT EXISTS execution_requests (
     id TEXT PRIMARY KEY,
     trade_idea_id TEXT NOT NULL,
+    account_label TEXT NOT NULL DEFAULT 'Default',
     symbol TEXT NOT NULL,
     broker_symbol TEXT NOT NULL,
     side TEXT NOT NULL,
@@ -263,6 +268,9 @@ CREATE TABLE IF NOT EXISTS execution_requests (
 
 CREATE INDEX IF NOT EXISTS idx_execution_requests_lookup
 ON execution_requests(symbol, status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_execution_requests_account_lookup
+ON execution_requests(account_label, symbol, status, created_at);
 
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id TEXT PRIMARY KEY,
@@ -342,6 +350,7 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
 -- Spread is stored in price units (e.g. XAUUSD dollars), matching MAX_SPREAD_PRICE.
 CREATE TABLE IF NOT EXISTS spread_snapshots (
     id            TEXT PRIMARY KEY,
+    account_label TEXT NOT NULL DEFAULT 'Default',
     symbol        TEXT NOT NULL,
     broker_symbol TEXT NOT NULL,
     bid           REAL NOT NULL,
@@ -354,6 +363,9 @@ CREATE TABLE IF NOT EXISTS spread_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_spread_snapshots_symbol_time
 ON spread_snapshots(symbol, snapshot_at);
+
+CREATE INDEX IF NOT EXISTS idx_spread_snapshots_account_symbol_time
+ON spread_snapshots(account_label, symbol, snapshot_at);
 """
 
 
@@ -374,7 +386,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "structure_points", "status", "TEXT NOT NULL DEFAULT 'confirmed'")
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "backtest_runs", "engine", "TEXT NOT NULL DEFAULT 'incremental'")
+    ensure_column(conn, "execution_requests", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
+    ensure_column(conn, "trade_orders", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "trade_orders", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+    ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)
     expire_price_zones(conn)

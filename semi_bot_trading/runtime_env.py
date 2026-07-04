@@ -26,12 +26,15 @@ class RuntimeEnv:
     poll_at_seconds: tuple[int, ...]
     max_entry_drift_price: float
     max_spread_price: float
+    live_sync_candles: bool
+    live_run_detectors: bool
     live_evaluate_intrabar: bool
     chart_url_base: str
     # Account identity — human-readable label shown in dashboard; unique per MT5 account
     account_label: str            # e.g. "Exness Personal", "FTMO Challenge #1"
     # Risk management
     account_profile: str          # "personal" | "ftmo_challenge" | "the5ers"
+    account_balance_scale: float | None  # e.g. Exness cent USC -> USD risk-equivalent uses 0.01
     risk_per_trade_pct: float | None  # % of balance per trade; None → use profile default
     # Auth
     secret_key: str               # JWT signing key — must be set in .env
@@ -86,10 +89,13 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         poll_at_seconds=env_seconds_tuple("LIVE_POLL_AT_SECONDS", (1, 16, 31, 46)),
         max_entry_drift_price=env_float("MAX_ENTRY_DRIFT_PRICE", 2.0) or 0.0,
         max_spread_price=env_float("MAX_SPREAD_PRICE", 2.0) or 0.0,
+        live_sync_candles=env_bool("LIVE_SYNC_CANDLES", True),
+        live_run_detectors=env_bool("LIVE_RUN_DETECTORS", True),
         live_evaluate_intrabar=env_bool("LIVE_EVALUATE_INTRABAR", False),
         chart_url_base=env_text("CHART_URL_BASE", "http://127.0.0.1:5173") or "http://127.0.0.1:5173",
         account_label=env_text("ACCOUNT_LABEL", "Default") or "Default",
         account_profile=env_text("ACCOUNT_PROFILE", "personal") or "personal",
+        account_balance_scale=env_float("ACCOUNT_BALANCE_SCALE"),
         risk_per_trade_pct=env_float("RISK_PER_TRADE_PCT"),
         secret_key=env_text("SECRET_KEY", "") or "",
         admin_username=env_text("ADMIN_USERNAME", "admin") or "admin",

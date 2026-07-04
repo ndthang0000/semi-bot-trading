@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -57,12 +58,14 @@ MAX_CHART_LIMIT = 15_000
 _http_bearer = HTTPBearer(auto_error=False)
 
 
-def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
+def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | str | None = None):
     from fastapi import Body, FastAPI, HTTPException, Query
     from fastapi.middleware.cors import CORSMiddleware
 
-    config = load_config(config_path)
-    env = load_runtime_env()
+    resolved_config_path = os.environ.get("SEMI_BOT_CONFIG_PATH") or config_path
+    resolved_env_path = env_path or os.environ.get("SEMI_BOT_ENV_PATH") or ".env"
+    config = load_config(resolved_config_path)
+    env = load_runtime_env(resolved_env_path)
 
     # ------------------------------------------------------------------
     # Startup validation — catch misconfigurations early
@@ -350,13 +353,14 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     @app.get("/api/spread")
     def get_spread(
         symbol: str | None = Query(default=None),
+        account_label: str | None = Query(default=None),
         hours: int = Query(default=24, ge=1, le=168),
         _: str = Depends(require_auth),
     ) -> dict[str, Any]:
         """Return current/latest spread and summary stats in price units."""
         resolved_symbol = symbol or config.symbol
         with connect(config.database) as conn:
-            return spread_summary(conn, resolved_symbol, hours=hours)
+            return spread_summary(conn, resolved_symbol, account_label=account_label, hours=hours)
 
     @app.get("/api/trades")
     def trades(
@@ -1099,8 +1103,17 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH):
     return app
 
 
-def run_api_server(config_path: Path | str, host: str, port: int, reload: bool = False) -> None:
+def run_api_server(
+    config_path: Path | str,
+    host: str,
+    port: int,
+    reload: bool = False,
+    env_path: Path | str = ".env",
+) -> None:
     import uvicorn
+
+    os.environ["SEMI_BOT_CONFIG_PATH"] = str(config_path)
+    os.environ["SEMI_BOT_ENV_PATH"] = str(env_path)
 
     if reload:
         uvicorn.run(
@@ -1112,7 +1125,7 @@ def run_api_server(config_path: Path | str, host: str, port: int, reload: bool =
         )
         return
 
-    uvicorn.run(create_app(config_path), host=host, port=port)
+    uvicorn.run(create_app(config_path, env_path), host=host, port=port)
 
 
 def ensure_trade_exists(conn: Any, trade_order_id: str) -> None:
