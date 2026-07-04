@@ -8,7 +8,12 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from semi_bot_trading.chart import build_chart_payload, filter_traded_setup_candidates
+from semi_bot_trading.chart import (
+    MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS,
+    build_chart_payload,
+    build_m15_trigger_overlays,
+    filter_traded_setup_candidates,
+)
 from semi_bot_trading.db import connect, init_db
 
 
@@ -109,6 +114,59 @@ class ChartPayloadTest(unittest.TestCase):
                     )
 
         self.assertEqual([2, 3], captured_lengths)
+
+    def test_m15_trigger_overlay_caps_touch_only_rows_but_keeps_candidates(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                rows = []
+                for index in range(MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS + 100):
+                    minute = index * 15
+                    open_time = f"2026-01-{1 + minute // 1440:02d}T{(minute % 1440) // 60:02d}:{minute % 60:02d}:00+00:00"
+                    close_time = f"2026-01-{1 + (minute + 15) // 1440:02d}T{((minute + 15) % 1440) // 60:02d}:{(minute + 15) % 60:02d}:00+00:00"
+                    rows.append((f"m15-{index}", open_time, close_time))
+                conn.executemany(
+                    """
+                    INSERT INTO candles (
+                        id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+                    )
+                    VALUES (?, 'XAUUSD', 'M15', ?, ?, 100, 105, 95, 101, 100, 'test')
+                    """,
+                    rows,
+                )
+                overlays = build_m15_trigger_overlays(
+                    conn,
+                    "XAUUSD",
+                    "H1",
+                    "H1",
+                    rows[0][1],
+                    rows[-1][1],
+                    [
+                        {
+                            "id": "zone-1",
+                            "type": "support",
+                            "direction": "bullish",
+                            "price_low": 90,
+                            "price_high": 110,
+                        }
+                    ],
+                    [
+                        {
+                            "id": "candidate-1",
+                            "primary_zone_id": "zone-1",
+                            "zone_reaction_state": "reject",
+                            "status": "eligible",
+                            "direction": "long",
+                            "reason": ["candidate"],
+                            "metadata": {"reaction_candle_time": rows[0][1]},
+                        }
+                    ],
+                )
+
+        self.assertEqual(MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS + 1, len(overlays))
+        self.assertEqual("candidate-1", overlays[0]["candidate_id"])
+        self.assertEqual(MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS, sum(1 for item in overlays if item["status"] == "touch"))
 
 
 def seed_chart_data(conn) -> None:

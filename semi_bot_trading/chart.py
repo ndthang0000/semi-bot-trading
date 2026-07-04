@@ -12,6 +12,7 @@ from .zones import CandleSlice, latest_atr
 
 
 CHART_PAYLOAD_VERSION = 1
+MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS = 500
 
 
 def compute_live_macro_trend_context(
@@ -387,7 +388,8 @@ def build_m15_trigger_overlays(
         live_candle = load_live_candle(conn, symbol, "M15")
         if live_candle is not None and (not candles or live_candle["time"] > candles[-1]["time"]):
             candles = [*candles, live_candle]
-    overlays: list[dict[str, Any]] = []
+    candidate_overlays: list[dict[str, Any]] = []
+    touch_overlays: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for candle in candles:
         high = float(candle["high"])
@@ -404,30 +406,36 @@ def build_m15_trigger_overlays(
             seen.add(key)
             candidate = candidates_by_zone_time.get(key)
             metadata = candidate.get("metadata", {}) if candidate else {}
-            overlays.append(
-                {
-                    "time": candle["time"],
-                    "open": candle["open"],
-                    "high": candle["high"],
-                    "low": candle["low"],
-                    "close": candle["close"],
-                    "zone_id": zone_id,
-                    "zone_type": zone.get("type"),
-                    "reaction_state": candidate.get("zone_reaction_state") if candidate else "touch",
-                    "candidate_id": candidate.get("id") if candidate else None,
-                    "status": candidate.get("status") if candidate else "touch",
-                    "reason": list(candidate.get("reason") or [])[:3] if candidate else ["M15 candle touched H1 zone."],
-                    "direction": candidate.get("direction") if candidate else zone.get("direction"),
-                    "metadata": {
-                        "reaction_open": metadata.get("reaction_open"),
-                        "reaction_high": metadata.get("reaction_high"),
-                        "reaction_low": metadata.get("reaction_low"),
-                        "reaction_close": metadata.get("reaction_close"),
-                        "trigger_types": metadata.get("trigger_types"),
-                    },
-                }
-            )
-    return overlays
+            overlay = {
+                "time": candle["time"],
+                "open": candle["open"],
+                "high": candle["high"],
+                "low": candle["low"],
+                "close": candle["close"],
+                "zone_id": zone_id,
+                "zone_type": zone.get("type"),
+                "reaction_state": candidate.get("zone_reaction_state") if candidate else "touch",
+                "candidate_id": candidate.get("id") if candidate else None,
+                "status": candidate.get("status") if candidate else "touch",
+                "reason": list(candidate.get("reason") or [])[:3] if candidate else ["M15 candle touched H1 zone."],
+                "direction": candidate.get("direction") if candidate else zone.get("direction"),
+                "metadata": {
+                    "reaction_open": metadata.get("reaction_open"),
+                    "reaction_high": metadata.get("reaction_high"),
+                    "reaction_low": metadata.get("reaction_low"),
+                    "reaction_close": metadata.get("reaction_close"),
+                    "trigger_types": metadata.get("trigger_types"),
+                },
+            }
+            if candidate:
+                candidate_overlays.append(overlay)
+            else:
+                touch_overlays.append(overlay)
+    capped_touch_overlays = touch_overlays[-MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS:]
+    return sorted(
+        [*capped_touch_overlays, *candidate_overlays],
+        key=lambda item: (str(item.get("time") or ""), str(item.get("zone_id") or "")),
+    )
 
 
 def load_chart_contexts(conn: Connection, symbol: str, as_of: str | None = None) -> dict[str, dict[str, dict[str, Any]]]:
