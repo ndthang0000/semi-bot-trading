@@ -17,6 +17,11 @@ interface TradeMeta {
   h1_regime?: string;
   confluence_count?: number;
   atr?: number;
+  partial_take_profit?: {
+    done?: boolean;
+    breakeven_applied?: boolean;
+    closed_volume?: number;
+  };
   // nested fallback (older trades)
   candidate_metadata?: {
     macro_trend?: string;
@@ -125,6 +130,125 @@ function maxDrawdown(trades: TradeOrder[]): string {
     if (dd > maxDD) maxDD = dd;
   }
   return maxDD === 0 ? "0R" : `-${maxDD.toFixed(2)}R`;
+}
+
+const DASHBOARD_TIME_ZONE = "Asia/Ho_Chi_Minh";
+const VN_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
+  timeZone: DASHBOARD_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const VN_TIME_FORMATTER = new Intl.DateTimeFormat("en", {
+  timeZone: DASHBOARD_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function vietnamDateKey(value: string | Date | null): string | null {
+  if (!value) return null;
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return null;
+
+  const parts = VN_DATE_FORMATTER.formatToParts(date).reduce(
+    (acc, part) => {
+      if (part.type === "year" || part.type === "month" || part.type === "day") acc[part.type] = part.value;
+      return acc;
+    },
+    {} as Record<string, string>,
+  );
+  if (!parts.year || !parts.month || !parts.day) return null;
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function currentVietnamMonthKey(): string {
+  return vietnamDateKey(new Date())?.slice(0, 7) ?? new Date().toISOString().slice(0, 7);
+}
+
+function shiftMonthKey(monthKey: string, delta: number): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7);
+}
+
+function monthLabel(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function daysInMonth(monthKey: string): number {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function calendarDayIndex(monthKey: string, day: number): number {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+function formatR(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`;
+}
+
+function formatVietnamTime(value: string | null): string {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return VN_TIME_FORMATTER.format(date);
+}
+
+function hasPartialTakeProfit(t: TradeOrder): boolean {
+  return t.metadata?.partial_take_profit?.done === true;
+}
+
+function hasBreakevenApplied(t: TradeOrder): boolean {
+  return t.metadata?.partial_take_profit?.breakeven_applied === true;
+}
+
+interface DailyPnlStats {
+  key: string;
+  trades: TradeOrder[];
+  totalR: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  partialCount: number;
+  breakevenCount: number;
+}
+
+function buildDailyPnlStats(trades: TradeOrder[], monthKey: string): Map<string, DailyPnlStats> {
+  const buckets = new Map<string, TradeOrder[]>();
+  for (const trade of trades) {
+    if (trade.pnl_r === null) continue;
+    const key = vietnamDateKey(trade.closed_at ?? trade.opened_at);
+    if (!key || !key.startsWith(monthKey)) continue;
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(trade);
+    buckets.set(key, bucket);
+  }
+
+  const stats = new Map<string, DailyPnlStats>();
+  for (const [key, dayTrades] of buckets) {
+    const sorted = [...dayTrades].sort((a, b) => (a.closed_at ?? a.opened_at ?? "").localeCompare(b.closed_at ?? b.opened_at ?? ""));
+    const total = totalR(sorted);
+    const wins = sorted.filter((t) => (t.pnl_r ?? 0) > 0).length;
+    const losses = sorted.filter((t) => (t.pnl_r ?? 0) < 0).length;
+    stats.set(key, {
+      key,
+      trades: sorted,
+      totalR: total,
+      wins,
+      losses,
+      winRate: sorted.length ? Math.round((wins / sorted.length) * 100) : 0,
+      partialCount: sorted.filter(hasPartialTakeProfit).length,
+      breakevenCount: sorted.filter(hasBreakevenApplied).length,
+    });
+  }
+  return stats;
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +506,164 @@ function PnlBarChart({ trades }: { trades: TradeOrder[] }) {
   );
 }
 
+function DailyPnlCalendar({ trades }: { trades: TradeOrder[] }) {
+  const [monthKey, setMonthKey] = useState<string>(() => currentVietnamMonthKey());
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
+  const dailyStats = buildDailyPnlStats(trades, monthKey);
+  const monthStats = [...dailyStats.values()];
+  const monthTotal = monthStats.reduce((sum, day) => sum + day.totalR, 0);
+  const monthTrades = monthStats.reduce((sum, day) => sum + day.trades.length, 0);
+  const monthWins = monthStats.reduce((sum, day) => sum + day.wins, 0);
+  const monthWinRate = monthTrades ? Math.round((monthWins / monthTrades) * 100) : 0;
+  const effectiveSelectedDay = selectedDay?.startsWith(monthKey) ? selectedDay : null;
+  const selectedStats = effectiveSelectedDay ? dailyStats.get(effectiveSelectedDay) : null;
+
+  const cells: ({ type: "blank"; key: string } | { type: "day"; key: string; day: number })[] = [];
+  let firstDaySeen = false;
+  for (let day = 1; day <= daysInMonth(monthKey); day += 1) {
+    const weekday = calendarDayIndex(monthKey, day);
+
+    if (!firstDaySeen) {
+      firstDaySeen = true;
+      const mondayBased = (weekday + 6) % 7;
+      for (let i = 0; i < mondayBased; i += 1) cells.push({ type: "blank", key: `blank-${i}` });
+    }
+
+    cells.push({ type: "day", key: `${monthKey}-${String(day).padStart(2, "0")}`, day });
+  }
+
+  return (
+    <div className="mb-6 rounded-lg border border-ink-700 bg-ink-900 p-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Daily P&amp;L Calendar</div>
+          <div className={`mt-1 text-2xl font-bold ${monthTotal >= 0 ? "text-green-400" : "text-red-400"}`}>
+            {formatR(monthTotal)}
+          </div>
+          <div className="mt-0.5 text-xs text-slate-500">
+            {monthTrades} closed trades · {monthTrades ? `${monthWinRate}% win rate` : "No closed trades"} · {DASHBOARD_TIME_ZONE}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMonthKey((value) => shiftMonthKey(value, -1))}
+            className="rounded border border-ink-700 px-2 py-1 text-sm text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+            aria-label="Previous month"
+          >
+            ‹
+          </button>
+          <div className="min-w-[92px] text-center text-sm font-semibold text-slate-200">{monthLabel(monthKey)}</div>
+          <button
+            onClick={() => setMonthKey((value) => shiftMonthKey(value, 1))}
+            className="rounded border border-ink-700 px-2 py-1 text-sm text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+            aria-label="Next month"
+          >
+            ›
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+          <div key={day} className="rounded-md bg-ink-950 py-2">{day}</div>
+        ))}
+      </div>
+
+      <div className="mt-2 grid grid-cols-7 gap-2">
+        {cells.map((cell) => {
+          if (cell.type === "blank") return <div key={cell.key} className="min-h-[104px]" />;
+
+          const stats = dailyStats.get(cell.key);
+          const isSelected = effectiveSelectedDay === cell.key;
+          const tone = !stats
+            ? "border-ink-800 bg-ink-950/80 text-slate-500"
+            : stats.totalR > 0
+              ? "border-green-500/35 bg-green-500/10 text-green-300"
+              : stats.totalR < 0
+                ? "border-red-500/35 bg-red-500/10 text-red-300"
+                : "border-slate-600/35 bg-slate-500/10 text-slate-300";
+
+          return (
+            <button
+              key={cell.key}
+              onClick={() => setSelectedDay(cell.key)}
+              className={[
+                "min-h-[104px] rounded-lg border p-3 text-left transition-colors hover:border-cyan-400/60",
+                "focus:outline-none focus:ring-1 focus:ring-cyan-300",
+                tone,
+                isSelected ? "border-cyan-300/80 ring-1 ring-cyan-300" : "",
+              ].join(" ")}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-lg font-bold text-slate-100">{cell.day}</div>
+                {stats && <div className="text-[11px] text-slate-500">{stats.trades.length}T</div>}
+              </div>
+              <div className={`mt-3 text-xl font-bold ${stats ? "" : "text-slate-700"}`}>
+                {stats ? formatR(stats.totalR) : "--"}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {stats ? `${stats.winRate}% win · ${stats.wins}W/${stats.losses}L` : "No trades"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-ink-700 bg-ink-950">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-700 px-4 py-3">
+          <div>
+            <div className="text-xs text-slate-500">Selected day</div>
+            <div className="text-sm font-semibold text-slate-200">{effectiveSelectedDay ?? "Pick a day"}</div>
+          </div>
+          <div className="flex flex-wrap gap-4 text-xs">
+            <span className="text-slate-500">Total <span className={selectedStats && selectedStats.totalR < 0 ? "font-semibold text-red-400" : "font-semibold text-green-400"}>{selectedStats ? formatR(selectedStats.totalR) : "--"}</span></span>
+            <span className="text-slate-500">W/L <span className="font-semibold text-slate-300">{selectedStats ? `${selectedStats.wins}/${selectedStats.losses}` : "--"}</span></span>
+            <span className="text-slate-500">Partial <span className="font-semibold text-slate-300">{selectedStats?.partialCount ?? 0}</span></span>
+            <span className="text-slate-500">BE <span className="font-semibold text-slate-300">{selectedStats?.breakevenCount ?? 0}</span></span>
+          </div>
+        </div>
+
+        {!selectedStats ? (
+          <div className="px-4 py-5 text-sm text-slate-600">No closed trades for this day.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-ink-700">
+                  <th className="px-4 py-2 text-left font-normal text-slate-500">Time</th>
+                  <th className="px-4 py-2 text-left font-normal text-slate-500">Direction</th>
+                  <th className="px-4 py-2 text-left font-normal text-slate-500">Playbook</th>
+                  <th className="px-4 py-2 text-right font-normal text-slate-500">R</th>
+                  <th className="px-4 py-2 text-right font-normal text-slate-500">Partial / BE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedStats.trades.map((trade) => {
+                  const r = trade.pnl_r ?? 0;
+                  const partial = hasPartialTakeProfit(trade);
+                  const breakeven = hasBreakevenApplied(trade);
+                  return (
+                    <tr key={trade.id} className="border-b border-ink-700/50 last:border-0">
+                      <td className="px-4 py-2 text-slate-400">{formatVietnamTime(trade.closed_at ?? trade.opened_at)}</td>
+                      <td className="px-4 py-2 text-slate-300">{trade.direction ?? trade.side}</td>
+                      <td className="px-4 py-2 text-slate-400">{trade.playbook ?? "unknown"}</td>
+                      <td className={`px-4 py-2 text-right font-semibold ${r >= 0 ? "text-green-400" : "text-red-400"}`}>{formatR(r)}</td>
+                      <td className="px-4 py-2 text-right text-slate-400">
+                        {partial || breakeven ? `${partial ? "Partial" : ""}${partial && breakeven ? " / " : ""}${breakeven ? "BE" : ""}` : "--"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BreakdownTable({ title, groups }: { title: string; groups: Record<string, TradeOrder[]> }) {
   const rows = Object.entries(groups)
     .map(([key, trades]) => ({
@@ -622,6 +904,8 @@ export function AccountDashboardPage() {
           <PnlBarChart trades={trades} />
         </div>
       </div>
+
+      <DailyPnlCalendar trades={trades} />
 
       {/* Breakdowns */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
