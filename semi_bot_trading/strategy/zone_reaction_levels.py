@@ -41,7 +41,7 @@ def compute_zone_reaction_v2_levels(
         if should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(min(wick_natural_stop, entry - min_stop_distance), 5)
             stop_source = "reaction_wick"
-        if should_fallback_reject_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
+        if should_fallback_wide_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
             zone, direction, stop_source, stop
         ):
             stop = round(entry - _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
@@ -62,7 +62,7 @@ def compute_zone_reaction_v2_levels(
         if should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(max(wick_natural_stop, entry + min_stop_distance), 5)
             stop_source = "reaction_wick"
-        if should_fallback_reject_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
+        if should_fallback_wide_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
             zone, direction, stop_source, stop
         ):
             stop = round(entry + _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
@@ -93,18 +93,21 @@ def should_fallback_reject_stop_to_wick(
     )
 
 
-def should_fallback_reject_stop_to_atr(
+def should_fallback_wide_stop_to_atr(
     reaction: ReactionResult,
     config: StrategyConfig,
     entry: float,
     current_stop: float,
 ) -> bool:
     return (
-        reaction.state == "reject"
+        reaction.state in {"reject", "internal_reject", "slow_reaction", "waiting_bos", "retest_reject", "fakeout"}
         and config.zone_reaction_v2_reject_wide_stop_fallback == "atr"
         and config.zone_reaction_v2_max_stop_distance > 0
         and abs(entry - current_stop) > config.zone_reaction_v2_max_stop_distance
     )
+
+
+should_fallback_reject_stop_to_atr = should_fallback_wide_stop_to_atr
 
 
 def _write_level_metadata(

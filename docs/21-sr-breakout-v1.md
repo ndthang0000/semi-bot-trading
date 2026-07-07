@@ -55,10 +55,10 @@ Entry:
 
 Stop loss:
 
-- Long: `entry - 1.5 * ATR_M15`
-- Short: `entry + 1.5 * ATR_M15`
+- Default ATR mode: long `entry - sl_atr * ATR_stop`, short `entry + sl_atr * ATR_stop`.
+- `zone_edge` mode: dat SL sau bien zone da bi pha cong buffer, nhung neu stop theo zone-edge qua rong hon `max_stop_distance` thi fallback ve ATR stop thay vi block setup.
 
-ATR_H1 van duoc dung cho dieu kien breakout/retest, nhung rieng SL dung ATR_M15 entry-timeframe de khong bi keo qua rong.
+ATR_H1 van duoc dung cho dieu kien breakout/retest. Runtime/backtest co the truyen `stop_atr` rieng cho SL; neu khong co thi fallback ve ATR cua candle dang evaluate.
 
 Take profit:
 
@@ -67,7 +67,7 @@ Take profit:
 Risk filters:
 
 - Khong dung min stop `4.0` cua `zone_reaction_v2`.
-- Block setup neu stop distance > `max_stop_distance`, default `40` gia.
+- `max_stop_distance` la nguong trigger ATR fallback cho `zone_edge`, khong phai hard block cap.
 
 ## Config
 
@@ -80,7 +80,7 @@ market_entry_max_distance_atr = 0.5
 retest_max_bars = 8
 sl_atr = 1.5
 rr = 2.5
-max_stop_distance = 60.0
+max_stop_distance = 40.0
 ```
 
 ## State Machine

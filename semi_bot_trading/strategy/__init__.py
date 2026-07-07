@@ -63,6 +63,7 @@ from .zone_reaction_levels import (
     compute_zone_reaction_v2_levels,
     should_fallback_reject_stop_to_atr,
     should_fallback_reject_stop_to_wick,
+    should_fallback_wide_stop_to_atr,
 )
 from .types import (
     BEARISH_BREAKS,
@@ -117,6 +118,7 @@ __all__ = [
     "zone_reaction_v2_status", "zone_reaction_v2_state_machine", "step_done",
     "score_zone_reaction_v2", "compute_zone_reaction_v2_levels",
     "should_fallback_reject_stop_to_wick", "should_fallback_reject_stop_to_atr",
+    "should_fallback_wide_stop_to_atr",
     "zone_confluence_metadata",
     # sr_breakout_v1
     "sr_breakout_direction", "classify_sr_breakout_v1",

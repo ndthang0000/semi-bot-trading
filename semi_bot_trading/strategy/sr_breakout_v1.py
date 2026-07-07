@@ -279,15 +279,19 @@ def compute_sr_breakout_v1_levels(
     config: StrategyConfig,
     zone: dict[str, Any] | None = None,
     stop_atr: float | None = None,
+    level_metadata: dict[str, Any] | None = None,
 ) -> tuple[float | None, float | None, list[float], float | None]:
     entry = round(float(signal_candle["close"]), 5)
     rr = config.sr_breakout_v1_rr
     effective_stop_atr = stop_atr if stop_atr is not None else atr
-    stop_distance = effective_stop_atr * config.sr_breakout_v1_sl_atr
+    atr_stop_distance = effective_stop_atr * config.sr_breakout_v1_sl_atr
+    stop_distance = atr_stop_distance
+    stop_source = "atr"
     if config.sr_breakout_v1_sl_mode == "zone_edge" and zone is not None:
         # Structural stop: the broken edge flips role (resistance -> support),
         # so invalidation is a close back through that edge plus a buffer.
         # A floor keeps the stop from collapsing when entry hugs the edge.
+        stop_source = "zone_edge"
         edge_buffer = effective_stop_atr * config.sr_breakout_v1_sl_zone_buffer_atr
         min_distance = effective_stop_atr * config.sr_breakout_v1_sl_min_atr
         if direction == "long":
@@ -296,12 +300,17 @@ def compute_sr_breakout_v1_levels(
         else:
             natural = float(zone["price_low"]) + edge_buffer
             stop_distance = max(natural - entry, min_distance)
+        if config.sr_breakout_v1_max_stop_distance > 0 and stop_distance > config.sr_breakout_v1_max_stop_distance:
+            stop_distance = atr_stop_distance
+            stop_source = "atr_fallback"
     if direction == "long":
         stop = round(entry - stop_distance, 5)
         tp = round(entry + stop_distance * rr, 5)
     else:
         stop = round(entry + stop_distance, 5)
         tp = round(entry - stop_distance * rr, 5)
+    if level_metadata is not None:
+        level_metadata["stop_source"] = stop_source
     return entry, stop, [tp], round(rr, 4)
 
 
@@ -392,7 +401,16 @@ def evaluate_sr_breakout_v1(
     last = candles[-1]
     if not _in_london_ny_session(last):
         return []
-    entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(direction, last, atr, config, zone, stop_atr=stop_atr)
+    level_metadata: dict[str, Any] = {}
+    entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(
+        direction,
+        last,
+        atr,
+        config,
+        zone,
+        stop_atr=stop_atr,
+        level_metadata=level_metadata,
+    )
     blocked: list[str] = []
     reasons = [
         "SR Breakout V1 uses H1 close outside support/resistance.",
@@ -403,10 +421,6 @@ def evaluate_sr_breakout_v1(
     else:
         reasons.append(f"Macro trend {macro_trend} allows {direction} breakout.")
     stop_distance = abs(entry - stop) if entry is not None and stop is not None else None
-    if stop_distance is not None and stop_distance > config.sr_breakout_v1_max_stop_distance:
-        blocked.append(
-            f"Stop distance {stop_distance:.2f} exceeds SR Breakout V1 maximum {config.sr_breakout_v1_max_stop_distance:.2f}."
-        )
     allowed_entries = set(config.sr_breakout_v1_allowed_entries)
     if blocked:
         status = "blocked"
@@ -459,6 +473,7 @@ def evaluate_sr_breakout_v1(
             "atr": round(atr, 5),
             "stop_atr": round(stop_atr, 5) if stop_atr is not None else round(atr, 5),
             "stop_atr_multiplier": config.sr_breakout_v1_sl_atr,
+            "stop_source": level_metadata.get("stop_source"),
             "entry_model": reaction.metadata.get("entry_model"),
             "breakout_close_distance_atr": reaction.metadata.get("breakout_close_distance_atr"),
             "context_bypass": context_bypass,

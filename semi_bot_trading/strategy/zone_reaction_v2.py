@@ -733,17 +733,6 @@ def evaluate_zone_reaction_v2(
         if rr is None or rr < config.zone_reaction_v2_rr_minimum:
             blocked.append(f"RR {rr or 0:.2f} is below Zone Reaction V2 minimum {config.zone_reaction_v2_rr_minimum:.2f}.")
             status = "blocked"
-        if (
-            stop_distance is not None
-            and config.zone_reaction_v2_max_stop_distance > 0
-            and stop_distance > config.zone_reaction_v2_max_stop_distance
-            and level_metadata.get("stop_source") != "atr_fallback"
-        ):
-            blocked.append(
-                f"Stop distance {stop_distance:.2f} exceeds Zone Reaction V2 maximum "
-                f"{config.zone_reaction_v2_max_stop_distance:.2f}."
-            )
-            status = "blocked"
         if blocked:
             status = "blocked"
 

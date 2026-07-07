@@ -90,7 +90,7 @@ zone_loss_cooldown_candles = 12
 Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 
 - Default theo zone type: `support`/`resistance` = `["reject"]`, `fvg` = `["reject", "internal_reject"]`.
-- Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR, stop limit) van ap dung.
+- Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR) van ap dung.
 - Trong live mode, human manual zone chi duoc generate setup tu candle co open time bang hoac sau thoi diem zone duoc tao (`created_at`). Cac lan human keo/chinh zone sau do (`last_human_override_at`) khong reset activation, vi trader co the tinh chinh zone cho phu hop thi truong khi gia dang chay. `visual_start` chi de ve chart, khong duoc dung de backdate setup tren candle da mo truoc khi human ve zone.
 - He qua: bot SR zone khong con trade `internal_reject` theo default; muon internal reject tren SR zone cu the thi human set `trade_modes = ["reject", "internal_reject"]`.
 - Neu human set SR zone chi `trade_modes = ["internal_reject"]`, cac state tien-xac-nhan nhu `slow_reaction`/`waiting_bos` van duoc emit len UI de debug va cho BOS/CHOCH + price action; chung chi thanh `eligible` khi promote duoc thanh `internal_reject`.
@@ -247,13 +247,13 @@ default = max(4.0 gia, 1.6 * ATR_M15)
 
 Voi XAUUSD H1/M15, rule nay tranh cac lenh co SL qua chat nhu 0.6-3 gia, la nhom trade backtest dang co ket qua rat kem.
 
-Sau khi tinh stop, bot chan setup neu stop distance qua lon:
+Sau khi tinh stop, neu stop distance qua lon, bot khong block setup. `max_stop_distance` chi la nguong kich hoat fallback sang SL theo ATR:
 
 ```text
 max_stop_distance = 30.0 gia
 ```
 
-Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Wick fallback chi hop le khi SL nam ngoai H1 zone; neu wick SL van nam trong zone, bot bo qua wick va fallback tiep sang ATR H1. Neu wick-stop van qua rong va:
+Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Wick fallback chi hop le khi SL nam ngoai H1 zone; neu wick SL van nam trong zone, bot bo qua wick va fallback tiep sang ATR H1. Neu bat ky stop theo zone/wick cua `reject`, `internal_reject`, `slow_reaction`, `waiting_bos`, `retest_reject`, hoac `fakeout` van qua rong va:
 
 ```toml
 reject_wide_stop_fallback = "atr"
@@ -266,7 +266,7 @@ long:  stop = entry - max(min_stop_distance, reject_atr_stop * ATR_H1)
 short: stop = entry + max(min_stop_distance, reject_atr_stop * ATR_H1)
 ```
 
-ATR_H1 o day la ATR cua timeframe context/zone, giup fallback SL ton trong bien do H1 thay vi bi keo qua sat theo M15 trigger. Neu caller khong truyen H1 candles thi bot fallback ve ATR cua strategy timeframe, nhung runtime/backtest/dashboard chinh deu truyen H1 context candles. Khoang stop fallback nay la lop cuoi cung nen **khong bi cap boi `max_stop_distance`**; `max_stop_distance` chi la nguong kich hoat fallback tu zone/reaction-wick sang ATR stop. Dat `reject_wide_stop_fallback = "block"` de quay lai hanh vi strict: setup bi `blocked` voi reason `Stop distance ... exceeds ... maximum`.
+ATR_H1 o day la ATR cua timeframe context/zone, giup fallback SL ton trong bien do H1 thay vi bi keo qua sat theo M15 trigger. Neu caller khong truyen H1 candles thi bot fallback ve ATR cua strategy timeframe, nhung runtime/backtest/dashboard chinh deu truyen H1 context candles. Khoang stop fallback nay la lop cuoi cung nen **khong bi cap boi `max_stop_distance`**; `max_stop_distance` chi la nguong kich hoat fallback tu zone/reaction-wick sang ATR stop, khong con la hard block. Cac state cho xac nhan nhu `slow_reaction`/`waiting_bos` van giu `waiting_confirmation`, khong chuyen sang `blocked` chi vi SL placeholder qua xa.
 
 Voi FVG, neu stop theo full zone/reaction wick vuot `max_stop_distance` va `reject_wide_stop_fallback = "atr"`, bot fallback truc tiep ve ATR cua H1 context:
 

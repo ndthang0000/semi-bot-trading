@@ -1026,7 +1026,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual([91], take_profit)
         self.assertEqual(2.0, rr)
 
-    def test_zone_reaction_v2_blocks_stop_distance_above_max(self) -> None:
+    def test_zone_reaction_v2_wide_stop_does_not_block_when_fallback_is_disabled(self) -> None:
         candles = [
             candle("00:00", 108, 109, 107, 108),
             candle("00:15", 108, 108.5, 107.5, 108.1),
@@ -1044,8 +1044,9 @@ class StrategyTest(unittest.TestCase):
             allowed_playbooks={"zone_reaction_v2"},
         )
 
-        self.assertEqual("blocked", candidates[0]["status"])
-        self.assertIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual([], candidates[0]["blocked_reason"])
+        self.assertNotIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
 
     def test_zone_reaction_v2_wide_reject_stop_can_fallback_to_h1_atr(self) -> None:
         candles = [
@@ -1149,6 +1150,60 @@ class StrategyTest(unittest.TestCase):
             candidates[0]["metadata"]["atr"] * CONFIG.zone_reaction_v2_reject_atr_stop,
         )
         self.assertAlmostEqual(expected_distance, candidates[0]["entry"] - candidates[0]["stop_loss"], places=4)
+
+    def test_zone_reaction_v2_wide_internal_reject_stop_falls_back_to_atr(self) -> None:
+        metadata: dict[str, object] = {}
+
+        entry, stop, _take_profit, _rr = compute_zone_reaction_v2_levels(
+            zone("support", "bullish", 100, 150),
+            "long",
+            ReactionResult(
+                state="internal_reject",
+                direction="long",
+                touched=True,
+                candle_time="2026-01-01T00:45:00+00:00",
+                reason=[],
+                metadata={"reaction_high": 148, "reaction_low": 100},
+            ),
+            last_close=145,
+            atr=4,
+            config=CONFIG,
+            stop_fallback_atr=20,
+            stop_fallback_atr_timeframe="H1",
+            level_metadata=metadata,
+        )
+
+        self.assertEqual(145, entry)
+        self.assertEqual(121, stop)
+        self.assertEqual("atr_fallback", metadata["stop_source"])
+        self.assertEqual("H1", metadata["stop_fallback_atr_timeframe"])
+
+    def test_zone_reaction_v2_wide_slow_reaction_stays_waiting_not_blocked(self) -> None:
+        support = zone("support", "bullish", 4097, 4140)
+        support["source"] = "human"
+        support["metadata"] = {"human_created": True, "trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bearish", "trending", macro_trend="down"),
+            [candle("00:15", 4122, 4125, 4097, 4123)],
+            [],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+            context_candles=[
+                candle("01:00", 4100, 4120, 4090, 4110),
+                candle("02:00", 4110, 4130, 4100, 4120),
+                candle("03:00", 4120, 4140, 4110, 4130),
+                candle("04:00", 4130, 4150, 4120, 4140),
+            ],
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertIn(candidates[0]["zone_reaction_state"], {"slow_reaction", "waiting_bos"})
+        self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertEqual([], candidates[0]["blocked_reason"])
+        self.assertNotIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
 
     def test_zone_reaction_v2_detects_slow_reaction(self) -> None:
         candles = [
@@ -1522,6 +1577,32 @@ class StrategyTest(unittest.TestCase):
         # below the broken edge (102) instead.
         self.assertLess(candidates[0]["stop_loss"], wick_candidates[0]["stop_loss"])
         self.assertLess(wick_candidates[0]["stop_loss"], 102)
+
+    def test_sr_breakout_v1_wide_zone_edge_stop_falls_back_to_atr(self) -> None:
+        context_candles = [
+            candle("10:00", 100, 150, 50, 120),
+            candle("11:00", 120, 170, 70, 130),
+            candle("12:00", 130, 180, 80, 140),
+            candle("13:00", 99, 170, 70, 150),
+        ]
+        resistance = zone("resistance", "bearish", 100, 102)
+        resistance["metadata"] = {"trade_modes": ["breakout"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("neutral", "ranging", macro_trend="up"),
+            [context_candles[-1]],
+            [],
+            replace(CONFIG, sr_breakout_v1_sl_mode="zone_edge", sr_breakout_v1_max_stop_distance=40.0),
+            allowed_playbooks={"sr_breakout_v1"},
+            context_candles=context_candles,
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual([], candidates[0]["blocked_reason"])
+        self.assertEqual("atr_fallback", candidates[0]["metadata"]["stop_source"])
+        self.assertNotIn("Stop distance", " ".join(candidates[0]["blocked_reason"]))
 
     def test_sr_breakout_v1_stop_can_use_explicit_stop_atr(self) -> None:
         entry, stop, take_profit, rr = compute_sr_breakout_v1_levels(
