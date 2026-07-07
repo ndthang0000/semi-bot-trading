@@ -715,6 +715,9 @@ function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kin
   const partialPlan = readObject(metadata.partial_take_profit);
   const partialDone = partialPlan.done === true;
   const breakevenApplied = partialPlan.breakeven_applied === true;
+  const initialStopLoss = readNumber(metadata.initial_stop_loss);
+  const showCurrentStopLoss =
+    initialStopLoss !== null && trade.stop_loss !== null && Math.abs(initialStopLoss - trade.stop_loss) > 1e-9;
   const statusNote = tradeStatusNote(trade.status);
   return (
     <div className="grid gap-3 text-sm">
@@ -733,7 +736,8 @@ function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kin
 
       <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/60 p-3">
         <TradeMetric label="Entry" value={price(trade.entry_price)} />
-        <TradeMetric label="SL" value={price(trade.stop_loss)} />
+        <TradeMetric label={showCurrentStopLoss ? "Initial SL" : "SL"} value={price(initialStopLoss ?? trade.stop_loss)} />
+        {showCurrentStopLoss ? <TradeMetric label="Current SL" value={price(trade.stop_loss)} /> : null}
         <TradeMetric label="TP" value={price(takeProfit)} />
         <TradeMetric label="Exit" value={price(trade.close_price)} />
         <TradeMetric label="PnL R" value={trade.pnl_r === null ? "--" : `${trade.pnl_r.toFixed(2)}R`} />
@@ -744,8 +748,8 @@ function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kin
         <div className="grid gap-2 rounded-md border border-emerald-400/25 bg-emerald-400/[0.06] p-3">
           <TradeMetric label="Partial" value={partialDone ? "done" : "armed"} />
           <TradeMetric label="Trigger" value={`${formatUnknownNumber(partialPlan.trigger_r)}R @ ${price(readNumber(partialPlan.trigger_price))}`} />
-          <TradeMetric label="Closed" value={partialDone ? `${formatUnknownNumber(partialPlan.closed_volume)} lot` : "--"} />
-          <TradeMetric label="BE" value={breakevenApplied ? price(readNumber(partialPlan.breakeven_stop)) : partialDone ? "pending" : price(readNumber(partialPlan.breakeven_stop))} />
+          <TradeMetric label="Partial close" value={partialDone ? `${formatUnknownNumber(partialPlan.closed_volume)} lot` : "--"} />
+          <TradeMetric label="BE SL" value={breakevenApplied ? price(readNumber(partialPlan.breakeven_stop)) : partialDone ? "pending" : price(readNumber(partialPlan.breakeven_stop))} />
         </div>
       ) : null}
 

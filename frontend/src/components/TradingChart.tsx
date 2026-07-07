@@ -1474,7 +1474,7 @@ function tradeToBox(
   series: ISeriesApi<"Candlestick">,
 ): TradeBox | null {
   const entry = trade.entry_price;
-  const stop = trade.stop_loss;
+  const stop = tradeVisualStopLoss(trade);
   const takeProfit = firstTakeProfitPrice(trade.take_profit);
   if (entry === null || stop === null || takeProfit === null || !trade.opened_at) return null;
 
@@ -1551,6 +1551,12 @@ function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null 
   if (typeof first === "number") return first;
   if (first && typeof first.price === "number") return first.price;
   return null;
+}
+
+function tradeVisualStopLoss(trade: TradeOrder): number | null {
+  const initialStop = trade.metadata.initial_stop_loss;
+  if (typeof initialStop === "number" && Number.isFinite(initialStop)) return initialStop;
+  return trade.stop_loss;
 }
 
 function readObject(value: unknown): Record<string, unknown> {
