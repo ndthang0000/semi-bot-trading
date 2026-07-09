@@ -375,6 +375,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         zone_type: str | None = Query(default=None),
         reaction: str | None = Query(default=None),
         trade_id: str | None = Query(default=None),
+        account_label: str | None = Query(default=None),
         backtest: bool | None = Query(default=None),
         sort: str = Query(default="opened_at_desc"),
         _: str = Depends(require_auth),
@@ -439,6 +440,11 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             if trade_id_search:
                 where.append("(trade_orders.id LIKE ? OR trade_orders.trade_idea_id LIKE ?)")
                 params.extend([f"%{trade_id_search}%", f"%{trade_id_search}%"])
+        if account_label:
+            account_label_search = account_label.strip()
+            if account_label_search:
+                where.append("trade_orders.account_label = ?")
+                params.append(account_label_search)
         if backtest is True:
             where.append("trade_orders.source = 'backtest'")
         elif backtest is False:
@@ -475,6 +481,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             rows = conn.execute(
                 f"""
                 SELECT trade_orders.id, trade_orders.trade_idea_id, trade_orders.side,
+                       trade_orders.account_label,
                        trade_orders.order_type, trade_orders.status, trade_orders.entry_price,
                        trade_orders.stop_loss, trade_orders.take_profit_json,
                        trade_orders.quantity, trade_orders.opened_at, trade_orders.closed_at,

@@ -492,6 +492,7 @@ def load_chart_trades(
     rows = conn.execute(
         f"""
         SELECT trade_orders.id, trade_orders.trade_idea_id, trade_orders.side,
+               trade_orders.account_label,
                trade_orders.order_type, trade_orders.status, trade_orders.entry_price,
                trade_orders.stop_loss, trade_orders.take_profit_json,
                trade_orders.quantity, trade_orders.opened_at, trade_orders.closed_at,
@@ -592,6 +593,7 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
     result = {
         "id": row["id"],
         "trade_idea_id": row["trade_idea_id"],
+        "account_label": row["account_label"] if row_has_key(row, "account_label") else "Default",
         "playbook": row["playbook"],
         "direction": row["direction"],
         "side": row["side"],

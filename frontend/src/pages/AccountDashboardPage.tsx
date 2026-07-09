@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authFetch } from "../api/auth";
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ interface TradeMeta {
 
 interface TradeOrder {
   id: string;
+  account_label: string;
   playbook: string;
   direction: string;
   side: string;
@@ -61,9 +62,18 @@ interface TradesResponse {
 // ---------------------------------------------------------------------------
 
 const ACCOUNT_TRADES_LIMIT = 1000;
+const DEFAULT_ACCOUNT_LABEL = "Exness Personal";
+const ALL_ACCOUNTS = "__all__";
 
-async function fetchAllTrades(): Promise<TradeOrder[]> {
-  const res = await authFetch(`/api/trades?limit=${ACCOUNT_TRADES_LIMIT}&backtest=false`);
+async function fetchAllTrades(accountLabel: string): Promise<TradeOrder[]> {
+  const params = new URLSearchParams({
+    limit: String(ACCOUNT_TRADES_LIMIT),
+    backtest: "false",
+  });
+  if (accountLabel !== ALL_ACCOUNTS) {
+    params.set("account_label", accountLabel);
+  }
+  const res = await authFetch(`/api/trades?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch trades");
   const data: TradesResponse = await res.json();
   return data.trades ?? [];
@@ -817,14 +827,7 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
   );
 }
 
-function AccountBalanceBar() {
-  const { data: accounts = [], isLoading } = useQuery({
-    queryKey: ["accounts"],
-    queryFn: fetchAccounts,
-    refetchInterval: 30_000,
-    staleTime: 25_000,
-  });
-
+function AccountBalanceBar({ accounts, isLoading }: { accounts: AccountSnapshot[]; isLoading: boolean }) {
   if (isLoading) return null;
   if (accounts.length === 0) {
     return (
@@ -841,14 +844,76 @@ function AccountBalanceBar() {
   );
 }
 
+function AccountPerformanceFilter({
+  accounts,
+  selected,
+  onSelect,
+}: {
+  accounts: AccountSnapshot[];
+  selected: string;
+  onSelect: (value: string) => void;
+}) {
+  const options = [...accounts.map((account) => account.label), ALL_ACCOUNTS];
+  if (options.length === 1 && selected === ALL_ACCOUNTS) return null;
+  return (
+    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Performance</div>
+        <div className="text-sm font-semibold text-slate-100">
+          {selected === ALL_ACCOUNTS ? "All accounts" : selected}
+        </div>
+      </div>
+      <div className="flex max-w-full flex-wrap gap-1 rounded-lg border border-ink-700 bg-ink-900 p-1">
+        {options.map((value) => {
+          const label = value === ALL_ACCOUNTS ? "All accounts" : value;
+          const active = selected === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onSelect(value)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                active
+                  ? "bg-cyan-400/15 text-cyan-100"
+                  : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 
 export function AccountDashboardPage() {
+  const { data: accounts = [], isLoading: accountsLoading } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: fetchAccounts,
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+  const [selectedAccount, setSelectedAccount] = useState(DEFAULT_ACCOUNT_LABEL);
+
+  useEffect(() => {
+    if (accountsLoading) return;
+    const labels = accounts.map((account) => account.label);
+    if (selectedAccount === ALL_ACCOUNTS || labels.includes(selectedAccount)) return;
+    if (labels.includes(DEFAULT_ACCOUNT_LABEL)) {
+      setSelectedAccount(DEFAULT_ACCOUNT_LABEL);
+    } else {
+      setSelectedAccount(labels[0] ?? ALL_ACCOUNTS);
+    }
+  }, [accounts, accountsLoading, selectedAccount]);
+
   const { data: trades = [], isLoading, isError } = useQuery({
-    queryKey: ["all-trades"],
-    queryFn: fetchAllTrades,
+    queryKey: ["dashboard-trades", selectedAccount],
+    queryFn: () => fetchAllTrades(selectedAccount),
     staleTime: 30_000,
   });
 
@@ -873,7 +938,8 @@ export function AccountDashboardPage() {
       <h1 className="mb-6 text-lg font-semibold text-slate-100">Account Dashboard</h1>
 
       {/* MT5 live account balance */}
-      <AccountBalanceBar />
+      <AccountBalanceBar accounts={accounts} isLoading={accountsLoading} />
+      <AccountPerformanceFilter accounts={accounts} selected={selectedAccount} onSelect={setSelectedAccount} />
 
       {/* Stats row */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">

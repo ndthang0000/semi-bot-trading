@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from semi_bot_trading.api import create_app
+from semi_bot_trading.auth import create_access_token
 from semi_bot_trading.db import connect, init_db
 
 
@@ -264,6 +267,52 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual([trade["id"] for trade in payload["trades"]], ["order-narrow"])
 
+    def test_trade_history_supports_account_label_filter(self) -> None:
+        with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            env_path = root / ".env"
+            secret_key = write_test_env(env_path)
+            seed_candles(db_path)
+            seed_live_account_trade_data(db_path)
+
+            headers = auth_headers(secret_key)
+            with patch.dict(os.environ, {"SECRET_KEY": secret_key, "ADMIN_PASSWORD_HASH": "unused-test-hash"}, clear=False):
+                with TestClient(create_app(config_path, env_path=env_path)) as client:
+                    all_response = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=false", headers=headers)
+                    exness_response = client.get(
+                        "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=false"
+                        "&account_label=Exness%20Personal",
+                        headers=headers,
+                    )
+                    ftmo_response = client.get(
+                        "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=false"
+                        "&account_label=FTMO%20Demo",
+                        headers=headers,
+                    )
+
+        self.assertEqual(all_response.status_code, 200)
+        all_payload = all_response.json()
+        self.assertEqual(all_payload["total"], 2)
+        self.assertEqual(
+            {trade["account_label"] for trade in all_payload["trades"]},
+            {"Exness Personal", "FTMO Demo"},
+        )
+
+        self.assertEqual(exness_response.status_code, 200)
+        exness_payload = exness_response.json()
+        self.assertEqual(exness_payload["total"], 1)
+        self.assertEqual(exness_payload["trades"][0]["id"], "order-exness")
+        self.assertEqual(exness_payload["trades"][0]["account_label"], "Exness Personal")
+
+        self.assertEqual(ftmo_response.status_code, 200)
+        ftmo_payload = ftmo_response.json()
+        self.assertEqual(ftmo_payload["total"], 1)
+        self.assertEqual(ftmo_payload["trades"][0]["id"], "order-ftmo")
+        self.assertEqual(ftmo_payload["trades"][0]["account_label"], "FTMO Demo")
+
     def test_chart_replay_recomputes_from_replay_start(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -496,13 +545,29 @@ symbol = "XAUUSD"
 
 [data]
 directory = "data"
-database = "{db_path}"
+database = "{db_path.as_posix()}"
 
 [structure.swing.timeframes]
 H1 = {{ window = 5 }}
 M15 = {{ window = 3 }}
 """
     )
+
+
+def write_test_env(env_path: Path) -> str:
+    secret_key = "test-secret-key-for-api-tests-000000000000"
+    env_path.write_text(
+        f"""
+SECRET_KEY="{secret_key}"
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD_HASH="unused-test-hash"
+"""
+    )
+    return secret_key
+
+
+def auth_headers(secret_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token('admin', secret_key)}"}
 
 
 def seed_candles(db_path: Path) -> None:
@@ -708,6 +773,58 @@ def seed_trade_filter_data(db_path: Path) -> None:
                     2.0,
                     '{"backtest": true, "zone_reaction_state": "fakeout", "candidate_metadata": {"zone_type": "fvg"}}',
                     "2026-01-01T00:45:00+00:00",
+                ),
+            ],
+        )
+        conn.commit()
+
+
+def seed_live_account_trade_data(db_path: Path) -> None:
+    with connect(db_path) as conn:
+        init_db(conn)
+        conn.execute(
+            """
+            INSERT INTO trade_ideas (
+                id, symbol, direction, playbook, status, entry_zone_id, related_zone_ids_json,
+                context_snapshot_json, suggested_entry, suggested_stop_loss,
+                suggested_take_profit_json, risk_reward, created_at, expires_at
+            )
+            VALUES ('idea-shared', 'XAUUSD', 'long', 'zone_reaction_v2', 'filled', NULL, '[]',
+                    '{}', 2000, 1990, '[2020]', 2.0, '2026-01-01T00:00:00+00:00', NULL)
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO trade_orders (
+                id, trade_idea_id, account_label, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity, opened_at,
+                closed_at, close_price, pnl, pnl_r, source, metadata_json, created_at
+            )
+            VALUES (?, 'idea-shared', ?, 'XAUUSD', 'buy', 'market', 'closed',
+                    2000, 1990, '[2020]', ?, ?, ?, 2020, ?, ?, 'live', ?, ?)
+            """,
+            [
+                (
+                    "order-exness",
+                    "Exness Personal",
+                    1.0,
+                    "2026-01-01T00:15:00+00:00",
+                    "2026-01-01T01:00:00+00:00",
+                    20.0,
+                    2.0,
+                    '{"candidate_id": "candidate-shared"}',
+                    "2026-01-01T00:15:00+00:00",
+                ),
+                (
+                    "order-ftmo",
+                    "FTMO Demo",
+                    0.5,
+                    "2026-01-01T00:30:00+00:00",
+                    "2026-01-01T01:15:00+00:00",
+                    -10.0,
+                    -1.0,
+                    '{"candidate_id": "candidate-shared"}',
+                    "2026-01-01T00:30:00+00:00",
                 ),
             ],
         )

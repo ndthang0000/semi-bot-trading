@@ -111,6 +111,7 @@ export type MarketContext = {
 export type TradeOrder = {
   id: string;
   trade_idea_id: string;
+  account_label: string;
   playbook: string;
   direction: string;
   side: string;
