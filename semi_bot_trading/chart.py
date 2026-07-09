@@ -522,9 +522,18 @@ def load_chart_trades(
     return [trade_order_row_to_chart(row) for row in rows]
 
 
-def load_live_traded_candidate_refs(conn: Connection, symbol: str) -> tuple[set[str], set[str]]:
+def load_live_traded_candidate_refs(
+    conn: Connection,
+    symbol: str,
+    account_label: str | None = None,
+) -> tuple[set[str], set[str]]:
+    account_clause = ""
+    params: list[Any] = [symbol]
+    if account_label is not None:
+        account_clause = " AND trade_orders.account_label = ?"
+        params.append(account_label)
     rows = conn.execute(
-        """
+        f"""
         SELECT trade_orders.metadata_json, trade_ideas.context_snapshot_json
         FROM trade_orders
         JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
@@ -532,8 +541,9 @@ def load_live_traded_candidate_refs(conn: Connection, symbol: str) -> tuple[set[
           AND trade_orders.source = 'live'
           AND trade_orders.opened_at IS NOT NULL
           AND trade_orders.status IN ('filled', 'pending_fill')
+          {account_clause}
         """,
-        (symbol,),
+        params,
     ).fetchall()
     candidate_ids: set[str] = set()
     zone_ids: set[str] = set()
@@ -559,10 +569,15 @@ def load_live_traded_candidate_refs(conn: Connection, symbol: str) -> tuple[set[
     return candidate_ids, zone_ids
 
 
-def filter_traded_setup_candidates(conn: Connection, symbol: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filter_traded_setup_candidates(
+    conn: Connection,
+    symbol: str,
+    candidates: list[dict[str, Any]],
+    account_label: str | None = None,
+) -> list[dict[str, Any]]:
     if not candidates:
         return candidates
-    traded_candidate_ids, traded_zone_ids = load_live_traded_candidate_refs(conn, symbol)
+    traded_candidate_ids, traded_zone_ids = load_live_traded_candidate_refs(conn, symbol, account_label=account_label)
     if not traded_candidate_ids and not traded_zone_ids:
         return candidates
     return [
@@ -633,6 +648,7 @@ def build_chart_payload(
     allowed_playbooks: set[str] | None = None,
     macro_trend_config: Any | None = None,
     include_live_strategy_candle: bool = False,
+    traded_account_label: str | None = None,
 ) -> dict[str, Any]:
     candles = load_chart_candles(conn, symbol, timeframe, limit, start, end, start_index)
     if not candles:
@@ -708,7 +724,12 @@ def build_chart_payload(
                 allowed_playbooks=allowed_playbooks,
                 context_candles=context_candles,
             )
-            setup_candidates = filter_traded_setup_candidates(conn, symbol, setup_candidates)
+            setup_candidates = filter_traded_setup_candidates(
+                conn,
+                symbol,
+                setup_candidates,
+                account_label=traded_account_label,
+            )
     m15_triggers = build_m15_trigger_overlays(
         conn,
         symbol,

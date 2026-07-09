@@ -79,6 +79,30 @@ class ChartPayloadTest(unittest.TestCase):
 
         self.assertEqual([], filtered)
 
+    def test_open_live_order_only_hides_setup_for_matching_account(self) -> None:
+        candidate = {"id": "candidate-new", "primary_zone_id": "z1"}
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_live_order(conn, status="filled", zone_id="z1", account_label="FTMO Demo")
+
+                exness_filtered = filter_traded_setup_candidates(
+                    conn,
+                    "XAUUSD",
+                    [candidate],
+                    account_label="Exness Personal",
+                )
+                ftmo_filtered = filter_traded_setup_candidates(
+                    conn,
+                    "XAUUSD",
+                    [candidate],
+                    account_label="FTMO Demo",
+                )
+
+        self.assertEqual([candidate], exness_filtered)
+        self.assertEqual([], ftmo_filtered)
+
     def test_live_strategy_candle_is_opt_in_for_setup_evaluation(self) -> None:
         captured_lengths: list[int] = []
 
@@ -260,7 +284,7 @@ def seed_live_candle(conn) -> None:
     conn.commit()
 
 
-def seed_live_order(conn, status: str, zone_id: str) -> None:
+def seed_live_order(conn, status: str, zone_id: str, account_label: str = "Default") -> None:
     candidate = {"id": "candidate-old", "primary_zone_id": zone_id}
     conn.execute(
         """
@@ -279,16 +303,16 @@ def seed_live_order(conn, status: str, zone_id: str) -> None:
     conn.execute(
         """
         INSERT INTO trade_orders (
-            id, trade_idea_id, symbol, side, order_type, status, entry_price,
+            id, trade_idea_id, account_label, symbol, side, order_type, status, entry_price,
             stop_loss, take_profit_json, quantity, opened_at, closed_at,
             source, metadata_json, created_at
         )
-        VALUES ('order-1', 'idea-1', 'XAUUSD', 'buy', 'market', ?, 100,
+        VALUES ('order-1', 'idea-1', ?, 'XAUUSD', 'buy', 'market', ?, 100,
                 95, '[110]', 0.01, '2026-01-01T00:00:00+00:00',
                 CASE WHEN ? = 'closed' THEN '2026-01-01T01:00:00+00:00' ELSE NULL END,
                 'live', ?, '2026-01-01T00:00:00+00:00')
         """,
-        (status, status, json.dumps({"candidate_id": "candidate-old"})),
+        (account_label, status, status, json.dumps({"candidate_id": "candidate-old"})),
     )
     conn.commit()
 
