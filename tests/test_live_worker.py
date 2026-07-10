@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone as _tz
 from zoneinfo import ZoneInfoNotFoundError
 UTC = _tz.utc
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 from unittest.mock import MagicMock, call, patch
 
 from semi_bot_trading.config import load_config

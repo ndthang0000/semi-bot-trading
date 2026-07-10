@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 
 from semi_bot_trading.config import load_config
 

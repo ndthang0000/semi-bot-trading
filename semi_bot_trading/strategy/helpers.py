@@ -238,12 +238,13 @@ def zone_eligible_for_zone_reaction_v2(
     candles: list[dict[str, Any]],
     config: StrategyConfig,
 ) -> bool:
-    if not candles or not zone_valid_at(zone, str(candles[-1]["time"])):
+    if not candles:
         return False
     status = str(zone.get("status"))
+    zone_type = str(zone.get("type"))
     if status == "active":
-        return True
-    if status != "mitigated" or str(zone.get("type")) != "fvg":
+        return zone_valid_at(zone, str(candles[-1]["time"]))
+    if status != "mitigated" or zone_type != "fvg":
         return False
     if not config.zone_reaction_v2_internal_reject_enabled:
         return False

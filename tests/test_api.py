@@ -4,7 +4,7 @@ import os
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -12,6 +12,21 @@ from fastapi.testclient import TestClient
 from semi_bot_trading.api import create_app
 from semi_bot_trading.auth import create_access_token
 from semi_bot_trading.db import connect, init_db
+
+
+def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
+    env_path = root / ".env"
+    secret_key = write_test_env(env_path)
+    env_patch = patch.dict(
+        os.environ,
+        {"SECRET_KEY": secret_key, "ADMIN_PASSWORD_HASH": "unused-test-hash"},
+        clear=False,
+    )
+    env_patch.start()
+    client = TestClient(create_app(config_path, env_path=env_path))
+    client.headers.update(auth_headers(secret_key))
+    client._semi_bot_env_patch = env_patch  # type: ignore[attr-defined]
+    return client
 
 
 class ApiTest(unittest.TestCase):
@@ -76,7 +91,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=2")
 
         self.assertEqual(response.status_code, 200)
@@ -97,7 +112,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_zone(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/chart?symbol=XAUUSD&timeframe=H1&limit=2")
 
         self.assertEqual(response.status_code, 200)
@@ -115,7 +130,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=1&start_index=1")
 
         self.assertEqual(response.status_code, 200)
@@ -130,7 +145,7 @@ class ApiTest(unittest.TestCase):
             config_path = root / "trading.toml"
             write_test_config(config_path, root / "test.sqlite3")
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
@@ -144,7 +159,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/replay/timeline?symbol=XAUUSD&timeframe=M15&limit=2")
 
         self.assertEqual(response.status_code, 200)
@@ -163,7 +178,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/replay/timeline?symbol=XAUUSD&timeframe=M15&limit=1&start_index=1")
 
         self.assertEqual(response.status_code, 200)
@@ -180,7 +195,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get("/api/replay/timeline?symbol=XAUUSD&timeframe=M15&limit=10000")
 
         self.assertEqual(response.status_code, 200)
@@ -197,7 +212,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_trade(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             save_response = client.put(
                 "/api/trades/order-1/review",
                 json={
@@ -230,7 +245,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_trade_filter_data(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             filtered_response = client.get(
                 "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=true"
                 "&zone_type=support&reaction=reject&sort=sl_size_desc"
@@ -257,7 +272,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_trade_filter_data(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get(
                 "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=true&trade_id=narrow"
             )
@@ -321,7 +336,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.get(
                 "/api/chart?symbol=XAUUSD&timeframe=M15&limit=2"
                 "&replay_start=2026-01-01T00:00:00%2B00:00"
@@ -345,7 +360,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_zone(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.patch(
                 "/api/zones/z1",
                 json={
@@ -389,7 +404,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_zone(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.patch(
                 "/api/zones/z1",
                 json={
@@ -406,7 +421,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["status"], "disabled")
-        self.assertEqual(payload["visual_end"], "2026-01-01T00:15:00+00:00")
+        self.assertEqual(payload["visual_end"], "2026-01-01T01:00:00+00:00")
 
     def test_create_manual_zone_persists_human_entity_and_audit_trail(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -416,18 +431,18 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_candles(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.post(
                 "/api/zones",
                 json={
                     "symbol": "XAUUSD",
-                    "timeframe": "M15",
+                    "timeframe": "H1",
                     "zone_type": "fvg",
                     "direction": "bullish",
                     "price_low": 1996.5,
                     "price_high": 1999.5,
                     "visual_start": "2026-01-01T00:00:00+00:00",
-                    "visual_end": "2026-01-01T00:15:00+00:00",
+                    "visual_end": "2026-01-01T01:00:00+00:00",
                     "weight": 0.72,
                     "confidence": 0.9,
                     "reason": "manual replay note",
@@ -459,7 +474,7 @@ class ApiTest(unittest.TestCase):
             seed_candles(db_path)
             seed_zone(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.delete("/api/zones/z1?reason=manual%20delete")
             chart_response = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=2")
 
@@ -470,7 +485,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["status"], "deleted")
-        self.assertEqual(payload["visual_end"], "2026-01-01T00:15:00+00:00")
+        self.assertEqual(payload["visual_end"], "2027-01-01T00:00:00+00:00")
         self.assertEqual(payload["source"], "mixed")
         self.assertEqual(override_count, 1)
         self.assertEqual(zone["status"], "deleted")
@@ -485,7 +500,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_context(db_path)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.patch(
                 "/api/contexts/H1/bias",
                 json={
@@ -520,7 +535,7 @@ class ApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             seed_context(db_path, source="human", effective_value="bullish", valid_until=None)
 
-            client = TestClient(create_app(config_path))
+            client = authenticated_test_client(root, config_path)
             response = client.patch(
                 "/api/contexts/H1/bias",
                 json={

@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 
 from semi_bot_trading.chart import load_chart_contexts
 from semi_bot_trading.config import load_config

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from datetime import timezone as _timezone
 UTC = _timezone.utc
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 from unittest.mock import patch
 
 from semi_bot_trading.candles import Candle, upsert_candles
@@ -244,9 +244,7 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertIn("Macro trend down blocks Zone Reaction V2 long.", message)
 
     def test_runtime_env_reads_dotenv_without_overwriting_process_env(self) -> None:
-        previous_symbol = os.environ.get("MT5_SYMBOL")
-        os.environ["MT5_SYMBOL"] = "XAUUSDcustom"
-        try:
+        with patch.dict(os.environ, {"MT5_SYMBOL": "XAUUSDcustom"}, clear=True):
             with TemporaryDirectory() as temp_dir:
                 env_path = Path(temp_dir) / ".env"
                 env_path.write_text(
@@ -265,24 +263,18 @@ class LiveIntegrationTest(unittest.TestCase):
                         ]
                     )
                 )
-
                 env = load_runtime_env(env_path)
 
-            self.assertEqual(123, env.mt5_login)
-            self.assertEqual("secret", env.mt5_password)
-            self.assertEqual("Exness-Test", env.mt5_server)
-            self.assertEqual(r"C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe", env.mt5_path)
-            self.assertEqual("XAUUSDcustom", env.mt5_symbol)
-            self.assertTrue(env.execution_enabled)
-            self.assertEqual(0.02, env.live_order_volume)
-            self.assertFalse(env.live_sync_candles)
-            self.assertFalse(env.live_run_detectors)
-            self.assertTrue(env.live_evaluate_intrabar)
-        finally:
-            if previous_symbol is None:
-                os.environ.pop("MT5_SYMBOL", None)
-            else:
-                os.environ["MT5_SYMBOL"] = previous_symbol
+        self.assertEqual(123, env.mt5_login)
+        self.assertEqual("secret", env.mt5_password)
+        self.assertEqual("Exness-Test", env.mt5_server)
+        self.assertEqual(r"C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe", env.mt5_path)
+        self.assertEqual("XAUUSDcustom", env.mt5_symbol)
+        self.assertTrue(env.execution_enabled)
+        self.assertEqual(0.02, env.live_order_volume)
+        self.assertFalse(env.live_sync_candles)
+        self.assertFalse(env.live_run_detectors)
+        self.assertTrue(env.live_evaluate_intrabar)
 
     def test_live_worker_evaluates_setups_even_without_new_closed_candle(self) -> None:
         with TemporaryDirectory() as temp_dir:

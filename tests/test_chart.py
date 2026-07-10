@@ -4,7 +4,7 @@ import json
 import unittest
 from contextlib import closing
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 

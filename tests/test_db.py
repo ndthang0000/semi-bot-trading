@@ -5,7 +5,7 @@ import unittest
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 
 from semi_bot_trading.db import connect, init_db
 

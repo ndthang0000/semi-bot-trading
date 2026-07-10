@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from contextlib import closing
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.spread import latest_spread_snapshot, record_spread_snapshot, spread_summary

@@ -82,6 +82,7 @@ def point(point_type: str, direction: str, time: str = "00:45", point_id: str = 
         "id": point_id,
         "time": f"2026-01-01T{time}:00+00:00",
         "type": point_type,
+        "point_type": point_type,
         "price": 101,
         "detector": "price_action_v1",
         "status": "confirmed",
@@ -688,10 +689,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_human_breakout_mode_bypasses_macro_for_support_short(self) -> None:
         context_candles = [
-            candle("01:00", 104, 106, 102, 105),
-            candle("02:00", 105, 107, 103, 104),
-            candle("03:00", 104, 105, 101, 102),
-            candle("04:00", 102, 103, 96, 97.2),
+            candle("12:00", 104, 106, 102, 105),
+            candle("13:00", 105, 107, 103, 104),
+            candle("14:00", 104, 105, 101, 102),
+            candle("15:00", 102, 103, 96, 97.2),
         ]
         support = zone("support", "bullish", 100, 102)
         support["metadata"] = {"trade_modes": ["breakout"]}
@@ -1477,10 +1478,10 @@ class StrategyTest(unittest.TestCase):
         from dataclasses import replace
 
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1517,10 +1518,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_small_body_waits_for_retest(self) -> None:
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 102.2, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 102.2, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1544,10 +1545,10 @@ class StrategyTest(unittest.TestCase):
         from dataclasses import replace
 
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1623,10 +1624,10 @@ class StrategyTest(unittest.TestCase):
         from dataclasses import replace
 
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1649,10 +1650,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_requires_breakout_trade_mode(self) -> None:
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
 
         candidates = build_setup_candidates(
@@ -1670,10 +1671,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_long_resistance_near_breakout_is_eligible(self) -> None:
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["metadata"] = {"trade_modes": ["breakout"]}
@@ -1699,10 +1700,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_short_support_near_breakout_is_eligible(self) -> None:
         context_candles = [
-            candle("01:00", 106, 108, 104, 105),
-            candle("02:00", 105, 107, 103, 104),
-            candle("03:00", 104, 106, 102, 103),
-            candle("04:00", 103, 104, 96, 98.5),
+            candle("12:00", 106, 108, 104, 105),
+            candle("13:00", 105, 107, 103, 104),
+            candle("14:00", 104, 106, 102, 103),
+            candle("15:00", 103, 104, 96, 98.5),
         ]
         support = zone("support", "bullish", 100, 102)
         support["metadata"] = {"trade_modes": ["breakout"]}
@@ -1802,10 +1803,10 @@ class StrategyTest(unittest.TestCase):
 
     def test_sr_breakout_v1_human_breakout_allows_unknown_macro(self) -> None:
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["source"] = "human"
@@ -1830,10 +1831,10 @@ class StrategyTest(unittest.TestCase):
         # Spec change 2026-06-12: human-set trade modes bypass every context
         # gate including macro trend; direction comes from the zone side only.
         context_candles = [
-            candle("01:00", 96, 98, 94, 97),
-            candle("02:00", 97, 99, 95, 98),
-            candle("03:00", 98, 100, 96, 99),
-            candle("04:00", 99, 104, 98, 102.8),
+            candle("12:00", 96, 98, 94, 97),
+            candle("13:00", 97, 99, 95, 98),
+            candle("14:00", 98, 100, 96, 99),
+            candle("15:00", 99, 104, 98, 102.8),
         ]
         resistance = zone("resistance", "bearish", 100, 102)
         resistance["source"] = "human"

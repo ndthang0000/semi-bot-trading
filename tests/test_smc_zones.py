@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.smc_zones import (

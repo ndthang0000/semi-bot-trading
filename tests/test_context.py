@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tests.helpers import TemporaryDirectory
 
 from semi_bot_trading.context import detect_bias_context, detect_regime_context, replace_active_context, score_macro_trend
 from semi_bot_trading.db import connect, init_db
