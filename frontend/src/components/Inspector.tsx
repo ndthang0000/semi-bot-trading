@@ -461,8 +461,8 @@ function ZonesTab({
   showToast: (kind: ToastMessage["kind"], text: string) => void;
 }) {
   return (
-    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
-      <section className="min-h-0 border-b border-ink-700 p-4">
+    <div className="min-h-0 overflow-y-auto overscroll-contain">
+      <section className="border-b border-ink-700 p-4">
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
           <MousePointer2 size={14} />
           Selected
@@ -484,7 +484,7 @@ function ZonesTab({
         )}
       </section>
 
-      <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
+      <section className="p-4">
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
           <Layers size={14} />
           Zones
@@ -494,7 +494,7 @@ function ZonesTab({
             </span>
           ) : null}
         </div>
-        <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
+        <div className="pr-1">
           <div className="grid gap-2">
             {visibleZones.map((zone) => (
               <button

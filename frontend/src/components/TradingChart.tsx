@@ -56,6 +56,7 @@ type SwingDot = StructureDot & {
 
 type TradeBox = {
   trade: TradeOrder;
+  trades: TradeOrder[];
   x: number;
   y: number;
   width: number;
@@ -303,10 +304,11 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       ({ x, y }) => x >= -12 && x <= plotWidth + 12 && y >= -12 && y <= height + 12,
     );
     const visibleSwings = allSwings.filter(({ x, y }) => x >= -12 && x <= plotWidth + 12 && y >= -12 && y <= height + 12);
-    const trades = currentPayload.layers.trades.flatMap((trade) => {
+    const tradeBoxes = currentPayload.layers.trades.flatMap((trade) => {
       const box = tradeToBox(trade, currentPayload.range.start, currentPayload.range.end, candleDataRef.current, plotWidth, height, timeScale, series);
       return box ? [box] : [];
     });
+    const trades = groupTradeBoxesByCandidate(tradeBoxes);
     const visibleM15Triggers = filterVisibleM15Triggers(currentPayload.layers.m15_triggers ?? []);
     const m15Triggers = visibleM15Triggers.flatMap((trigger) => {
       const x = interpolateChartX(timeScale, toUnixTime(trigger.time), candleDataRef.current);
@@ -1225,11 +1227,13 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         {tradeBoxes.map((box) => {
           const trade = box.trade;
           const isLong = trade.direction === "long" || trade.side === "buy";
-          const isSelected = selected?.kind === "trade" && selected.entity.id === trade.id;
-          const partialPlan = readObject(trade.metadata.partial_take_profit);
-          const partialDone = partialPlan.done === true;
-          const breakevenApplied = partialPlan.breakeven_applied === true;
-          const label = `${trade.playbook} ${trade.direction} ${trade.status} ${trade.pnl_r?.toFixed(2) ?? "--"}R`;
+          const isSelected = selected?.kind === "trade" && box.trades.some((item) => item.id === selected.entity.id);
+          const partialDone = box.trades.some((item) => readObject(item.metadata.partial_take_profit).done === true);
+          const breakevenApplied = box.trades.some((item) => readObject(item.metadata.partial_take_profit).breakeven_applied === true);
+          const isGroup = box.trades.length > 1;
+          const label = isGroup
+            ? `${trade.playbook} ${trade.direction} ${box.trades.length} accounts: ${tradeGroupSummary(box.trades)}`
+            : `${trade.playbook} ${trade.direction} ${trade.status} ${trade.pnl_r?.toFixed(2) ?? "--"}R`;
           return (
             <button
               key={trade.id}
@@ -1280,8 +1284,13 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
                     : "border-fuchsia-200/90 bg-fuchsia-950/95 text-fuchsia-100"
                 }`}
               >
-                {trade.pnl_r?.toFixed(2) ?? "--"}R
+                {isGroup ? `${box.trades.length} acct` : `${trade.pnl_r?.toFixed(2) ?? "--"}R`}
               </span>
+              {isGroup ? (
+                <span className="absolute right-1 top-1 max-w-[calc(100%-4.5rem)] truncate rounded border border-slate-200/70 bg-ink-950/95 px-1 py-0.5 text-[9px] font-black text-slate-100 shadow-lg">
+                  {compactTradeGroupSummary(box.trades)}
+                </span>
+              ) : null}
               {partialDone ? (
                 <span className="absolute bottom-1 left-1 rounded border border-emerald-200/80 bg-emerald-950/95 px-1 py-0.5 text-[9px] font-black text-emerald-100 shadow-lg">
                   {breakevenApplied ? "P/BE" : "P"}
@@ -1532,6 +1541,7 @@ function tradeToBox(
   const bottom = Math.max(profit.y + profit.height, loss.y + loss.height);
   return {
     trade,
+    trades: [trade],
     x,
     y,
     width: Math.max(2, right - x),
@@ -1539,6 +1549,101 @@ function tradeToBox(
     profit,
     loss,
   };
+}
+
+function groupTradeBoxesByCandidate(boxes: TradeBox[]): TradeBox[] {
+  const grouped = new Map<string, TradeBox[]>();
+  const result: TradeBox[] = [];
+
+  boxes.forEach((box) => {
+    const candidateId = tradeCandidateId(box.trade);
+    if (!candidateId) {
+      result.push(box);
+      return;
+    }
+    const group = grouped.get(candidateId) ?? [];
+    group.push(box);
+    grouped.set(candidateId, group);
+  });
+
+  for (const group of grouped.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+    } else {
+      result.push(mergeTradeBoxGroup(group));
+    }
+  }
+
+  return result.sort((a, b) => {
+    const aTime = Date.parse(a.trade.opened_at ?? "") || 0;
+    const bTime = Date.parse(b.trade.opened_at ?? "") || 0;
+    return aTime - bTime;
+  });
+}
+
+function mergeTradeBoxGroup(group: TradeBox[]): TradeBox {
+  const sorted = [...group].sort((a, b) => {
+    const aTime = Date.parse(a.trade.opened_at ?? "") || 0;
+    const bTime = Date.parse(b.trade.opened_at ?? "") || 0;
+    return aTime - bTime;
+  });
+  const representative = sorted[0];
+  const x = Math.min(...sorted.map((box) => box.x));
+  const y = Math.min(...sorted.map((box) => box.y));
+  const right = Math.max(...sorted.map((box) => box.x + box.width));
+  const bottom = Math.max(...sorted.map((box) => box.y + box.height));
+
+  return {
+    trade: representative.trade,
+    trades: sorted.map((box) => box.trade),
+    x,
+    y,
+    width: Math.max(2, right - x),
+    height: Math.max(2, bottom - y),
+    profit: mergeBoxRects(sorted.map((box) => box.profit)),
+    loss: mergeBoxRects(sorted.map((box) => box.loss)),
+  };
+}
+
+function mergeBoxRects(rects: BoxRect[]): BoxRect {
+  const x = Math.min(...rects.map((rect) => rect.x));
+  const y = Math.min(...rects.map((rect) => rect.y));
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
+  return {
+    x,
+    y,
+    width: Math.max(2, right - x),
+    height: Math.max(2, bottom - y),
+  };
+}
+
+function tradeCandidateId(trade: TradeOrder): string | null {
+  const direct = trade.metadata.candidate_id;
+  if (typeof direct === "string" && direct.length > 0) return direct;
+  const candidateMetadata = readObject(trade.metadata.candidate_metadata);
+  const nested = candidateMetadata.id;
+  return typeof nested === "string" && nested.length > 0 ? nested : null;
+}
+
+function tradeGroupSummary(trades: TradeOrder[]): string {
+  return trades.map((trade) => `${trade.account_label}: ${formatTradeR(trade.pnl_r)} ${trade.status}`).join("; ");
+}
+
+function compactTradeGroupSummary(trades: TradeOrder[]): string {
+  return trades.map((trade) => `${shortAccountLabel(trade.account_label)} ${formatTradeR(trade.pnl_r)}`).join(" / ");
+}
+
+function shortAccountLabel(label: string): string {
+  const normalized = label.trim();
+  if (/exness/i.test(normalized)) return "Exness";
+  if (/ftmo/i.test(normalized)) return "FTMO";
+  return normalized.split(/\s+/).slice(0, 2).join(" ") || "Account";
+}
+
+function formatTradeR(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "--R";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`;
 }
 
 function chartPlotWidth(chart: IChartApi, containerWidth: number): number {
