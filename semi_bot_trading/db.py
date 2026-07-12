@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS trade_reviews (
     mistake_tags_json TEXT NOT NULL DEFAULT '[]',
     should_trade_again TEXT NOT NULL DEFAULT 'unknown',
     comment TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     reviewer TEXT NOT NULL DEFAULT 'human',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -197,6 +198,23 @@ CREATE TABLE IF NOT EXISTS trade_reviews (
 
 CREATE INDEX IF NOT EXISTS idx_trade_reviews_lookup
 ON trade_reviews(verdict, updated_at);
+
+CREATE TABLE IF NOT EXISTS trade_review_attachments (
+    id TEXT PRIMARY KEY,
+    trade_order_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    caption TEXT NOT NULL DEFAULT '',
+    chart_symbol TEXT,
+    chart_timeframe TEXT,
+    chart_start TEXT,
+    chart_end TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(trade_order_id) REFERENCES trade_orders(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_review_attachments_lookup
+ON trade_review_attachments(trade_order_id, created_at);
 
 CREATE TABLE IF NOT EXISTS alert_events (
     id TEXT PRIMARY KEY,
@@ -381,6 +399,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "execution_requests", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "trade_orders", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "trade_orders", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+    ensure_column(conn, "trade_reviews", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)

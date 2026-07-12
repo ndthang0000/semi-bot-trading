@@ -90,6 +90,38 @@ def normalize_trade_review_request(request: TradeReviewRequest) -> dict[str, Any
     if len(comment) > 5000:
         raise HTTPException(status_code=422, detail="comment is too long")
 
+    strategy_review = normalize_structured_review(
+        request.strategy_review,
+        allowed_fields={
+            "setup_grade",
+            "setup_validity",
+            "zone_quality",
+            "entry_quality",
+            "sl_quality",
+            "tp_quality",
+            "market_context",
+            "should_bot_trade_again",
+            "strategy_tags",
+        },
+        tag_field="strategy_tags",
+        score_fields=set(),
+    )
+    operator_review = normalize_structured_review(
+        request.operator_review,
+        allowed_fields={
+            "operator_state",
+            "operator_action",
+            "intervention_result",
+            "followed_plan",
+            "emotion_score",
+            "confidence_before",
+            "confidence_after",
+            "operator_tags",
+        },
+        tag_field="operator_tags",
+        score_fields={"emotion_score", "confidence_before", "confidence_after"},
+    )
+
     return {
         "grade": grade,
         "verdict": verdict,
@@ -97,11 +129,75 @@ def normalize_trade_review_request(request: TradeReviewRequest) -> dict[str, Any
         "should_trade_again": should_trade_again,
         "comment": comment,
         "reviewer": reviewer,
+        "metadata": {
+            "strategy_review": strategy_review,
+            "operator_review": operator_review,
+        },
     }
+
+
+def normalize_structured_review(
+    value: Any,
+    *,
+    allowed_fields: set[str],
+    tag_field: str,
+    score_fields: set[str],
+) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="structured review must be an object")
+    unknown = sorted(set(value) - allowed_fields)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown review field(s): {', '.join(unknown)}")
+
+    result: dict[str, Any] = {}
+    for key, raw in value.items():
+        if raw in (None, "", []):
+            continue
+        if key == tag_field:
+            if not isinstance(raw, list):
+                raise HTTPException(status_code=422, detail=f"{tag_field} must be a list")
+            result[key] = normalize_review_tags(raw, tag_field)
+            continue
+        if key in score_fields:
+            try:
+                score = int(raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"{key} must be an integer from 1 to 5") from None
+            if score < 1 or score > 5:
+                raise HTTPException(status_code=422, detail=f"{key} must be an integer from 1 to 5")
+            result[key] = score
+            continue
+        if not isinstance(raw, str):
+            raise HTTPException(status_code=422, detail=f"{key} must be a string")
+        text = raw.strip().lower()
+        if len(text) > 80:
+            raise HTTPException(status_code=422, detail=f"{key} is too long")
+        if text:
+            result[key] = text
+    return result
+
+
+def normalize_review_tags(raw_tags: list[Any], field_name: str) -> list[str]:
+    tags: list[str] = []
+    seen_tags: set[str] = set()
+    for raw_tag in raw_tags:
+        if not isinstance(raw_tag, str):
+            raise HTTPException(status_code=422, detail=f"{field_name} entries must be strings")
+        tag = raw_tag.strip().lower()
+        if not tag or tag in seen_tags:
+            continue
+        seen_tags.add(tag)
+        tags.append(tag)
+    if len(tags) > 30:
+        raise HTTPException(status_code=422, detail=f"{field_name} supports at most 30 tags")
+    return tags
 
 
 def trade_review_row_to_api(row: Any | None, trade_order_id: str) -> dict[str, Any]:
     if row is None:
+        metadata = {"strategy_review": {}, "operator_review": {}}
         return {
             "id": None,
             "trade_order_id": trade_order_id,
@@ -113,7 +209,16 @@ def trade_review_row_to_api(row: Any | None, trade_order_id: str) -> dict[str, A
             "reviewer": "human",
             "created_at": None,
             "updated_at": None,
+            "metadata": metadata,
+            "strategy_review": metadata["strategy_review"],
+            "operator_review": metadata["operator_review"],
         }
+    metadata = json_loads(row["metadata_json"], {}) if "metadata_json" in row.keys() else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    strategy_review = metadata.get("strategy_review") if isinstance(metadata.get("strategy_review"), dict) else {}
+    operator_review = metadata.get("operator_review") if isinstance(metadata.get("operator_review"), dict) else {}
+    metadata = {**metadata, "strategy_review": strategy_review, "operator_review": operator_review}
     return {
         "id": row["id"],
         "trade_order_id": row["trade_order_id"],
@@ -125,6 +230,9 @@ def trade_review_row_to_api(row: Any | None, trade_order_id: str) -> dict[str, A
         "reviewer": row["reviewer"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "metadata": metadata,
+        "strategy_review": strategy_review,
+        "operator_review": operator_review,
     }
 
 

@@ -8,6 +8,10 @@ import type {
   Timeframe,
   TradeHistoryResponse,
   TradeReview,
+  TradeReviewAttachment,
+  JournalPatternsResponse,
+  StrategyReview,
+  OperatorReview,
   ZoneTradeMode,
 } from "../types";
 import { authFetch } from "./auth";
@@ -116,6 +120,8 @@ export type TradeReviewInput = {
   should_trade_again: string;
   comment: string;
   reviewer?: string;
+  strategy_review?: StrategyReview;
+  operator_review?: OperatorReview;
 };
 
 export async function updateTradeReview(tradeOrderId: string, input: TradeReviewInput): Promise<TradeReview> {
@@ -129,6 +135,61 @@ export async function updateTradeReview(tradeOrderId: string, input: TradeReview
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Trade review failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export type TradeReviewAttachmentInput = {
+  kind: "entry" | "exit" | "review" | "manual";
+  image_data: string;
+  caption?: string;
+  chart_symbol?: string | null;
+  chart_timeframe?: string | null;
+  chart_start?: string | null;
+  chart_end?: string | null;
+};
+
+export async function fetchTradeReviewAttachments(tradeOrderId: string): Promise<TradeReviewAttachment[]> {
+  const response = await authFetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/attachments`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Trade attachments failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function createTradeReviewAttachment(
+  tradeOrderId: string,
+  input: TradeReviewAttachmentInput,
+): Promise<TradeReviewAttachment> {
+  const response = await authFetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/attachments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Create attachment failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deleteTradeReviewAttachment(tradeOrderId: string, attachmentId: string): Promise<void> {
+  const response = await authFetch(
+    `/api/trades/${encodeURIComponent(tradeOrderId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Delete attachment failed with ${response.status}`);
+  }
+}
+
+export async function fetchJournalPatterns(backtest = false): Promise<JournalPatternsResponse> {
+  const response = await authFetch(`/api/journal/patterns?backtest=${String(backtest)}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Journal patterns failed with ${response.status}`);
   }
   return response.json();
 }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -64,3 +66,15 @@ class TradeReviewRequest(BaseModel):
     should_trade_again: str = "unknown"
     comment: str = ""
     reviewer: str = "human"
+    strategy_review: dict[str, Any] = Field(default_factory=dict)
+    operator_review: dict[str, Any] = Field(default_factory=dict)
+
+
+class TradeReviewAttachmentRequest(BaseModel):
+    kind: str = "review"
+    image_data: str
+    caption: str = ""
+    chart_symbol: str | None = None
+    chart_timeframe: str | None = None
+    chart_start: str | None = None
+    chart_end: str | None = None

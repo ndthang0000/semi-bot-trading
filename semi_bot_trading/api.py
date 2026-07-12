@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import uuid
@@ -8,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .api_models import (
@@ -15,6 +18,7 @@ from .api_models import (
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
+    TradeReviewAttachmentRequest,
     TradeReviewRequest,
     ZoneCreateRequest,
     ZoneOverrideRequest,
@@ -54,6 +58,8 @@ from .spread import spread_summary
 
 
 MAX_CHART_LIMIT = 15_000
+MAX_REVIEW_ATTACHMENT_BYTES = 5 * 1024 * 1024
+REVIEW_ATTACHMENT_KINDS = {"entry", "exit", "review", "manual"}
 
 _http_bearer = HTTPBearer(auto_error=False)
 
@@ -494,6 +500,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        trade_reviews.mistake_tags_json AS review_mistake_tags_json,
                        trade_reviews.should_trade_again AS review_should_trade_again,
                        trade_reviews.comment AS review_comment,
+                       trade_reviews.metadata_json AS review_metadata_json,
                        trade_reviews.reviewer AS review_reviewer,
                        trade_reviews.created_at AS review_created_at,
                        trade_reviews.updated_at AS review_updated_at,
@@ -564,15 +571,16 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 """
                 INSERT INTO trade_reviews (
                     id, trade_order_id, grade, verdict, mistake_tags_json,
-                    should_trade_again, comment, reviewer, created_at, updated_at
+                    should_trade_again, comment, metadata_json, reviewer, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trade_order_id) DO UPDATE SET
                     grade = excluded.grade,
                     verdict = excluded.verdict,
                     mistake_tags_json = excluded.mistake_tags_json,
                     should_trade_again = excluded.should_trade_again,
                     comment = excluded.comment,
+                    metadata_json = excluded.metadata_json,
                     reviewer = excluded.reviewer,
                     updated_at = excluded.updated_at
                 """,
@@ -584,6 +592,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     json.dumps(normalized["mistake_tags"], ensure_ascii=False),
                     normalized["should_trade_again"],
                     normalized["comment"],
+                    json.dumps(normalized["metadata"], ensure_ascii=False, sort_keys=True),
                     normalized["reviewer"],
                     created_at,
                     now,
@@ -599,6 +608,141 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             ).fetchone()
             conn.commit()
         return trade_review_row_to_api(row, trade_order_id)
+
+    @app.get("/api/trades/{trade_order_id}/attachments")
+    def list_trade_review_attachments(trade_order_id: str, _: str = Depends(require_auth)) -> list[dict[str, Any]]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            ensure_trade_exists(conn, trade_order_id)
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM trade_review_attachments
+                WHERE trade_order_id = ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (trade_order_id,),
+            ).fetchall()
+        return [attachment_row_to_api(row) for row in rows]
+
+    @app.post("/api/trades/{trade_order_id}/attachments")
+    def create_trade_review_attachment(
+        trade_order_id: str,
+        request: TradeReviewAttachmentRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        kind = request.kind.strip().lower()
+        if kind not in REVIEW_ATTACHMENT_KINDS:
+            raise HTTPException(status_code=422, detail=f"kind must be one of: {', '.join(sorted(REVIEW_ATTACHMENT_KINDS))}")
+        image_bytes = decode_review_png(request.image_data)
+        caption = request.caption.strip()
+        if len(caption) > 500:
+            raise HTTPException(status_code=422, detail="caption is too long")
+
+        now = utc_now_iso()
+        attachment_id = f"trade-attachment-{uuid.uuid4()}"
+        relative_path = Path("var") / "journal-screenshots" / safe_segment(trade_order_id) / f"{attachment_id}.png"
+        full_path = safe_review_attachment_path(str(relative_path))
+        with connect(config.database) as conn:
+            init_db(conn)
+            ensure_trade_exists(conn, trade_order_id)
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_bytes(image_bytes)
+            conn.execute(
+                """
+                INSERT INTO trade_review_attachments (
+                    id, trade_order_id, kind, file_path, caption,
+                    chart_symbol, chart_timeframe, chart_start, chart_end, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment_id,
+                    trade_order_id,
+                    kind,
+                    str(relative_path),
+                    caption,
+                    clean_optional_text(request.chart_symbol, 40),
+                    clean_optional_text(request.chart_timeframe, 20),
+                    clean_optional_text(request.chart_start, 80),
+                    clean_optional_text(request.chart_end, 80),
+                    now,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT *
+                FROM trade_review_attachments
+                WHERE id = ?
+                """,
+                (attachment_id,),
+            ).fetchone()
+            conn.commit()
+        return attachment_row_to_api(row)
+
+    @app.get("/api/trades/{trade_order_id}/attachments/{attachment_id}/file")
+    def get_trade_review_attachment_file(trade_order_id: str, attachment_id: str, _: str = Depends(require_auth)) -> FileResponse:
+        with connect(config.database) as conn:
+            init_db(conn)
+            ensure_trade_exists(conn, trade_order_id)
+            row = conn.execute(
+                """
+                SELECT *
+                FROM trade_review_attachments
+                WHERE id = ? AND trade_order_id = ?
+                """,
+                (attachment_id, trade_order_id),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        path = safe_review_attachment_path(row["file_path"])
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Attachment file not found")
+        return FileResponse(path, media_type="image/png", filename=f"{attachment_id}.png")
+
+    @app.delete("/api/trades/{trade_order_id}/attachments/{attachment_id}")
+    def delete_trade_review_attachment(trade_order_id: str, attachment_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            ensure_trade_exists(conn, trade_order_id)
+            row = conn.execute(
+                """
+                SELECT *
+                FROM trade_review_attachments
+                WHERE id = ? AND trade_order_id = ?
+                """,
+                (attachment_id, trade_order_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+            conn.execute("DELETE FROM trade_review_attachments WHERE id = ?", (attachment_id,))
+            conn.commit()
+        path = safe_review_attachment_path(row["file_path"])
+        if path.exists():
+            path.unlink()
+        return {"deleted": True, "id": attachment_id}
+
+    @app.get("/api/journal/patterns")
+    def journal_patterns(backtest: bool | None = Query(default=False), _: str = Depends(require_auth)) -> dict[str, Any]:
+        where = ["trade_orders.closed_at IS NOT NULL", "trade_orders.pnl_r IS NOT NULL"]
+        params: list[Any] = []
+        if backtest is True:
+            where.append("trade_orders.source = 'backtest'")
+        elif backtest is False:
+            where.append("trade_orders.source = 'live'")
+        with connect(config.database) as conn:
+            init_db(conn)
+            rows = conn.execute(
+                f"""
+                SELECT trade_orders.pnl_r, trade_orders.metadata_json,
+                       trade_reviews.metadata_json AS review_metadata_json
+                FROM trade_orders
+                LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
+                WHERE {" AND ".join(where)}
+                """,
+                params,
+            ).fetchall()
+        return build_journal_patterns(rows)
 
     @app.patch("/api/zones/{zone_id}")
     def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
@@ -1146,6 +1290,142 @@ def ensure_trade_exists(conn: Any, trade_order_id: str) -> None:
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Trade order not found")
+
+
+def decode_review_png(image_data: str) -> bytes:
+    value = image_data.strip()
+    if value.startswith("data:"):
+        header, separator, payload = value.partition(",")
+        if separator != "," or ";base64" not in header or not header.startswith("data:image/png"):
+            raise HTTPException(status_code=422, detail="attachment must be a PNG data URL")
+        value = payload
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=422, detail="attachment image_data is not valid base64") from None
+    if not decoded:
+        raise HTTPException(status_code=422, detail="attachment image_data is empty")
+    if len(decoded) > MAX_REVIEW_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="attachment exceeds 5MB")
+    if not decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(status_code=422, detail="attachment must be a PNG image")
+    return decoded
+
+
+def safe_segment(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value.strip())
+    return safe[:120] or "unknown"
+
+
+def safe_review_attachment_path(file_path: str) -> Path:
+    root = (Path.cwd() / "var" / "journal-screenshots").resolve()
+    path = (Path.cwd() / file_path).resolve()
+    if path != root and root not in path.parents:
+        raise HTTPException(status_code=400, detail="Invalid attachment path")
+    return path
+
+
+def attachment_row_to_api(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "trade_order_id": row["trade_order_id"],
+        "kind": row["kind"],
+        "caption": row["caption"] or "",
+        "chart_symbol": row["chart_symbol"],
+        "chart_timeframe": row["chart_timeframe"],
+        "chart_start": row["chart_start"],
+        "chart_end": row["chart_end"],
+        "created_at": row["created_at"],
+        "file_url": f"/api/trades/{row['trade_order_id']}/attachments/{row['id']}/file",
+    }
+
+
+def clean_optional_text(value: str | None, max_length: int) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
+
+
+def build_journal_patterns(rows: list[Any]) -> dict[str, Any]:
+    buckets: dict[str, dict[str, dict[str, Any]]] = {
+        "strategy_tags": {},
+        "operator_action": {},
+        "operator_state": {},
+        "followed_plan": {},
+        "zone_type": {},
+        "reaction_v2": {},
+        "stop_source": {},
+    }
+
+    for row in rows:
+        pnl_r = float(row["pnl_r"])
+        trade_metadata = json_loads(row["metadata_json"], {})
+        review_metadata = json_loads(row["review_metadata_json"], {}) if row["review_metadata_json"] else {}
+        if not isinstance(trade_metadata, dict):
+            trade_metadata = {}
+        if not isinstance(review_metadata, dict):
+            review_metadata = {}
+        strategy_review = review_metadata.get("strategy_review") if isinstance(review_metadata.get("strategy_review"), dict) else {}
+        operator_review = review_metadata.get("operator_review") if isinstance(review_metadata.get("operator_review"), dict) else {}
+
+        strategy_tags = strategy_review.get("strategy_tags") if isinstance(strategy_review.get("strategy_tags"), list) else []
+        for tag in strategy_tags:
+            add_pattern_bucket(buckets["strategy_tags"], str(tag), pnl_r)
+        add_pattern_bucket(buckets["operator_action"], string_or_unknown(operator_review.get("operator_action")), pnl_r)
+        add_pattern_bucket(buckets["operator_state"], string_or_unknown(operator_review.get("operator_state")), pnl_r)
+        add_pattern_bucket(buckets["followed_plan"], string_or_unknown(operator_review.get("followed_plan")), pnl_r)
+        add_pattern_bucket(buckets["zone_type"], string_or_unknown(metadata_lookup(trade_metadata, "zone_type")), pnl_r)
+        add_pattern_bucket(buckets["reaction_v2"], string_or_unknown(metadata_lookup(trade_metadata, "zone_reaction_state")), pnl_r)
+        add_pattern_bucket(buckets["stop_source"], string_or_unknown(metadata_lookup(trade_metadata, "stop_source")), pnl_r)
+
+    return {
+        "groups": {
+            name: [finalize_pattern_bucket(key, value) for key, value in sorted(group.items())]
+            for name, group in buckets.items()
+        }
+    }
+
+
+def metadata_lookup(metadata: dict[str, Any], key: str) -> Any:
+    if key in metadata:
+        return metadata.get(key)
+    candidate = metadata.get("candidate_metadata")
+    if isinstance(candidate, dict) and key in candidate:
+        return candidate.get(key)
+    return None
+
+
+def string_or_unknown(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    return "unknown"
+
+
+def add_pattern_bucket(group: dict[str, dict[str, Any]], key: str, pnl_r: float) -> None:
+    bucket = group.setdefault(key, {"trades": 0, "wins": 0, "losses": 0, "total_r": 0.0})
+    bucket["trades"] += 1
+    bucket["total_r"] += pnl_r
+    if pnl_r > 0:
+        bucket["wins"] += 1
+    elif pnl_r < 0:
+        bucket["losses"] += 1
+
+
+def finalize_pattern_bucket(key: str, bucket: dict[str, Any]) -> dict[str, Any]:
+    trades = int(bucket["trades"])
+    total_r = float(bucket["total_r"])
+    return {
+        "key": key,
+        "trades": trades,
+        "wins": int(bucket["wins"]),
+        "losses": int(bucket["losses"]),
+        "total_r": round(total_r, 4),
+        "avg_r": round(total_r / trades, 4) if trades else 0.0,
+        "win_rate": round(int(bucket["wins"]) / trades, 4) if trades else 0.0,
+    }
 
 
 def latest_candle_time(conn: Any, symbol: str, timeframe: str) -> str | None:

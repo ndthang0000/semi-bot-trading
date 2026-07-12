@@ -143,6 +143,59 @@ export type TradeReview = {
   reviewer: string;
   created_at: string | null;
   updated_at: string | null;
+  metadata: Record<string, unknown>;
+  strategy_review: StrategyReview;
+  operator_review: OperatorReview;
+};
+
+export type StrategyReview = {
+  setup_grade?: string;
+  setup_validity?: string;
+  zone_quality?: string;
+  entry_quality?: string;
+  sl_quality?: string;
+  tp_quality?: string;
+  market_context?: string;
+  should_bot_trade_again?: string;
+  strategy_tags?: string[];
+};
+
+export type OperatorReview = {
+  operator_state?: string;
+  operator_action?: string;
+  intervention_result?: string;
+  followed_plan?: string;
+  emotion_score?: number;
+  confidence_before?: number;
+  confidence_after?: number;
+  operator_tags?: string[];
+};
+
+export type TradeReviewAttachment = {
+  id: string;
+  trade_order_id: string;
+  kind: "entry" | "exit" | "review" | "manual";
+  caption: string;
+  chart_symbol: string | null;
+  chart_timeframe: string | null;
+  chart_start: string | null;
+  chart_end: string | null;
+  created_at: string;
+  file_url: string;
+};
+
+export type JournalPatternRow = {
+  key: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  total_r: number;
+  avg_r: number;
+  win_rate: number;
+};
+
+export type JournalPatternsResponse = {
+  groups: Record<string, JournalPatternRow[]>;
 };
 
 export type TradeHistoryResponse = {

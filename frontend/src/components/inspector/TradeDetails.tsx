@@ -1,10 +1,12 @@
-import { useMutation } from "@tanstack/react-query";
-import { Save } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Camera, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { updateTradeReview } from "../../api/chart";
+import { toPng } from "html-to-image";
+import { createTradeReviewAttachment, fetchTradeReviewAttachments, updateTradeReview } from "../../api/chart";
+import { authFetch } from "../../api/auth";
 import { compactTime, price } from "../../lib/time";
 import { useChartStore } from "../../store/chartStore";
-import type { TradeOrder, TradeReview } from "../../types";
+import type { TradeOrder, TradeReview, TradeReviewAttachment } from "../../types";
 
 type ToastKind = "success" | "error";
 
@@ -150,6 +152,7 @@ function TradeReviewEditor({
   onSaved: (review: TradeReview) => void;
   showToast: (kind: ToastKind, text: string) => void;
 }) {
+  const qc = useQueryClient();
   const review = trade.review;
   const [grade, setGrade] = useState(review?.grade ?? "");
   const [verdict, setVerdict] = useState(review?.verdict ?? "unreviewed");
@@ -157,6 +160,11 @@ function TradeReviewEditor({
   const [mistakeTags, setMistakeTags] = useState<Set<string>>(new Set(review?.mistake_tags ?? []));
   const [comment, setComment] = useState(review?.comment ?? "");
   const [error, setError] = useState<string | null>(null);
+  const attachmentsQuery = useQuery({
+    queryKey: ["trade-attachments", trade.id],
+    queryFn: () => fetchTradeReviewAttachments(trade.id),
+    staleTime: 15_000,
+  });
   const mutation = useMutation({
     mutationFn: () =>
       updateTradeReview(trade.id, {
@@ -166,6 +174,8 @@ function TradeReviewEditor({
         should_trade_again: shouldTradeAgain,
         comment,
         reviewer: "human",
+        strategy_review: review?.strategy_review ?? {},
+        operator_review: review?.operator_review ?? {},
       }),
     onSuccess: (savedReview) => {
       setError(null);
@@ -175,6 +185,30 @@ function TradeReviewEditor({
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Could not save trade review.";
       setError(message);
+      showToast("error", message);
+    },
+  });
+  const captureMutation = useMutation({
+    mutationFn: async () => {
+      const node = document.querySelector("[data-chart-capture-root='true']");
+      if (!(node instanceof HTMLElement)) {
+        throw new Error("Chart viewport is not available.");
+      }
+      const imageData = await toPng(node, { cacheBust: true, pixelRatio: 1, backgroundColor: "#080b10" });
+      return createTradeReviewAttachment(trade.id, {
+        kind: "review",
+        image_data: imageData,
+        caption: "Chart review snapshot",
+        chart_symbol: "XAUUSD",
+        chart_timeframe: "H1",
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trade-attachments", trade.id] });
+      showToast("success", "Chart screenshot captured.");
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Could not capture chart.";
       showToast("error", message);
     },
   });
@@ -222,6 +256,26 @@ function TradeReviewEditor({
             <Save size={13} />
             {mutation.isPending ? "Saving" : "Save"}
           </button>
+        </div>
+      </div>
+
+      <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-850/50 p-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Screenshots</div>
+          <button
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-cyan-400/60 bg-cyan-400/15 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={captureMutation.isPending}
+            type="button"
+            onClick={() => captureMutation.mutate()}
+          >
+            <Camera size={13} />
+            {captureMutation.isPending ? "Capturing" : "Capture Chart"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {(attachmentsQuery.data ?? []).slice(0, 4).map((attachment) => (
+            <AttachmentThumb key={attachment.id} attachment={attachment} />
+          ))}
         </div>
       </div>
 
@@ -292,6 +346,20 @@ function TradeReviewEditor({
       </button>
     </div>
   );
+}
+
+function AttachmentThumb({ attachment }: { attachment: TradeReviewAttachment }) {
+  const imageQuery = useQuery({
+    queryKey: ["trade-attachment-image", attachment.id],
+    queryFn: async () => {
+      const response = await authFetch(attachment.file_url);
+      if (!response.ok) throw new Error("Image failed");
+      return URL.createObjectURL(await response.blob());
+    },
+    staleTime: 60_000,
+  });
+  if (!imageQuery.data) return <div className="h-20 rounded bg-ink-800" />;
+  return <img src={imageQuery.data} alt={attachment.caption || "Trade screenshot"} className="h-20 w-full rounded object-cover" />;
 }
 
 function ReviewSelect({

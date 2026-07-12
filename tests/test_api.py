@@ -14,6 +14,12 @@ from semi_bot_trading.auth import create_access_token
 from semi_bot_trading.db import connect, init_db
 
 
+ONE_PIXEL_PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
+
 def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
     env_path = root / ".env"
     secret_key = write_test_env(env_path)
@@ -221,6 +227,18 @@ class ApiTest(unittest.TestCase):
                     "mistake_tags": ["weak_breakout", "weak_breakout", "bad_entry"],
                     "should_trade_again": "conditional",
                     "comment": "Breakout qua zone qua yeu.",
+                    "strategy_review": {
+                        "setup_validity": "weak",
+                        "entry_quality": "late",
+                        "strategy_tags": ["weak_zone", "late_entry", "weak_zone"],
+                    },
+                    "operator_review": {
+                        "operator_state": "calm",
+                        "operator_action": "no_intervention",
+                        "followed_plan": "yes",
+                        "emotion_score": 2,
+                        "operator_tags": ["trusted_bot"],
+                    },
                 },
             )
             history_response = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=5&backtest=true")
@@ -230,11 +248,93 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(review["grade"], "B")
         self.assertEqual(review["verdict"], "should_skip")
         self.assertEqual(review["mistake_tags"], ["weak_breakout", "bad_entry"])
+        self.assertEqual(review["strategy_review"]["setup_validity"], "weak")
+        self.assertEqual(review["strategy_review"]["strategy_tags"], ["weak_zone", "late_entry"])
+        self.assertEqual(review["operator_review"]["operator_action"], "no_intervention")
+        self.assertEqual(review["operator_review"]["emotion_score"], 2)
 
         self.assertEqual(history_response.status_code, 200)
         trade = history_response.json()["trades"][0]
         self.assertEqual(trade["review"]["verdict"], "should_skip")
         self.assertEqual(trade["review"]["comment"], "Breakout qua zone qua yeu.")
+        self.assertEqual(trade["review"]["strategy_review"]["entry_quality"], "late")
+        self.assertEqual(trade["review"]["operator_review"]["followed_plan"], "yes")
+
+    def test_trade_review_attachment_upload_list_file_and_delete(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade(db_path)
+
+            old_cwd = Path.cwd()
+            os.chdir(root)
+            try:
+                client = authenticated_test_client(root, config_path)
+                upload_response = client.post(
+                    "/api/trades/order-1/attachments",
+                    json={
+                        "kind": "review",
+                        "image_data": ONE_PIXEL_PNG_DATA_URL,
+                        "caption": "entry review",
+                        "chart_symbol": "XAUUSD",
+                        "chart_timeframe": "H1",
+                    },
+                )
+                attachment = upload_response.json()
+                list_response = client.get("/api/trades/order-1/attachments")
+                file_response = client.get(f"/api/trades/order-1/attachments/{attachment['id']}/file")
+                delete_response = client.delete(f"/api/trades/order-1/attachments/{attachment['id']}")
+                list_after_delete = client.get("/api/trades/order-1/attachments")
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(upload_response.status_code, 200)
+        self.assertEqual(attachment["kind"], "review")
+        self.assertEqual(attachment["caption"], "entry review")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.json()), 1)
+        self.assertEqual(file_response.status_code, 200)
+        self.assertEqual(file_response.content[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(list_after_delete.json(), [])
+
+    def test_journal_patterns_aggregates_structured_review_and_trade_metadata(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade_filter_data(db_path)
+
+            client = authenticated_test_client(root, config_path)
+            client.put(
+                "/api/trades/order-wide/review",
+                json={
+                    "grade": "A",
+                    "verdict": "good_trade",
+                    "mistake_tags": [],
+                    "should_trade_again": "yes",
+                    "comment": "",
+                    "strategy_review": {"strategy_tags": ["clean_reject"]},
+                    "operator_review": {"operator_action": "no_intervention", "operator_state": "calm", "followed_plan": "yes"},
+                },
+            )
+            response = client.get("/api/journal/patterns?backtest=true")
+
+        self.assertEqual(response.status_code, 200)
+        groups = response.json()["groups"]
+        clean_reject = next(row for row in groups["strategy_tags"] if row["key"] == "clean_reject")
+        support = next(row for row in groups["zone_type"] if row["key"] == "support")
+        no_intervention = next(row for row in groups["operator_action"] if row["key"] == "no_intervention")
+        self.assertEqual(clean_reject["trades"], 1)
+        self.assertEqual(clean_reject["total_r"], 2.0)
+        self.assertEqual(support["trades"], 2)
+        self.assertEqual(support["total_r"], 1.0)
+        self.assertEqual(no_intervention["trades"], 1)
 
     def test_trade_history_supports_zone_reaction_and_sl_size_filters(self) -> None:
         with TemporaryDirectory() as temp_dir:

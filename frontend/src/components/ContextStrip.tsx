@@ -31,6 +31,7 @@ const EXPIRY_PRESETS = [
   { label: "6day", hours: 144 },
   { label: "1week", hours: 168 },
 ];
+const CONTEXT_CARD_CLASS = "h-20 overflow-hidden rounded-md border border-ink-700 bg-ink-900 px-3 py-2";
 
 export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const [editing, setEditing] = useState<ContextType | null>(null);
@@ -78,7 +79,7 @@ function AtrCard({ atr }: { atr: ChartPayload["layers"]["atr"] | undefined }) {
   const period = h1?.period ?? m15?.period ?? 14;
 
   return (
-    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2" title={`Average True Range (${period})`}>
+    <div className={CONTEXT_CARD_CLASS} title={`Average True Range (${period})`}>
       <div className="text-xs text-slate-500">ATR({period})</div>
       <div className="mt-1 grid grid-cols-2 gap-2 text-[11px] leading-tight">
         <div>
@@ -99,7 +100,7 @@ function RsiCard({ rsi }: { rsi: ChartPayload["layers"]["rsi"] | undefined }) {
   const period = h1?.period ?? 14;
 
   return (
-    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2" title={`Relative Strength Index (${period}) and H1 RSI slope`}>
+    <div className={CONTEXT_CARD_CLASS} title={`Relative Strength Index (${period}) and H1 RSI slope`}>
       <div className="text-xs text-slate-500">RSI({period})</div>
       <div className="mt-1 grid grid-cols-3 gap-2 text-[11px] leading-tight">
         <div>
@@ -137,13 +138,13 @@ function BiasCard({
   const changePrefix = priceChange && priceChange.changePercent > 0 ? "+" : "";
 
   return (
-    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2">
+    <div className={CONTEXT_CARD_CLASS}>
       <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
         <span>H1 Bias</span>
         <ContextSourceBadge context={context} />
       </div>
       <div className="mt-1 flex items-end justify-between gap-3">
-        <div className={`text-sm font-semibold leading-tight ${toneClass}`}>{bias}</div>
+        <div className={`min-w-0 truncate text-sm font-semibold leading-tight ${toneClass}`}>{bias}</div>
         <div className="flex items-end gap-2">
           <div className="text-right">
             <div className="text-sm font-semibold leading-tight text-slate-100">
@@ -173,13 +174,13 @@ function MacroTrendCard({ context }: { context: MarketContext | undefined }) {
     momentumAtr !== null ? `${momentumAtr > 0 ? "+" : ""}${momentumAtr.toFixed(1)} ATR${lookbackDays ? ` / ${lookbackDays}d` : ""}` : null;
 
   return (
-    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2" title="Slow H1 momentum gate: up blocks shorts, down blocks longs">
+    <div className={CONTEXT_CARD_CLASS} title="Slow H1 momentum gate: up blocks shorts, down blocks longs">
       <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
         <span>Macro Trend{lookbackDays ? ` (${lookbackDays}d)` : ""}</span>
         <ContextSourceBadge context={context} />
       </div>
       <div className="mt-1 flex items-end justify-between gap-2">
-        <div className={`text-sm font-semibold leading-tight ${toneClass}`}>{value}</div>
+        <div className={`min-w-0 truncate text-sm font-semibold leading-tight ${toneClass}`}>{value}</div>
         {momentumLabel ? <div className="text-[11px] font-semibold leading-tight text-slate-400">{momentumLabel}</div> : null}
       </div>
     </div>
@@ -201,13 +202,13 @@ function ContextCard({
 }) {
   const toneClass = tone === "bullish" ? "text-emerald-300" : tone === "bearish" ? "text-rose-300" : "text-slate-100";
   return (
-    <div className="min-h-14 rounded-md border border-ink-700 bg-ink-900 px-3 py-2">
+    <div className={CONTEXT_CARD_CLASS}>
       <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
         <span>{label}</span>
         <ContextSourceBadge context={context} />
       </div>
-      <div className="mt-1 flex items-end justify-between gap-3">
-        <div className={`text-sm font-semibold leading-tight ${toneClass}`}>{value}</div>
+      <div className="mt-1 flex min-w-0 items-end justify-between gap-3">
+        <div className={`min-w-0 max-h-10 overflow-hidden text-sm font-semibold leading-tight ${toneClass}`} title={value}>{value}</div>
         {onEdit ? (
           <IconButton title={`Edit ${label}`} onClick={onEdit}>
             <Pencil size={13} />

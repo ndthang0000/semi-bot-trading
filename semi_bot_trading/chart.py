@@ -505,6 +505,7 @@ def load_chart_trades(
                trade_reviews.mistake_tags_json AS review_mistake_tags_json,
                trade_reviews.should_trade_again AS review_should_trade_again,
                trade_reviews.comment AS review_comment,
+               trade_reviews.metadata_json AS review_metadata_json,
                trade_reviews.reviewer AS review_reviewer,
                trade_reviews.created_at AS review_created_at,
                trade_reviews.updated_at AS review_updated_at
@@ -612,6 +613,12 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
         "metadata": json_loads(row["metadata_json"], {}),
     }
     if row_has_key(row, "review_id") and row["review_id"] is not None:
+        review_metadata = json_loads(row["review_metadata_json"], {}) if row_has_key(row, "review_metadata_json") else {}
+        if not isinstance(review_metadata, dict):
+            review_metadata = {}
+        strategy_review = review_metadata.get("strategy_review") if isinstance(review_metadata.get("strategy_review"), dict) else {}
+        operator_review = review_metadata.get("operator_review") if isinstance(review_metadata.get("operator_review"), dict) else {}
+        review_metadata = {**review_metadata, "strategy_review": strategy_review, "operator_review": operator_review}
         result["review"] = {
             "id": row["review_id"],
             "trade_order_id": row["id"],
@@ -623,6 +630,9 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
             "reviewer": row["review_reviewer"],
             "created_at": row["review_created_at"],
             "updated_at": row["review_updated_at"],
+            "metadata": review_metadata,
+            "strategy_review": strategy_review,
+            "operator_review": operator_review,
         }
     else:
         result["review"] = None

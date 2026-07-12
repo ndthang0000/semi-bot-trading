@@ -976,6 +976,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
 
   return (
     <div
+      data-chart-capture-root="true"
       className="relative h-full min-h-[540px] overflow-hidden bg-[#080b10]"
       onMouseLeave={() => setPointerY(null)}
       onMouseMove={(event) => {

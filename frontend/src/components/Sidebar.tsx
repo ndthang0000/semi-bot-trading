@@ -13,9 +13,10 @@ const NAV_ITEMS: NavItem[] = [
   { page: "journal", icon: <BookOpen size={18} />, label: "Journal" },
 ];
 
-export function Sidebar() {
+export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
   const activePage = useNavigationStore((s) => s.activePage);
   const setPage = useNavigationStore((s) => s.setPage);
+  const displayedActivePage = reviewLocked ? "journal" : activePage;
 
   return (
     <aside className="flex h-full w-12 flex-col items-center border-r border-ink-700 bg-ink-900 py-3">
@@ -26,14 +27,19 @@ export function Sidebar() {
 
       <nav className="flex flex-1 flex-col items-center gap-1">
         {NAV_ITEMS.map(({ page, icon, label }) => {
-          const isActive = activePage === page;
+          const isActive = displayedActivePage === page;
+          const disabled = reviewLocked && page !== "journal";
           return (
             <button
               key={page}
-              title={label}
-              onClick={() => setPage(page)}
+              title={disabled ? "Weekly review required" : label}
+              disabled={disabled}
+              onClick={() => {
+                if (!disabled) setPage(page);
+              }}
               className={[
                 "group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+                disabled ? "cursor-not-allowed opacity-35" : "",
                 isActive
                   ? "bg-blue-600/20 text-blue-400"
                   : "text-slate-500 hover:bg-ink-700 hover:text-slate-300",
