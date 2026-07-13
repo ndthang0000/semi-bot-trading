@@ -166,10 +166,6 @@ class StrategyConfig:
     zone_reaction_v2_slow_min_bars: int
     zone_reaction_v2_slow_max_bars: int
     zone_reaction_v2_slow_body_max_ratio: float
-    zone_reaction_v2_breakout_min_body_atr: float
-    zone_reaction_v2_breakout_min_close_outside_atr: float
-    zone_reaction_v2_consolidation_breakout_body_atr: float
-    zone_reaction_v2_retest_max_bars: int
     zone_reaction_v2_reject_stop_mode: str
     zone_reaction_v2_rr_minimum: float
     zone_reaction_v2_stop_buffer_atr: float
@@ -412,14 +408,6 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_slow_min_bars=int(zone_reaction_v2.get("slow_min_bars", 3)),
             zone_reaction_v2_slow_max_bars=int(zone_reaction_v2.get("slow_max_bars", 8)),
             zone_reaction_v2_slow_body_max_ratio=float(zone_reaction_v2.get("slow_body_max_ratio", 0.8)),
-            zone_reaction_v2_breakout_min_body_atr=float(zone_reaction_v2.get("breakout_min_body_atr", 0.8)),
-            zone_reaction_v2_breakout_min_close_outside_atr=float(
-                zone_reaction_v2.get("breakout_min_close_outside_atr", 0.5)
-            ),
-            zone_reaction_v2_consolidation_breakout_body_atr=float(
-                zone_reaction_v2.get("consolidation_breakout_body_atr", 1.2)
-            ),
-            zone_reaction_v2_retest_max_bars=int(zone_reaction_v2.get("retest_max_bars", 8)),
             zone_reaction_v2_reject_stop_mode=str(zone_reaction_v2.get("reject_stop_mode", "zone")).lower(),
             zone_reaction_v2_rr_minimum=float(zone_reaction_v2.get("rr_minimum", 2.0)),
             zone_reaction_v2_stop_buffer_atr=float(zone_reaction_v2.get("stop_buffer_atr", 0.2)),

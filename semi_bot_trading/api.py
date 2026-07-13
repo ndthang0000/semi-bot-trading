@@ -431,7 +431,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             )
             params.append(zone_type)
         if reaction:
-            allowed_reactions = {"reject", "fakeout", "waiting_bos", "retest_reject", "slow_reaction", "clean_breakout"}
+            allowed_reactions = {"reject", "fakeout", "waiting_bos", "slow_reaction"}
             if reaction not in allowed_reactions:
                 raise HTTPException(status_code=422, detail=f"reaction must be one of: {', '.join(sorted(allowed_reactions))}")
             where.append(

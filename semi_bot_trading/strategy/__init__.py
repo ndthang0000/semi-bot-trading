@@ -77,7 +77,6 @@ from .types import (
     SetupCandidate,
 )
 from .zone_reaction_v2 import (
-    breakout_retest_reaction,
     classify_consolidation_reaction_v2,
     classify_zone_reaction_v2,
     evaluate_zone_reaction_v2,
@@ -112,7 +111,7 @@ __all__ = [
     "parse_overlays", "parse_utc_datetime", "first_text", "reaction", "reaction_v2",
     "zone_human_activation_time", "zone_can_use_signal_candle",
     # zone_reaction_v2
-    "classify_zone_reaction_v2", "breakout_retest_reaction",
+    "classify_zone_reaction_v2",
     "classify_consolidation_reaction_v2", "slow_reaction_direction",
     "promote_internal_reject_if_confirmed", "evaluate_zone_reaction_v2",
     "zone_reaction_v2_status", "zone_reaction_v2_state_machine", "step_done",

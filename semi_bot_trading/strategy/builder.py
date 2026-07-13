@@ -80,6 +80,8 @@ def build_setup_candidates(
             continue
         reaction_v2 = classify_zone_reaction_v2(zone, candles, atr, config)
         if reaction_v2.state == "far":
+            if reaction_v2.metadata.get("zone_closed_through") is True:
+                continue
             carried = _carry_forward_zone_reaction_v2(
                 symbol=symbol,
                 zone=zone,

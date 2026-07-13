@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { History, Layers, MousePointer2, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
+import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tradeHistoryFilters";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
 import type { ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, TradeOrder, ZoneTypeVisibility } from "../types";
@@ -259,12 +260,7 @@ function TradesTab({
             onChange={setReaction}
             options={[
               ["", "All reactions"],
-              ["reject", "Reject"],
-              ["fakeout", "Fakeout"],
-              ["waiting_bos", "Waiting BOS"],
-              ["retest_reject", "Retest reject"],
-              ["slow_reaction", "Slow reaction"],
-              ["clean_breakout", "Clean breakout"],
+              ...TRADE_REACTION_FILTERS.map((value) => [value, reactionFilterLabel(value)] as [string, string]),
             ]}
           />
           <TradeSelect
@@ -394,6 +390,15 @@ type TradeHistoryFilters = {
   page: number;
 };
 
+function reactionFilterLabel(value: (typeof TRADE_REACTION_FILTERS)[number]): string {
+  return {
+    reject: "Reject",
+    fakeout: "Fakeout",
+    waiting_bos: "Waiting BOS",
+    slow_reaction: "Slow reaction",
+  }[value];
+}
+
 function readTradeHistoryFilters(): TradeHistoryFilters {
   const defaults = {
     status: "",
@@ -415,7 +420,7 @@ function readTradeHistoryFilters(): TradeHistoryFilters {
       side: typeof parsed.side === "string" ? parsed.side : defaults.side,
       outcome: typeof parsed.outcome === "string" ? parsed.outcome : defaults.outcome,
       zoneType: typeof parsed.zoneType === "string" ? parsed.zoneType : defaults.zoneType,
-      reaction: typeof parsed.reaction === "string" ? parsed.reaction : defaults.reaction,
+      reaction: normalizeTradeReactionFilter(parsed.reaction),
       tradeId: typeof parsed.tradeId === "string" ? parsed.tradeId : defaults.tradeId,
       sort: typeof parsed.sort === "string" ? parsed.sort : defaults.sort,
       page: Number.isFinite(parsed.page) ? Math.max(0, Math.floor(Number(parsed.page))) : defaults.page,

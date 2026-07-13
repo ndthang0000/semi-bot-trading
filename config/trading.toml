@@ -143,10 +143,6 @@ reject_pinbar_min_wick_ratio = 0.55   # wick >= 55% of total candle range
 slow_min_bars = 3
 slow_max_bars = 8
 slow_body_max_ratio = 0.8
-breakout_min_body_atr = 0.8
-breakout_min_close_outside_atr = 0.5
-consolidation_breakout_body_atr = 1.2
-retest_max_bars = 8
 # "zone": classic stop beyond the whole zone. If zone-stop exceeds max_stop_distance,
 # the bot falls back toward tighter stop models instead of blocking the setup.
 # "reaction_wick" always uses the wick unless it is still too wide.

@@ -22,9 +22,8 @@ Lam cho `zone_reaction_v2` bot nhieu hon bang cach chi giu reaction co dau hieu 
 - Tat trade tu cac reaction:
   - `fakeout`
   - `waiting_bos`
-  - `retest_reject`
-  - `clean_breakout`
-- Cac reaction bi tat van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong backtest/realtime.
+- Breakout/retest da duoc xoa khoi Zone Reaction V2 va chuyen hoan toan sang `sr_breakout_v1`.
+- Cac reaction reject-family bi tat van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong backtest/realtime.
 - Khong them rule toi uu moi trong phase nay.
 
 ### Verify
@@ -52,7 +51,7 @@ Can so sanh:
 
 ### Done criteria
 
-- Backtest moi khong con trade tu `fakeout`, `waiting_bos`, `retest_reject`, `clean_breakout`.
+- Backtest moi khong con trade tu `fakeout`, `waiting_bos`; Zone Reaction V2 khong con emit breakout/retest candidate.
 - UI van doc va ve trade history dung.
 - Co report HTML cho ban reject-only.
 

@@ -31,12 +31,11 @@ Primary zone hop le:
 - `internal_reject`: gia da vao trong zone, sau do co BOS/CHOCH + price action M15 cung huong entry. State nay xu ly FVG/SR rong, khi gia fill sau trong zone nhung chua dong cua ra khoi toan bo zone.
 - `fakeout`: gia pha nhe qua zone duoi nguong ATR roi dong quay lai.
 - `slow_reaction`: gia nam trong/cham zone nhieu nen M15 than nho, chua co huong ro.
-- `clean_breakout`: gia dong cua vuot zone voi body du lon.
 - `waiting_bos`: gia cham zone nhung chua co trigger ro.
-- `waiting_retest`: da co clean breakout cung bias, dang cho gia retest lai zone.
-- `retest_reject`: gia retest lai zone sau clean breakout va bi reject theo huong breakout; co the tao entry.
 - `invalid`: setup khong hop le.
 - `far`: gia con xa zone.
+
+Zone Reaction V2 khong detect breakout va khong tao state breakout/retest. Toan bo breakout/retest cua Support/Resistance thuoc `sr_breakout_v1`.
 
 ## Defaults
 
@@ -50,10 +49,6 @@ reject_avg_body_period = 20
 slow_min_bars = 3
 slow_max_bars = 8
 slow_body_max_ratio = 0.8
-breakout_min_body_atr = 0.8
-breakout_min_close_outside_atr = 0.5
-consolidation_breakout_body_atr = 1.2
-retest_max_bars = 8
 rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
@@ -103,19 +98,7 @@ Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 - `neutral + ranging`: cho phep trade hai chieu theo phan ung zone.
 - `news` hoac `risk_off`: block setup neu `block_news_or_risk_off = true`.
 
-Clean breakout nguoc bias khong vao lenh. Setup se bi block va metadata se co:
-
-- `bias_phase = transition_bullish`
-- `bias_phase = transition_bearish`
-
-Clean breakout cung bias khong vao ngay. Bot chuyen sang `waiting_retest`. Khi gia retest lai zone va dong cua reject theo huong breakout, state chuyen thanh `retest_reject` va setup co the thanh `eligible`.
-
-Dieu kien clean breakout V2:
-
-- Body nen breakout >= `breakout_min_body_atr`.
-- Close phai nam ngoai zone toi thieu `breakout_min_close_outside_atr`.
-- Mac dinh `breakout_min_close_outside_atr = 0.5`, nghia la gia dong cua phai cach bien zone it nhat `0.5 ATR`.
-- Rule nay ap dung ca khi detect clean breakout truc tiep va khi tim breakout truoc do de cho phep trade retest.
+Neu gia dong cua xuyen qua phia invalid cua zone, Zone Reaction V2 dung theo doi reaction do, khong emit candidate breakout va khong carry-forward reject cu. Neu zone cho phep `trade_modes = ["breakout"]`, `sr_breakout_v1` se xu ly breakout/retest doc lap theo `docs/21-sr-breakout-v1.md`.
 
 Slow reaction khong vao ngay. Bot chuyen sang `waiting_bos`; neu BOS/CHOCH M15 xuat hien cung huong trong window cho phep thi setup moi thanh `eligible`.
 
@@ -123,7 +106,7 @@ Slow reaction khong vao ngay. Bot chuyen sang `waiting_bos`; neu BOS/CHOCH M15 x
 
 Phase hien tai la reject-family. Chi `reject` va `internal_reject` duoc phep tao trade setup `eligible`.
 
-`fakeout`, `waiting_bos`, `retest_reject`, `clean_breakout` va cac reaction khac van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong `zone_reaction_v2` khi chung khong nam trong `allowed_reactions`.
+`fakeout`, `waiting_bos` va cac reaction reject-family khac van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong `zone_reaction_v2` khi chung khong nam trong `allowed_reactions`.
 
 Strong body reject phai dung mau nen theo huong entry: long reject can bullish candle (`close > open`), short reject can bearish candle (`close < open`). Neu candle cham resistance/support co wick reject nhung dong nguoc mau, setup khong duoc promote thanh strong reject; no chuyen sang `waiting_bos` voi metadata `wick_reject=true`. Candle ke tiep moi duoc promote thanh `reject` khi xac nhan cung huong: short can bearish candle pha low cua wick candle, long can bullish candle pha high cua wick candle.
 
@@ -253,7 +236,7 @@ Sau khi tinh stop, neu stop distance qua lon, bot khong block setup. `max_stop_d
 max_stop_distance = 30.0 gia
 ```
 
-Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Wick fallback chi hop le khi SL nam ngoai H1 zone; neu wick SL van nam trong zone, bot bo qua wick va fallback tiep sang ATR H1. Neu bat ky stop theo zone/wick cua `reject`, `internal_reject`, `slow_reaction`, `waiting_bos`, `retest_reject`, hoac `fakeout` van qua rong va:
+Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Wick fallback chi hop le khi SL nam ngoai H1 zone; neu wick SL van nam trong zone, bot bo qua wick va fallback tiep sang ATR H1. Neu bat ky stop theo zone/wick cua `reject`, `internal_reject`, `slow_reaction`, `waiting_bos`, hoac `fakeout` van qua rong va:
 
 ```toml
 reject_wide_stop_fallback = "atr"
@@ -287,11 +270,9 @@ fvg_max_trades_per_zone = 2
 
 Nghia la moi `primary_zone_id` co `zone_type = fvg` chi duoc accept toi da 2 trade. Candidate thu 3 tro di bi bo qua truoc khi chon best setup. Backtest dem in-memory trong tung run; live worker dem cac `trade_orders.source = live` da luu trong DB. Set `0` de tat gioi han nay khi can research full sample.
 
-Rieng `retest_reject` va `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
+Rieng `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 
 ```text
-long retest_reject:  stop = reaction_low - 0.2 ATR
-short retest_reject: stop = reaction_high + 0.2 ATR
 long internal_reject:  stop = reaction_low - 0.2 ATR
 short internal_reject: stop = reaction_high + 0.2 ATR
 ```

@@ -65,17 +65,11 @@ def classify_zone_reaction_v2(
     if expected not in {"long", "short"}:
         return reaction("far", None, touched, last, [], 0.0)
 
-    retest = breakout_retest_reaction(zone, candles, atr, config, expected)
-    if retest is not None:
-        return retest
-
     body = candle_body(last)
     avg_body = average_body(candles, config.zone_reaction_v2_reject_avg_body_period)
     strong_reject = body >= avg_body * config.zone_reaction_v2_reject_body_min_ratio
-    breakout_body = body >= atr * config.zone_reaction_v2_breakout_min_body_atr
     fakeout_limit = atr * config.zone_reaction_v2_fakeout_max_atr
     buffer = atr * config.breakout_buffer_atr_multiplier
-    min_close_outside = atr * config.zone_reaction_v2_breakout_min_close_outside_atr
     previous_avg_body = average_body(candles[:-1], config.zone_reaction_v2_reject_avg_body_period)
     confirmed_wick_reject = confirmed_wick_rejection(zone, candles, previous_avg_body, config, expected)
     if confirmed_wick_reject is not None:
@@ -131,20 +125,6 @@ def classify_zone_reaction_v2(
                 buffer,
                 wick_reject,
             )
-        close_outside = zone_low - close
-        if close_outside >= min_close_outside and breakout_body:
-            return reaction_v2(
-                "clean_breakout",
-                "short",
-                touched,
-                last,
-                ["Clean break below bullish zone."],
-                buffer,
-                {
-                    "bias_phase": "transition_bearish",
-                    "breakout_close_outside_atr": round(close_outside / max(atr, 0.00001), 4),
-                },
-            )
     else:
         penetration = max(high - zone_high, 0.0)
         if penetration > 0 and penetration <= fakeout_limit and close <= zone_high:
@@ -187,20 +167,22 @@ def classify_zone_reaction_v2(
                 buffer,
                 wick_reject,
             )
-        close_outside = close - zone_high
-        if close_outside >= min_close_outside and breakout_body:
-            return reaction_v2(
-                "clean_breakout",
-                "long",
-                touched,
-                last,
-                ["Clean break above bearish zone."],
-                buffer,
-                {
-                    "bias_phase": "transition_bullish",
-                    "breakout_close_outside_atr": round(close_outside / max(atr, 0.00001), 4),
-                },
-            )
+
+    closed_through_zone = (
+        expected == "long" and close < zone_low
+    ) or (
+        expected == "short" and close > zone_high
+    )
+    if closed_through_zone:
+        return reaction_v2(
+            "far",
+            expected,
+            touched,
+            last,
+            ["Price closed through zone; Zone Reaction V2 stops tracking this reaction."],
+            buffer,
+            {"zone_closed_through": True},
+        )
 
     internal_window_metadata = internal_reject_window_metadata(candles, config)
     slow = slow_reaction_direction(zone, candles, atr, config)
@@ -240,100 +222,6 @@ def classify_zone_reaction_v2(
             {"approach_distance_atr": round(distance / max(atr, 0.00001), 4)},
         )
     return reaction_v2("far", expected, False, last, [], buffer)
-
-
-def breakout_retest_reaction(
-    zone: dict[str, Any],
-    candles: list[dict[str, Any]],
-    atr: float,
-    config: StrategyConfig,
-    expected: str,
-) -> ReactionResult | None:
-    if len(candles) < 2:
-        return None
-    last = candles[-1]
-    zone_low = float(zone["price_low"])
-    zone_high = float(zone["price_high"])
-    buffer = atr * config.breakout_buffer_atr_multiplier
-    breakout_body_threshold = atr * config.zone_reaction_v2_breakout_min_body_atr
-    min_close_outside = atr * config.zone_reaction_v2_breakout_min_close_outside_atr
-    lookback = candles[-(config.zone_reaction_v2_retest_max_bars + 1):-1]
-    breakout_candle: dict[str, Any] | None = None
-    breakout_direction: str | None = None
-
-    for candle in reversed(lookback):
-        body = candle_body(candle)
-        close = float(candle["close"])
-        if expected == "long" and zone_low - close >= min_close_outside and body >= breakout_body_threshold:
-            breakout_candle = candle
-            breakout_direction = "short"
-            break
-        if expected == "short" and close - zone_high >= min_close_outside and body >= breakout_body_threshold:
-            breakout_candle = candle
-            breakout_direction = "long"
-            break
-    if breakout_candle is None or breakout_direction is None:
-        return None
-
-    high = float(last["high"])
-    low = float(last["low"])
-    close = float(last["close"])
-    body = candle_body(last)
-    avg_body = average_body(candles, config.zone_reaction_v2_reject_avg_body_period)
-    strong_retest_reject = body >= avg_body
-    if breakout_direction == "short":
-        retested = high >= zone_low and low <= zone_high
-        if retested and close < zone_low and strong_retest_reject:
-            return reaction_v2(
-                "retest_reject",
-                "short",
-                True,
-                last,
-                ["Clean break below zone, retest rejected from underside."],
-                buffer,
-                {
-                    "breakout_candle_time": breakout_candle.get("time"),
-                    "breakout_direction": "short",
-                    "state_machine_path": "CLEAN_BREAK -> WAITING_RETEST -> RETEST_REJECT -> PREPARE_ENTRY",
-                },
-            )
-        if retested:
-            return reaction_v2(
-                "waiting_retest",
-                "short",
-                True,
-                last,
-                ["Clean break below zone; retest is still waiting for bearish rejection."],
-                buffer,
-                {"breakout_candle_time": breakout_candle.get("time"), "breakout_direction": "short"},
-            )
-    else:
-        retested = low <= zone_high and high >= zone_low
-        if retested and close > zone_high and strong_retest_reject:
-            return reaction_v2(
-                "retest_reject",
-                "long",
-                True,
-                last,
-                ["Clean break above zone, retest rejected from topside."],
-                buffer,
-                {
-                    "breakout_candle_time": breakout_candle.get("time"),
-                    "breakout_direction": "long",
-                    "state_machine_path": "CLEAN_BREAK -> WAITING_RETEST -> RETEST_REJECT -> PREPARE_ENTRY",
-                },
-            )
-        if retested:
-            return reaction_v2(
-                "waiting_retest",
-                "long",
-                True,
-                last,
-                ["Clean break above zone; retest is still waiting for bullish rejection."],
-                buffer,
-                {"breakout_candle_time": breakout_candle.get("time"), "breakout_direction": "long"},
-            )
-    return None
 
 
 def confirmed_wick_rejection(
@@ -435,7 +323,6 @@ def classify_consolidation_reaction_v2(
     midpoint = (zone_low + zone_high) / 2
     buffer = atr * config.breakout_buffer_atr_multiplier
     body = candle_body(last)
-    breakout_body = body >= atr * config.zone_reaction_v2_consolidation_breakout_body_atr
     fakeout_limit = atr * config.zone_reaction_v2_fakeout_max_atr
     touched = high >= zone_low and low <= zone_high
 
@@ -461,10 +348,6 @@ def classify_consolidation_reaction_v2(
             buffer,
             {"fakeout_distance_atr": round(lower_fakeout / max(atr, 0.00001), 4)},
         )
-    if close > zone_high + buffer and breakout_body:
-        return reaction_v2("clean_breakout", "long", touched, last, ["Clean breakout above consolidation."], buffer)
-    if close < zone_low - buffer and breakout_body:
-        return reaction_v2("clean_breakout", "short", touched, last, ["Clean breakout below consolidation."], buffer)
     if touched and close > midpoint and body >= average_body(candles, config.zone_reaction_v2_reject_avg_body_period):
         return reaction_v2("reject", "short", True, last, ["Bearish range-bound reaction near consolidation high."], buffer)
     if touched and close <= midpoint and body >= average_body(candles, config.zone_reaction_v2_reject_avg_body_period):
@@ -512,7 +395,7 @@ def promote_internal_reject_if_confirmed(
     has_price_action_trigger: bool,
     has_current_trigger: bool,
 ) -> ReactionResult:
-    if base_reaction.state in {"reject", "fakeout", "retest_reject", "clean_breakout", "far", "invalid"}:
+    if base_reaction.state in {"reject", "fakeout", "far", "invalid"}:
         return base_reaction
     if not config.zone_reaction_v2_internal_reject_enabled or not base_reaction.touched:
         return base_reaction
@@ -991,12 +874,12 @@ def zone_reaction_v2_status(
         # debug the state machine, but only configured reactions may become trades.
         reasons.append(f"Reaction {reaction.state} is disabled for Zone Reaction V2; keeping it for debug only.")
         status = "waiting_confirmation"
-    elif reaction.state in {"reject", "fakeout", "retest_reject", "internal_reject"}:
+    elif reaction.state in {"reject", "fakeout", "internal_reject"}:
         status = "eligible"
     elif reaction.state == "waiting_bos" and has_trigger:
         reasons.append("BOS/CHOCH confirmed after slow reaction.")
         status = "eligible"
-    elif reaction.state in {"slow_reaction", "waiting_bos", "waiting_retest", "clean_breakout"}:
+    elif reaction.state in {"slow_reaction", "waiting_bos"}:
         status = "waiting_confirmation"
     elif reaction.state == "invalid":
         status = "blocked"
@@ -1018,8 +901,6 @@ def zone_reaction_v2_state_machine(
     active = reaction.state
     if reaction.state == "approaching":
         active = "APPROACHING"
-    elif reaction.state == "retest_reject":
-        active = "PREPARE_ENTRY"
     elif reaction.state in {"reject", "fakeout", "internal_reject"} and status == "eligible":
         active = "PREPARE_ENTRY"
     elif reaction.state == "fakeout" and status == "waiting_confirmation":
@@ -1028,12 +909,8 @@ def zone_reaction_v2_state_machine(
         active = "PREPARE_ENTRY" if has_trigger and status == "eligible" else "WAIT_FOR_BOS"
     elif reaction.state == "slow_reaction":
         active = "WAIT_FOR_BOS"
-    elif reaction.state == "clean_breakout":
-        active = "WAITING_RETEST" if status != "blocked" else "BIAS_WARNING"
-    elif reaction.state == "waiting_retest":
-        active = "WAITING_RETEST"
     elif status == "blocked" or blocked:
-        active = "BIAS_WARNING" if reaction.state == "clean_breakout" else "IDLE"
+        active = "IDLE"
 
     steps = [
         ("IDLE", "Context check"),
@@ -1041,7 +918,6 @@ def zone_reaction_v2_state_machine(
         ("ZONE_TOUCHED", "Zone touched"),
         ("REACTING_IN_ZONE", "M15 reaction"),
         ("WAIT_FOR_BOS", "Wait BOS/CHOCH"),
-        ("WAITING_RETEST", "Wait retest"),
         ("BIAS_WARNING", "Bias warning"),
         ("PREPARE_ENTRY", "Prepare entry"),
     ]
@@ -1062,7 +938,6 @@ def _step_done(key: str, active: str) -> bool:
         "ZONE_TOUCHED": 2,
         "REACTING_IN_ZONE": 3,
         "WAIT_FOR_BOS": 4,
-        "WAITING_RETEST": 4,
         "BIAS_WARNING": 5,
         "PREPARE_ENTRY": 6,
     }
@@ -1093,16 +968,12 @@ def score_zone_reaction_v2(
         "reject": 0.26,
         "slow_reaction": 0.12,
         "waiting_bos": 0.08,
-        "clean_breakout": 0.10,
-        "waiting_retest": 0.10,
     }.get(reaction.state, 0.0)
     if direction == bias_to_direction(bias):
         score += 0.18
     elif bias == "neutral" and regime == "ranging":
         score += 0.10
     if regime == "ranging" and str(zone.get("type")) == "consolidation":
-        score += 0.08
-    if "expansion" in overlays and reaction.state == "clean_breakout":
         score += 0.08
     if "contraction" in overlays and reaction.state in {"slow_reaction", "waiting_bos"}:
         score += 0.04

@@ -113,10 +113,6 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_slow_min_bars=3,
     zone_reaction_v2_slow_max_bars=8,
     zone_reaction_v2_slow_body_max_ratio=0.8,
-    zone_reaction_v2_breakout_min_body_atr=0.8,
-    zone_reaction_v2_breakout_min_close_outside_atr=0.75,
-    zone_reaction_v2_consolidation_breakout_body_atr=1.2,
-    zone_reaction_v2_retest_max_bars=8,
     zone_reaction_v2_reject_stop_mode="zone",
     zone_reaction_v2_rr_minimum=2.0,
     zone_reaction_v2_stop_buffer_atr=0.2,
@@ -929,11 +925,11 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual([], candidates)
 
-    def test_zone_reaction_v2_clean_break_against_bias_is_transition_blocked(self) -> None:
+    def test_zone_reaction_v2_broken_support_emits_no_candidate_or_carried_reject(self) -> None:
         candles = [
-            candle("00:00", 108, 109, 107, 108),
-            candle("00:15", 108, 108.5, 107.5, 108.1),
-            candle("00:30", 106, 106.5, 99, 100),
+            candle("00:00", 110, 111, 109, 110),
+            candle("00:15", 106, 111, 105.5, 110),
+            candle("00:30", 103, 104, 98, 99),
         ]
 
         candidates = build_setup_candidates(
@@ -946,86 +942,26 @@ class StrategyTest(unittest.TestCase):
             allowed_playbooks={"zone_reaction_v2"},
         )
 
-        self.assertEqual("waiting_confirmation", candidates[0]["status"])
-        self.assertEqual("clean_breakout", candidates[0]["zone_reaction_state"])
-        self.assertEqual("transition_bearish", candidates[0]["metadata"]["bias_phase"])
+        self.assertEqual([], candidates)
 
-    def test_zone_reaction_v2_clean_break_with_bias_waits_for_retest(self) -> None:
+    def test_zone_reaction_v2_broken_resistance_emits_no_candidate_or_carried_reject(self) -> None:
         candles = [
-            candle("00:00", 108, 109, 107, 108),
-            candle("00:15", 108, 108.5, 107.5, 108.1),
-            candle("00:30", 106, 106.5, 99, 100),
+            candle("00:00", 98, 99, 97, 98),
+            candle("00:15", 101, 101.5, 97, 98),
+            candle("00:30", 104, 109, 103, 108),
         ]
 
         candidates = build_setup_candidates(
             "XAUUSD",
-            [zone("support", "bullish", 105, 107)],
-            contexts("bearish", "trending"),
+            [zone("resistance", "bearish", 100, 102)],
+            contexts("bullish", "trending"),
             candles,
             [],
             CONFIG,
             allowed_playbooks={"zone_reaction_v2"},
         )
 
-        self.assertEqual("waiting_confirmation", candidates[0]["status"])
-        self.assertEqual("clean_breakout", candidates[0]["zone_reaction_state"])
-
-    def test_zone_reaction_v2_clean_break_requires_one_atr_close_outside_zone(self) -> None:
-        candles = [
-            candle("00:00", 108, 109, 107, 108),
-            candle("00:15", 108, 108.5, 107.5, 108.1),
-            candle("00:30", 107.5, 107.8, 101, 104),
-        ]
-
-        reaction = classify_zone_reaction_v2(zone("support", "bullish", 105, 107), candles, atr=2, config=CONFIG)
-
-        self.assertNotEqual("clean_breakout", reaction.state)
-        self.assertEqual("waiting_bos", reaction.state)
-
-    def test_zone_reaction_v2_breakout_retest_reject_stays_waiting_in_reject_only_phase(self) -> None:
-        candles = [
-            candle("00:00", 108, 109, 107, 108),
-            candle("00:15", 108, 108.5, 107.5, 108.1),
-            candle("00:30", 106, 106.5, 97, 98),
-            candle("00:45", 98, 106.2, 97.5, 103),
-        ]
-
-        candidates = build_setup_candidates(
-            "XAUUSD",
-            [zone("support", "bullish", 105, 107)],
-            contexts("bearish", "trending"),
-            candles,
-            [],
-            CONFIG,
-            allowed_playbooks={"zone_reaction_v2"},
-        )
-
-        self.assertEqual("waiting_confirmation", candidates[0]["status"])
-        self.assertEqual("retest_reject", candidates[0]["zone_reaction_state"])
-        self.assertEqual("short", candidates[0]["direction"])
-        self.assertIn("WAITING_RETEST", candidates[0]["metadata"]["state_machine_path"])
-
-    def test_zone_reaction_v2_retest_stop_uses_retest_wick_not_full_zone(self) -> None:
-        entry, stop, take_profit, rr = compute_zone_reaction_v2_levels(
-            zone("support", "bullish", 105, 150),
-            "short",
-            ReactionResult(
-                state="retest_reject",
-                direction="short",
-                touched=True,
-                candle_time="2026-01-01T00:45:00+00:00",
-                reason=[],
-                metadata={"reaction_high": 106, "reaction_low": 97.5},
-            ),
-            last_close=103,
-            atr=4,
-            config=CONFIG,
-        )
-
-        self.assertEqual(103, entry)
-        self.assertEqual(109, stop)
-        self.assertEqual([91], take_profit)
-        self.assertEqual(2.0, rr)
+        self.assertEqual([], candidates)
 
     def test_zone_reaction_v2_wide_stop_does_not_block_when_fallback_is_disabled(self) -> None:
         candles = [

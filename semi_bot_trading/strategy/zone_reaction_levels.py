@@ -27,7 +27,7 @@ def compute_zone_reaction_v2_levels(
     min_stop_distance = max(config.zone_reaction_v2_min_stop_price, atr * config.zone_reaction_v2_min_stop_atr)
     target_rr = config.zone_reaction_v2_rr_minimum
     entry = round(last_close, 5)
-    wick_stop_states = {"retest_reject", "internal_reject"}
+    wick_stop_states = {"internal_reject"}
     if config.zone_reaction_v2_reject_stop_mode == "reaction_wick":
         wick_stop_states = wick_stop_states | {"reject"}
     stop_source = "reaction_wick" if reaction.state in wick_stop_states else "zone"
@@ -100,7 +100,7 @@ def should_fallback_wide_stop_to_atr(
     current_stop: float,
 ) -> bool:
     return (
-        reaction.state in {"reject", "internal_reject", "slow_reaction", "waiting_bos", "retest_reject", "fakeout"}
+        reaction.state in {"reject", "internal_reject", "slow_reaction", "waiting_bos", "fakeout"}
         and config.zone_reaction_v2_reject_wide_stop_fallback == "atr"
         and config.zone_reaction_v2_max_stop_distance > 0
         and abs(entry - current_stop) > config.zone_reaction_v2_max_stop_distance
