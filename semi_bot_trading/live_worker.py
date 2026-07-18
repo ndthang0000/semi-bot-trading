@@ -56,7 +56,13 @@ class ExecutionPricingPlan:
 def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -> None:
     if env.mt5_login is None or not env.mt5_password or not env.mt5_server:
         raise RuntimeError("MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER are required")
-    credentials = MT5Credentials(env.mt5_login, env.mt5_password, env.mt5_server, env.mt5_path)
+    credentials = MT5Credentials(
+        login=env.mt5_login,
+        password=env.mt5_password,
+        server=env.mt5_server,
+        path=env.mt5_path,
+        server_utc_offset_hours=env.mt5_server_utc_offset_hours,
+    )
     client = MT5BrokerClient(credentials)
 
     # MT5 may not be running yet (e.g. service starts before MT5 on reboot).
@@ -150,7 +156,7 @@ def validate_live_account_startup(env: RuntimeEnv, client: MT5BrokerClient, brok
     logger.info(
         "Live account validated label=%s profile=%s login=%s server=%s broker_symbol=%s "
         "balance=%.2f equity=%.2f currency=%s contract_size=%.4f volume_min=%s volume_max=%s volume_step=%s "
-        "execution_enabled=%s",
+        "execution_enabled=%s server_utc_offset_hours=%s",
         env.account_label,
         env.account_profile,
         env.mt5_login,
@@ -164,6 +170,7 @@ def validate_live_account_startup(env: RuntimeEnv, client: MT5BrokerClient, brok
         trade_info.get("volume_max"),
         trade_info.get("volume_step"),
         env.execution_enabled,
+        env.mt5_server_utc_offset_hours,
     )
 
 

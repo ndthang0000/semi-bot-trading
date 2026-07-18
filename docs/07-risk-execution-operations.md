@@ -304,6 +304,7 @@ MT5_PASSWORD
 MT5_SERVER
 MT5_PATH
 MT5_SYMBOL
+MT5_SERVER_UTC_OFFSET_HOURS
 EXECUTION_ENABLED
 LIVE_ORDER_VOLUME
 MAX_OPEN_POSITIONS_PER_SYMBOL
@@ -335,6 +336,12 @@ units, for example 1000 USD displayed as 100000 USC.
 
 `MT5_SYMBOL` is the broker symbol, for example `XAUUSDm` on an Exness cent
 account. The local project symbol remains `XAUUSD`.
+
+`MT5_SERVER_UTC_OFFSET_HOURS` defaults to `0`. Set it per worker when MT5
+history timestamps use broker wall time instead of UTC; for example, use `3`
+when the FTMO terminal is three hours ahead. The worker subtracts this offset
+before storing candle and deal-close timestamps. Recheck it when the broker's
+summer/winter server time changes.
 
 `MT5_PATH` is optional for manual runs, but strongly recommended for Windows
 services on VPS because MetaTrader5 auto-discovery can fail in Session 0. Point

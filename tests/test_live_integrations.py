@@ -255,6 +255,7 @@ class LiveIntegrationTest(unittest.TestCase):
                             'MT5_SERVER="Exness-Test"',
                             'MT5_PATH="C:\\Program Files\\MetaTrader 5 EXNESS\\terminal64.exe"',
                             'MT5_SYMBOL="XAUUSDm"',
+                            'MT5_SERVER_UTC_OFFSET_HOURS="3"',
                             'EXECUTION_ENABLED="true"',
                             'LIVE_ORDER_VOLUME="0.02"',
                             'LIVE_SYNC_CANDLES="false"',
@@ -270,6 +271,7 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertEqual("Exness-Test", env.mt5_server)
         self.assertEqual(r"C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe", env.mt5_path)
         self.assertEqual("XAUUSDcustom", env.mt5_symbol)
+        self.assertEqual(3.0, env.mt5_server_utc_offset_hours)
         self.assertTrue(env.execution_enabled)
         self.assertEqual(0.02, env.live_order_volume)
         self.assertFalse(env.live_sync_candles)

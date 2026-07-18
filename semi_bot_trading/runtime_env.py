@@ -53,6 +53,9 @@ class RuntimeEnv:
     partial_take_profit_r: float = 1.25
     partial_take_profit_fraction: float = 0.5
     partial_take_profit_be_buffer: float = 0.0
+    # Offset of broker-server wall-clock timestamps from UTC. Some MT5
+    # terminals encode deal/candle epochs using server time rather than UTC.
+    mt5_server_utc_offset_hours: float = 0.0
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -79,6 +82,7 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         mt5_path=env_text("MT5_PATH"),
         mt5_symbol=env_text("MT5_SYMBOL", "XAUUSDm") or "XAUUSDm",
         mt5_magic=env_int("MT5_MAGIC", 260612) or 260612,
+        mt5_server_utc_offset_hours=env_float("MT5_SERVER_UTC_OFFSET_HOURS", 0.0) or 0.0,
         telegram_token=env_text("TELEGRAM_TOKEN"),
         telegram_chat_id=env_text("TELEGRAM_CHAT_ID"),
         execution_enabled=env_bool("EXECUTION_ENABLED", False),

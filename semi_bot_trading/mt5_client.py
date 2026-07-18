@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .candles import Candle
@@ -14,6 +14,21 @@ class MT5Credentials:
     password: str
     server: str
     path: str | None = None
+    server_utc_offset_hours: float = 0.0
+
+
+def mt5_server_timestamp_to_utc(timestamp: int | float, server_utc_offset_hours: float = 0.0) -> datetime:
+    """Interpret an MT5 epoch containing broker wall time and return real UTC.
+
+    Most terminals return genuine Unix UTC timestamps and should use the
+    default zero offset. A broker whose MT5 history is three hours ahead of
+    UTC should configure ``server_utc_offset_hours=3``.
+    """
+    offset = float(server_utc_offset_hours)
+    if not -24.0 < offset < 24.0:
+        raise ValueError(f"MT5 server UTC offset must be between -24 and 24 hours, got {offset}")
+    encoded_wall_time = datetime.fromtimestamp(int(timestamp), tz=UTC)
+    return encoded_wall_time - timedelta(hours=offset)
 
 
 @dataclass(frozen=True)
@@ -92,7 +107,10 @@ class MT5BrokerClient:
         delta = timeframe_delta(timeframe)
         candles: list[Candle] = []
         for item in rates:
-            open_time = datetime.fromtimestamp(int(item["time"]), tz=UTC)
+            open_time = mt5_server_timestamp_to_utc(
+                int(item["time"]),
+                self.credentials.server_utc_offset_hours,
+            )
             candles.append(
                 Candle(
                     symbol=local_symbol,
@@ -435,7 +453,10 @@ class MT5BrokerClient:
             else float(close_deals[-1].price)
         )
         latest_deal = max(close_deals, key=lambda item: int(item.time))
-        close_time = datetime.fromtimestamp(int(latest_deal.time), tz=UTC)
+        close_time = mt5_server_timestamp_to_utc(
+            int(latest_deal.time),
+            self.credentials.server_utc_offset_hours,
+        )
         return {
             "price": weighted_price,
             "profit": sum(float(deal.profit) for deal in close_deals),

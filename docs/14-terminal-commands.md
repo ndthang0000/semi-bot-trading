@@ -674,6 +674,7 @@ MT5_SERVER=FTMO-Demo
 MT5_PATH=C:\Program Files\MetaTrader 5 FTMO\terminal64.exe
 MT5_SYMBOL=XAUUSD
 MT5_MAGIC=260613
+MT5_SERVER_UTC_OFFSET_HOURS=3
 ACCOUNT_LABEL=FTMO Demo
 ACCOUNT_PROFILE=ftmo_challenge
 ACCOUNT_BALANCE_SCALE=1.0
@@ -682,6 +683,13 @@ LIVE_RUN_DETECTORS=false
 EXECUTION_ENABLED=false
 RISK_PER_TRADE_PCT=0.25
 ```
+
+`MT5_SERVER_UTC_OFFSET_HOURS` normalizes broker-server wall-clock timestamps
+before candles and closed deals are stored as UTC. Keep it at `0` when MT5
+already returns UTC (the Exness worker), and set it to the observed server
+offset for FTMO (`3` in the example). Update the value if the broker changes
+between summer and winter server time. Secondary FTMO workers should continue
+using `LIVE_SYNC_CANDLES=false`; the offset still applies to deal-close history.
 
 `MT5_PATH` must point to `terminal64.exe`, not only the MetaTrader install
 folder. This avoids `IPC initialize failed, MetaTrader 5 x64 not found` when the
