@@ -1,7 +1,7 @@
-import { RotateCcw, Save, Trash2 } from "lucide-react";
+import { Check, Copy, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteManualZone, updateZoneOverride } from "../../api/chart";
-import { compactTime } from "../../lib/time";
+import { compactTime, price } from "../../lib/time";
 import { useChartStore } from "../../store/chartStore";
 import type { PriceZone, ZoneTradeMode } from "../../types";
 
@@ -26,6 +26,12 @@ export function ZoneEditor({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [copiedZoneId, setCopiedZoneId] = useState<string | null>(null);
+  const zoneSize = useMemo(() => {
+    const low = Number(priceLow);
+    const high = Number(priceHigh);
+    return Number.isFinite(low) && Number.isFinite(high) && high >= low ? high - low : null;
+  }, [priceHigh, priceLow]);
   const isDirty = useMemo(() => {
     const low = Number(priceLow);
     const high = Number(priceHigh);
@@ -126,6 +132,19 @@ export function ZoneEditor({
     }
   }, [isSaving, onZoneUpdated, reason, setSelected, showToast, zone]);
 
+  const copyZoneId = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(zone.id);
+      setCopiedZoneId(zone.id);
+      showToast("success", "Zone ID copied.");
+      window.setTimeout(() => {
+        setCopiedZoneId((current) => (current === zone.id ? null : current));
+      }, 1500);
+    } catch {
+      showToast("error", "Could not copy zone ID.");
+    }
+  }, [showToast, zone.id]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return;
@@ -148,12 +167,14 @@ export function ZoneEditor({
   return (
     <div className="grid gap-3 text-sm">
       <div className="grid gap-2">
+        <ZoneIdDetail copied={copiedZoneId === zone.id} zoneId={zone.id} onCopy={copyZoneId} />
         <Detail label="Type" value={`${zone.timeframe} ${zoneDisplayName(zone)}`} />
         <Detail label="Source" value={zone.source} />
         <Detail label="Start" value={compactTime(zone.visual_start)} />
         <Detail label="End" value={compactTime(zone.visual_end)} />
         <Detail label="Expires" value={compactTime(zone.valid_until)} />
         <Detail label="Touches" value={String(zone.metadata.touch_count_total ?? zone.metadata.touch_count ?? "--")} />
+        <Detail label="Size" value={zoneSize === null ? "--" : price(zoneSize)} />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -313,6 +334,38 @@ function Detail({ label, value }: { label: string; value: string }) {
     <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
       <span className="text-slate-500">{label}</span>
       <strong className="min-w-0 break-words text-slate-100">{value}</strong>
+    </div>
+  );
+}
+
+function ZoneIdDetail({
+  zoneId,
+  copied,
+  onCopy,
+}: {
+  zoneId: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-3">
+      <span className="text-slate-500">ID</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <strong className="min-w-0 flex-1 truncate text-slate-100" title={zoneId}>{zoneId}</strong>
+        <button
+          aria-label="Copy zone ID"
+          className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border transition ${
+            copied
+              ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300"
+              : "border-ink-700 bg-ink-850 text-slate-400 hover:border-cyan-400/60 hover:text-cyan-200"
+          }`}
+          title={copied ? "Copied" : "Copy zone ID"}
+          type="button"
+          onClick={onCopy}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      </div>
     </div>
   );
 }
