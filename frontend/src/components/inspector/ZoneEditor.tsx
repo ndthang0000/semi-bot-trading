@@ -134,7 +134,7 @@ export function ZoneEditor({
 
   const copyZoneId = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(zone.id);
+      await copyText(zone.id);
       setCopiedZoneId(zone.id);
       showToast("success", "Zone ID copied.");
       window.setTimeout(() => {
@@ -374,4 +374,30 @@ function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
   return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
+async function copyText(value: string): Promise<void> {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Clipboard permission can still be denied in a secure context. Fall
+      // through to the selection-based copy used by HTTP VPS deployments.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, value.length);
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Browser rejected clipboard copy");
 }
