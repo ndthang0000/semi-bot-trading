@@ -55,6 +55,7 @@ from .replay_chart import build_realtime_replay_payload
 from .runtime_env import load_runtime_env
 from .smc_zones import apply_persisted_fvg_mitigation
 from .spread import spread_summary
+from .strategy.types import DEFAULT_TRADE_MODES_BY_ZONE_TYPE, TRADE_MODES
 
 
 MAX_CHART_LIMIT = 15_000
@@ -910,6 +911,15 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             validate_zone_type(request.zone_type, request.direction)
         except ValueErrorForApi as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        requested_trade_modes = (
+            request.trade_modes
+            if request.trade_modes is not None
+            else list(DEFAULT_TRADE_MODES_BY_ZONE_TYPE.get(request.zone_type, ()))
+        )
+        unknown_modes = sorted(set(requested_trade_modes) - TRADE_MODES)
+        if unknown_modes:
+            raise HTTPException(status_code=422, detail=f"Unknown trade mode(s): {', '.join(unknown_modes)}")
+        trade_modes = list(dict.fromkeys(requested_trade_modes))
 
         symbol = request.symbol or config.symbol
         timeframe = request.timeframe.upper()
@@ -938,6 +948,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             "human_created": True,
             "human_adjusted": True,
             "add_entity_kind": request.client_kind,
+            "trade_modes": trade_modes,
             "last_human_override_id": override_id,
             "last_human_override_at": now,
             "last_human_override_reason": request.reason,
@@ -1004,6 +1015,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                                 "status": request.status,
                                 "source": "human",
                                 "valid_until": valid_until,
+                                "trade_modes": trade_modes,
                             },
                         },
                         sort_keys=True,

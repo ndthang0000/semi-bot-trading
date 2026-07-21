@@ -46,6 +46,7 @@ class ZoneCreateRequest(BaseModel):
     client_kind: str | None = None
     expires_at: str | None = None
     reason: str | None = None
+    trade_modes: list[str] | None = None
 
 
 class ContextOverrideRequest(BaseModel):

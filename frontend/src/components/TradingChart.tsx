@@ -461,6 +461,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         status: "active",
         client_kind: draw.kind,
         reason: `manual ${manualZoneSpec(draw.kind).label} drawn on chart`,
+        trade_modes: defaultTradeModesForZone(preview),
       });
       updateDrawPreview(null);
       setAddEntityKind(null);

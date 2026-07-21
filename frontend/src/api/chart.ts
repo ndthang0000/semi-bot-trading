@@ -222,6 +222,7 @@ export type ZoneCreateInput = {
   client_kind?: string;
   expires_at?: string | null;
   reason?: string;
+  trade_modes: ZoneTradeMode[];
 };
 
 export async function createManualZone(input: ZoneCreateInput): Promise<PriceZone> {

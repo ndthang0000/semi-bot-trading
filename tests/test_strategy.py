@@ -1307,6 +1307,28 @@ class StrategyTest(unittest.TestCase):
 
     def test_zone_reaction_v2_support_internal_reject_long(self) -> None:
         candles = [candle("00:15", 102, 109, 101, 108)]
+        support = zone("support", "bullish", 100, 110)
+        support["metadata"] = {"trade_modes": ["reject", "internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending"),
+            candles,
+            [
+                point("BOS", "up", "00:15", "bos1"),
+                point("marubozu_bullish", "up", "00:15", "pa1"),
+            ],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual("long", candidates[0]["direction"])
+
+    def test_zone_reaction_v2_sr_without_explicit_modes_does_not_internal_reject(self) -> None:
+        candles = [candle("00:15", 102, 109, 101, 108)]
 
         candidates = build_setup_candidates(
             "XAUUSD",
@@ -1321,9 +1343,7 @@ class StrategyTest(unittest.TestCase):
             allowed_playbooks={"zone_reaction_v2"},
         )
 
-        self.assertEqual("eligible", candidates[0]["status"])
-        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
-        self.assertEqual("long", candidates[0]["direction"])
+        self.assertEqual([], candidates)
 
     def test_zone_reaction_v2_support_internal_only_can_promote_from_slow_reaction(self) -> None:
         candles = [candle("00:15", 102, 109, 101, 108)]
@@ -1371,10 +1391,12 @@ class StrategyTest(unittest.TestCase):
 
     def test_zone_reaction_v2_resistance_internal_reject_short(self) -> None:
         candles = [candle("00:15", 108, 109, 101, 102)]
+        resistance = zone("resistance", "bearish", 100, 110)
+        resistance["metadata"] = {"trade_modes": ["reject", "internal_reject"]}
 
         candidates = build_setup_candidates(
             "XAUUSD",
-            [zone("resistance", "bearish", 100, 110)],
+            [resistance],
             contexts("bearish", "trending"),
             candles,
             [

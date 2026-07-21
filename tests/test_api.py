@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -562,8 +563,41 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["weight"], 0.72)
         self.assertIsNotNone(payload["valid_until"])
         self.assertEqual(payload["metadata"]["human_created"], True)
+        self.assertEqual(payload["metadata"]["trade_modes"], ["reject", "internal_reject"])
         self.assertEqual(zone_count, 1)
         self.assertEqual(override_count, 1)
+
+    def test_create_manual_sr_zone_persists_reject_only_default(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+
+            client = authenticated_test_client(root, config_path)
+            response = client.post(
+                "/api/zones",
+                json={
+                    "symbol": "XAUUSD",
+                    "timeframe": "H1",
+                    "zone_type": "resistance",
+                    "direction": "bearish",
+                    "price_low": 2001.0,
+                    "price_high": 2005.0,
+                    "visual_start": "2026-01-01T00:00:00+00:00",
+                    "visual_end": "2026-01-01T01:00:00+00:00",
+                    "weight": 0.8,
+                    "confidence": 1.0,
+                },
+            )
+
+            with connect(db_path) as conn:
+                row = conn.execute("SELECT metadata_json FROM price_zones").fetchone()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["metadata"]["trade_modes"], ["reject"])
+        self.assertEqual(json.loads(row["metadata_json"])["trade_modes"], ["reject"])
 
     def test_delete_zone_marks_deleted_and_hides_from_chart(self) -> None:
         with TemporaryDirectory() as temp_dir:

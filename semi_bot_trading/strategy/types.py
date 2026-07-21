@@ -15,8 +15,8 @@ PLAYBOOK_ZONE_TYPES: dict[str, set[str]] = {
 }
 TRADE_MODES = {"reject", "internal_reject", "breakout"}
 DEFAULT_TRADE_MODES_BY_ZONE_TYPE: dict[str, tuple[str, ...]] = {
-    "support": ("reject", "internal_reject"),
-    "resistance": ("reject", "internal_reject"),
+    "support": ("reject",),
+    "resistance": ("reject",),
     "fvg": ("reject", "internal_reject"),
     "consolidation": ("breakout",),
     "order_block": (),
