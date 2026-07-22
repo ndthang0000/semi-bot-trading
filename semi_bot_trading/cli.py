@@ -5,6 +5,7 @@ import json
 import platform
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .backtest import persist_backtest_result, run_strategy_backtest
@@ -28,6 +29,7 @@ from .structure import (
     latest_structure_points,
     structure_summary,
 )
+from .trade_report import build_zone_trade_report, write_zone_trade_report
 from .zones import (
     apply_and_store_zone_lifecycle,
     detect_and_store_support_resistance_zones,
@@ -923,6 +925,40 @@ def cmd_research_report(args: argparse.Namespace) -> None:
     write_html_report(args.html_output, render_research_html(rows, max_rows=args.max_rows, min_samples=args.min_samples))
 
 
+def cmd_generate_trade_report(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    db_path = args.db or config.database
+    generated_at = datetime.now(UTC).replace(microsecond=0)
+    output = args.output
+    if output is None:
+        output = Path("var/reports") / f"zone-trade-{args.zone_id}-{generated_at.date().isoformat()}.html"
+    elif output.suffix.lower() != ".html":
+        output = output / f"zone-trade-{args.zone_id}-{generated_at.date().isoformat()}.html"
+    with connect(db_path) as conn:
+        try:
+            report = build_zone_trade_report(
+                conn,
+                config,
+                args.zone_id,
+                database=str(db_path),
+                code_commit=git_value("rev-parse", "--short", "HEAD"),
+                timezone=args.timezone,
+                generated_at=generated_at.isoformat(),
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+    path = write_zone_trade_report(output, report)
+    print(f"Zone: {report.zone_id}")
+    print(f"Trades: {report.stats['trade_count']}")
+    pnl_summary = ", ".join(
+        f"{value:.2f} {currency}"
+        for currency, value in report.stats["pnl_by_currency"].items()
+    ) or "--"
+    print(f"Net P&L: {pnl_summary}")
+    print(f"Total R: {report.stats['total_r']:.4f}")
+    print(f"HTML report: {path.resolve()}")
+
+
 def parse_zone_types_arg(values: list[str] | None) -> set[str] | None:
     if not values:
         return None
@@ -1344,6 +1380,25 @@ def build_parser() -> argparse.ArgumentParser:
     research_report_parser.add_argument("--min-samples", type=int, default=20)
     research_report_parser.add_argument("--html-output", type=Path)
     research_report_parser.set_defaults(func=cmd_research_report)
+
+    trade_report_parser = subparsers.add_parser(
+        "generate-trade-report",
+        help="Generate a self-contained historical zone/trade HTML report.",
+    )
+    add_common_config_arg(trade_report_parser)
+    add_common_db_arg(trade_report_parser)
+    trade_report_parser.add_argument("--zone-id", required=True, help="Price-zone ID to inspect.")
+    trade_report_parser.add_argument(
+        "--output",
+        type=Path,
+        help="Output HTML file or directory. Default: var/reports/zone-trade-<id>-<date>.html",
+    )
+    trade_report_parser.add_argument(
+        "--timezone",
+        default="Asia/Ho_Chi_Minh",
+        help="IANA timezone used beside UTC timestamps. Default: Asia/Ho_Chi_Minh.",
+    )
+    trade_report_parser.set_defaults(func=cmd_generate_trade_report)
 
     serve_parser = subparsers.add_parser(
         "serve-chart",

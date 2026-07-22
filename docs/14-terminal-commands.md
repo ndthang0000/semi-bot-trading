@@ -216,6 +216,30 @@ python -m semi_bot_trading.cli detect-price-action --timeframe M15
 
 ## 5. Summary và debug detector
 
+### Generate standardized zone/trade report
+
+Xuất một HTML self-contained từ historical zone, setup, execution, partial TP,
+SL/TP decision trace và P&L đã lưu trong database:
+
+```bash
+python -m semi_bot_trading.cli generate-trade-report \
+  --zone-id a886b623d3017f2490e5ae134d37081c97cc2cfa
+```
+
+Mặc định report được lưu tại
+`var/reports/zone-trade-<zone-id>-<date>.html`. Có thể chỉ định file hoặc folder:
+
+```bash
+python -m semi_bot_trading.cli generate-trade-report \
+  --zone-id a886b623d3017f2490e5ae134d37081c97cc2cfa \
+  --db var/trading.sqlite3 \
+  --output var/reports/
+```
+
+Report ưu tiên persisted candidate/execution snapshot để phản ánh đúng logic lúc
+vào lệnh. Current zone và current config chỉ dùng làm đối chiếu có nhãn, tránh
+ghi đè lịch sử sau khi zone bị human chỉnh hoặc SL đã được dời về breakeven.
+
 Xem structure summary:
 
 ```bash
