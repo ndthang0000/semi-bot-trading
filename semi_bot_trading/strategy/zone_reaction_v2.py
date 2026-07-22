@@ -864,17 +864,34 @@ def zone_reaction_v2_status(
     if not context_bypass and config.zone_reaction_v2_block_news_or_risk_off and regime in {"news", "risk_off"}:
         blocked.append(f"Regime {regime} blocks Zone Reaction V2.")
 
-    # Macro trend gate: counter-macro trades had a clear negative edge in backtest
-    # (resistance shorts during the 2023-2026 gold uptrend). "flat"/"unknown"
-    # macro allows both directions so the gate degrades gracefully without history.
-    # FVG zones have a separate gate controlled by fvg_macro_gate_enabled in config.
+    # SR keeps the original macro-only gate. Bot FVGs use an OR gate instead:
+    # either H1 bias or macro trend may support the zone direction. This lets a
+    # fresh H1 FVG trade when one context has turned but the slower one still lags.
+    # Human zones continue to bypass both context gates.
     is_fvg = zone_type == "fvg"
     active_macro_gate = (
         config.zone_reaction_v2_macro_gate_enabled
         if not is_fvg
         else config.zone_reaction_v2_fvg_macro_gate_enabled
     )
-    if not context_bypass and active_macro_gate:
+    if not context_bypass and is_fvg and active_macro_gate:
+        expected_bias = "bullish" if direction == "long" else "bearish"
+        expected_macro = "up" if direction == "long" else "down"
+        bias_supports = bias == expected_bias
+        macro_supports = macro_trend == expected_macro
+        if bias_supports or macro_supports:
+            supporters = []
+            if bias_supports:
+                supporters.append(f"H1 bias {bias}")
+            if macro_supports:
+                supporters.append(f"macro trend {macro_trend}")
+            reasons.append(f"FVG {direction} allowed by {' or '.join(supporters)}.")
+        else:
+            blocked.append(
+                f"FVG {direction} requires H1 bias {expected_bias} or macro trend {expected_macro} "
+                f"(bias={bias}, macro={macro_trend})."
+            )
+    elif not context_bypass and active_macro_gate:
         if macro_trend == "up" and direction == "short":
             blocked.append("Macro trend up blocks Zone Reaction V2 short.")
         elif macro_trend == "down" and direction == "long":
@@ -882,7 +899,7 @@ def zone_reaction_v2_status(
         else:
             reasons.append(f"Macro trend {macro_trend} allows {direction}.")
     elif not active_macro_gate:
-        gate_scope = "FVG" if is_fvg else "all zones"
+        gate_scope = "FVG bias-or-macro" if is_fvg else "all zones"
         reasons.append(f"Macro trend gate disabled for {gate_scope} (macro={macro_trend}, direction={direction}).")
 
     # TEMP RESEARCH OVERRIDE:
@@ -904,7 +921,10 @@ def zone_reaction_v2_status(
     #         reasons.append("Countertrend allowed by human secondary bias.")
     #     else:
     #         blocked.append("Zone Reaction V2 requires direction aligned with bias.")
-    reasons.append("Bias/regime direction gate temporarily disabled for reaction research.")
+    if is_fvg and active_macro_gate and not context_bypass:
+        reasons.append("Standalone bias/regime gate disabled; H1 bias is evaluated by the FVG bias-or-macro gate.")
+    else:
+        reasons.append("Bias/regime direction gate temporarily disabled for reaction research.")
 
     if reaction.state == "approaching":
         reasons.append("Price approaching zone; no touch yet.")

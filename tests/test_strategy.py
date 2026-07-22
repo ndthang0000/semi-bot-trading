@@ -770,6 +770,89 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("up", candidates[0]["metadata"]["macro_trend"])
 
+    def test_bot_bullish_fvg_allows_long_when_h1_bias_supports_but_macro_opposes(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bullish", 105, 107)],
+            contexts("bullish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertIn("allowed by H1 bias bullish", " ".join(candidates[0]["reason"]))
+
+    def test_bot_bullish_fvg_allows_long_when_macro_supports_but_h1_bias_opposes(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bullish", 105, 107)],
+            contexts("bearish", "trending", macro_trend="up"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertIn("allowed by macro trend up", " ".join(candidates[0]["reason"]))
+
+    def test_bot_fvg_blocks_when_neither_h1_bias_nor_macro_supports_direction(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bullish", 105, 107)],
+            contexts("bearish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bullish", "up", "00:30")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("blocked", candidates[0]["status"])
+        self.assertIn(
+            "requires H1 bias bullish or macro trend up",
+            " ".join(candidates[0]["blocked_reason"]),
+        )
+
+    def test_bot_bearish_fvg_allows_short_when_macro_supports(self) -> None:
+        candles = [
+            candle("00:00", 110, 112, 108, 109),
+            candle("00:15", 109, 111, 107, 108),
+            candle("00:30", 114, 114.5, 110, 110.5),
+        ]
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [zone("fvg", "bearish", 113, 115)],
+            contexts("bullish", "trending", macro_trend="down"),
+            candles,
+            [point("pinbar_bearish", "down", "00:30")],
+            CONFIG,
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertIn("allowed by macro trend down", " ".join(candidates[0]["reason"]))
+
     def test_missing_macro_trend_context_allows_both_directions(self) -> None:
         candles = [
             candle("00:00", 110, 112, 108, 111),

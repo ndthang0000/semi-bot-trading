@@ -151,13 +151,21 @@ atr_period = 14
 
 [strategy.playbooks.zone_reaction_v2]
 macro_gate_enabled = true
+fvg_macro_gate_enabled = true
 ```
 
-Gate rule khi `macro_gate_enabled = true`:
+Gate rule cho SR khi `macro_gate_enabled = true`:
 
 - `macro_trend = up`: block moi short setup (`Macro trend up blocks Zone Reaction V2 short.`).
 - `macro_trend = down`: block moi long setup.
 - `flat` hoac `unknown`: cho phep hai chieu (gate degrade gracefully khi thieu lich su).
+
+Bot-detected FVG dung combined gate rieng khi `fvg_macro_gate_enabled = true`:
+
+- Bullish FVG/LONG duoc phep neu `H1 bias = bullish` **hoac** `macro_trend = up`.
+- Bearish FVG/SHORT duoc phep neu `H1 bias = bearish` **hoac** `macro_trend = down`.
+- Chi block khi ca hai context deu khong support direction. Vi du bullish FVG voi `bias = bearish` va `macro = down` se bi block; `bias = bullish, macro = down` van duoc phep.
+- Human FVG van bypass context gate nhu cac human zone khac.
 
 Macro trend la context type `macro_trend` trong `market_contexts`, nen human co the override `effective_value` nhu bias/regime. Backtest incremental tinh point-in-time tu H1 candles co san tai signal candle, khong dung gia tri persisted de tranh look-ahead.
 

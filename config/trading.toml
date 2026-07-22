@@ -182,8 +182,8 @@ allow_neutral_range_trade = true
 block_news_or_risk_off = true
 # Block shorts when macro trend is up and longs when macro trend is down.
 macro_gate_enabled = true
-# Separate macro gate toggle for FVG zones only.
-# Set to false to research FVG zones without macro trend filtering.
+# Bot FVG candidate is allowed when H1 bias OR macro trend supports its direction.
+# Set to false to research FVG zones without this combined context gate.
 fvg_macro_gate_enabled = true
 # Cap accepted trades per FVG zone. 0 disables the cap.
 fvg_max_trades_per_zone = 2
