@@ -8,6 +8,11 @@ from semi_bot_trading.config import load_config
 
 
 class ConfigTest(unittest.TestCase):
+    def test_default_macro_trend_uses_30_day_h1_lookback(self) -> None:
+        config = load_config()
+
+        self.assertEqual(720, config.macro_trend.lookback_candles)
+
     def test_loads_swing_timeframe_config(self) -> None:
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "trading.toml"

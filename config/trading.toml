@@ -26,8 +26,8 @@ recent_breaks = 3
 [context.macro_trend]
 detector = "macro_trend_v1"
 timeframe = "H1"
-# ~30 days of H1 candles. Momentum = close now vs close lookback_candles ago.
-lookback_candles = 960
+# 30 days × 24 H1 candles. Momentum = close now vs close lookback_candles ago.
+lookback_candles = 720
 # |momentum| in ATR units must exceed this to call up/down; otherwise flat.
 # 2.0 ATR over 720 H1 candles (~30 days) filters out sideways drift.
 flat_threshold_atr = 2
