@@ -248,8 +248,8 @@ def zone_eligible_for_zone_reaction_v2(
         return False
     if not config.zone_reaction_v2_internal_reject_enabled:
         return False
-    fill_ratio = fvg_fill_ratio(zone, candles[-1] if candles else None)
-    if fill_ratio < config.zone_reaction_v2_internal_reject_min_fvg_fill_ratio:
+    fill_ratio = zone_fill_ratio(zone, candles[-1] if candles else None)
+    if fill_ratio < config.zone_reaction_v2_internal_reject_min_fill_ratio:
         return False
     fill_time = first_text(zone.get("valid_until"), zone.get("visual_end"), zone.get("invalidated_at"))
     if not fill_time or not candles:
@@ -337,9 +337,15 @@ def inside_zone_close_position(candle: dict[str, Any], zone: dict[str, Any]) -> 
     return min(max(position, 0.0), 1.0)
 
 
-def fvg_fill_ratio(zone: dict[str, Any], candle: dict[str, Any] | None = None) -> float:
+def zone_fill_ratio(zone: dict[str, Any], candle: dict[str, Any] | None = None) -> float:
+    """Return directional fill through a zone as a normalized 0..1 ratio.
+
+    SR and FVG internal rejects intentionally share this geometry. Persisted
+    fill state is only carried forward for FVG lifecycle handling; an SR signal
+    is measured from its current reaction candle.
+    """
     metadata = zone.get("metadata") if isinstance(zone.get("metadata"), dict) else {}
-    value = metadata.get("fill_ratio")
+    value = metadata.get("fill_ratio") if str(zone.get("type")) == "fvg" else None
     try:
         stored = float(value) if value is not None else 0.0
     except (TypeError, ValueError):
@@ -357,18 +363,19 @@ def fvg_fill_ratio(zone: dict[str, Any], candle: dict[str, Any] | None = None) -
     return min(max(max(stored, current), 0.0), 1.0)
 
 
-def sr_penetration_atr(zone: dict[str, Any], candle: dict[str, Any], direction: str, atr: float) -> float:
-    if direction == "long":
-        penetration = max(float(zone["price_high"]) - float(candle["low"]), 0.0)
-    else:
-        penetration = max(float(candle["high"]) - float(zone["price_low"]), 0.0)
-    return penetration / max(atr, 0.00001)
-
-
 def internal_reject_window_metadata(candles: list[dict[str, Any]], config: StrategyConfig) -> dict[str, Any]:
     lookback = max(config.zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars, 1)
     start_index = max(0, len(candles) - lookback)
-    return {"internal_reject_trigger_window_start": candles[start_index].get("time")}
+    reaction_body = candle_body(candles[-1])
+    average_reaction_body = average_body(candles, config.zone_reaction_v2_reject_avg_body_period)
+    body_ratio = reaction_body / average_reaction_body if average_reaction_body > 0 else 0.0
+    return {
+        "internal_reject_trigger_window_start": candles[start_index].get("time"),
+        # Use the same rolling body baseline as classic reject so 1.5x has the
+        # same meaning in both reaction modes.
+        "reaction_avg_body": round(average_reaction_body, 5),
+        "reaction_body_avg_ratio": round(body_ratio, 4),
+    }
 
 
 # ---------------------------------------------------------------------------

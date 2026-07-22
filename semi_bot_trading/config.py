@@ -184,9 +184,9 @@ class StrategyConfig:
     zone_reaction_v2_internal_reject_sr_requires_structure: bool
     zone_reaction_v2_internal_reject_requires_price_action: bool
     zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars: int
-    zone_reaction_v2_internal_reject_min_fvg_fill_ratio: float
+    zone_reaction_v2_internal_reject_body_min_ratio: float
+    zone_reaction_v2_internal_reject_min_fill_ratio: float
     zone_reaction_v2_internal_reject_deep_fvg_fill_ratio: float
-    zone_reaction_v2_internal_reject_min_sr_penetration_atr: float
     zone_reaction_v2_allow_neutral_range_trade: bool
     zone_reaction_v2_block_news_or_risk_off: bool
     zone_reaction_v2_macro_gate_enabled: bool
@@ -444,14 +444,14 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars=int(
                 zone_reaction_v2.get("internal_reject_watch_after_fvg_fill_bars", 8)
             ),
-            zone_reaction_v2_internal_reject_min_fvg_fill_ratio=float(
-                zone_reaction_v2.get("internal_reject_min_fvg_fill_ratio", 0.5)
+            zone_reaction_v2_internal_reject_body_min_ratio=float(
+                zone_reaction_v2.get("internal_reject_body_min_ratio", 1.5)
+            ),
+            zone_reaction_v2_internal_reject_min_fill_ratio=float(
+                zone_reaction_v2.get("internal_reject_min_fill_ratio", 0.4)
             ),
             zone_reaction_v2_internal_reject_deep_fvg_fill_ratio=float(
                 zone_reaction_v2.get("internal_reject_deep_fvg_fill_ratio", 0.8)
-            ),
-            zone_reaction_v2_internal_reject_min_sr_penetration_atr=float(
-                zone_reaction_v2.get("internal_reject_min_sr_penetration_atr", 0.0)
             ),
             zone_reaction_v2_allow_neutral_range_trade=bool(zone_reaction_v2.get("allow_neutral_range_trade", True)),
             zone_reaction_v2_block_news_or_risk_off=bool(zone_reaction_v2.get("block_news_or_risk_off", True)),

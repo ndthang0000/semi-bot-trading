@@ -14,13 +14,12 @@ from .helpers import (
     close_inside_zone,
     expected_trade_direction,
     first_text,
-    fvg_fill_ratio,
+    zone_fill_ratio,
     inside_zone_close_position,
     internal_reject_window_metadata,
     parse_utc_datetime,
     reaction,
     reaction_v2,
-    sr_penetration_atr,
     trigger_points_for_direction,
     trigger_types_for_ids,
     unique_ids,
@@ -409,6 +408,37 @@ def promote_internal_reject_if_confirmed(
     if zone_type not in {"support", "resistance", "fvg"}:
         return base_reaction
 
+    # Internal reject closes before fully reclaiming the zone. Require configured
+    # directional body quality (default 1.5x, same as classic reject) so a tiny
+    # pinbar body does not promote merely because a PA marker exists.
+    reaction_open = float(base_reaction.metadata.get("reaction_open", 0.0))
+    reaction_close = float(base_reaction.metadata.get("reaction_close", 0.0))
+    reaction_body_ratio = float(base_reaction.metadata.get("reaction_body_avg_ratio", 0.0))
+    body_direction_aligned = (
+        direction == "long" and reaction_close > reaction_open
+    ) or (
+        direction == "short" and reaction_close < reaction_open
+    )
+    body_metadata = {
+        "internal_reject_body_min_ratio": config.zone_reaction_v2_internal_reject_body_min_ratio,
+        "internal_reject_body_direction_aligned": body_direction_aligned,
+    }
+    if not body_direction_aligned:
+        return internal_reject_gate_failure(
+            base_reaction,
+            {**body_metadata, "internal_reject_body_gate_passed": False},
+            f"Internal reject {direction.upper()} requires a directional reaction body.",
+        )
+    if reaction_body_ratio < config.zone_reaction_v2_internal_reject_body_min_ratio:
+        return internal_reject_gate_failure(
+            base_reaction,
+            {**body_metadata, "internal_reject_body_gate_passed": False},
+            (
+                f"Internal reject body {reaction_body_ratio:.2f}x is below required "
+                f"{config.zone_reaction_v2_internal_reject_body_min_ratio:.2f}x."
+            ),
+        )
+
     # SR zones need the stricter structure confirmation: PA alone inside a
     # support/resistance band backtests as knife-catching (-5.5R support longs),
     # while FVG fills reverse fine on PA alone (+7R FVG longs).
@@ -435,22 +465,31 @@ def promote_internal_reject_if_confirmed(
     metadata: dict[str, Any] = {
         "inside_zone_close_position": round(inside_zone_close_position(candle, zone), 4),
         "zone_width_atr": round(zone_width_atr_ratio(zone, atr), 4),
+        **body_metadata,
+        "internal_reject_body_gate_passed": True,
+        "internal_reject_gate_passed": True,
     }
+    # Both zone families now use the same normalized depth threshold. The FVG
+    # branch keeps only its lifecycle/deep-fill wording; SR no longer depends on
+    # ATR, which previously made the threshold inconsistent across zone widths.
+    fill_ratio = zone_fill_ratio(zone, candle)
+    metadata["fill_ratio"] = round(fill_ratio, 4)
+    if fill_ratio < config.zone_reaction_v2_internal_reject_min_fill_ratio:
+        return internal_reject_gate_failure(
+            base_reaction,
+            metadata,
+            (
+                f"Internal reject fill {fill_ratio:.0%} is below required "
+                f"{config.zone_reaction_v2_internal_reject_min_fill_ratio:.0%}."
+            ),
+        )
     if zone_type == "fvg":
-        fill_ratio = fvg_fill_ratio(zone, candle)
-        metadata["fill_ratio"] = round(fill_ratio, 4)
-        if fill_ratio < config.zone_reaction_v2_internal_reject_min_fvg_fill_ratio:
-            return base_reaction
         depth_label = "deep " if fill_ratio >= config.zone_reaction_v2_internal_reject_deep_fvg_fill_ratio else ""
         side = "bullish FVG" if direction == "long" else "bearish FVG"
         reason = [f"Internal reject inside {side} after {depth_label}{fill_ratio:.0%} fill."]
     else:
-        penetration = sr_penetration_atr(zone, candle, direction, atr)
-        metadata["sr_penetration_atr"] = round(penetration, 4)
-        if penetration < config.zone_reaction_v2_internal_reject_min_sr_penetration_atr:
-            return base_reaction
         side = "support" if direction == "long" else "resistance"
-        reason = [f"Internal reject inside {side} after {penetration:.2f} ATR penetration."]
+        reason = [f"Internal reject inside {side} after {fill_ratio:.0%} fill."]
 
     metadata["internal_reject_reason"] = reason[0]
     confirmation_reason = (
@@ -476,6 +515,26 @@ def promote_internal_reject_if_confirmed(
             # with the pre-promotion state (e.g. slow_reaction).
             "reaction_v2": "internal_reject",
             "previous_reaction_v2": base_reaction.state,
+        },
+    )
+
+
+def internal_reject_gate_failure(
+    base_reaction: ReactionResult,
+    metadata: dict[str, Any],
+    reason: str,
+) -> ReactionResult:
+    """Keep the pre-promotion state while exposing why Internal was rejected."""
+    return ReactionResult(
+        state=base_reaction.state,
+        direction=base_reaction.direction,
+        touched=base_reaction.touched,
+        candle_time=base_reaction.candle_time,
+        reason=[*base_reaction.reason, reason],
+        metadata={
+            **base_reaction.metadata,
+            **metadata,
+            "internal_reject_gate_passed": False,
         },
     )
 

@@ -131,9 +131,9 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_internal_reject_sr_requires_structure=False,
     zone_reaction_v2_internal_reject_requires_price_action=True,
     zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars=8,
-    zone_reaction_v2_internal_reject_min_fvg_fill_ratio=0.5,
+    zone_reaction_v2_internal_reject_body_min_ratio=0.0,
+    zone_reaction_v2_internal_reject_min_fill_ratio=0.5,
     zone_reaction_v2_internal_reject_deep_fvg_fill_ratio=0.8,
-    zone_reaction_v2_internal_reject_min_sr_penetration_atr=0.0,
     zone_reaction_v2_allow_neutral_range_trade=True,
     zone_reaction_v2_block_news_or_risk_off=True,
     zone_reaction_v2_macro_gate_enabled=True,
@@ -1326,6 +1326,143 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
         self.assertEqual("long", candidates[0]["direction"])
+
+    def test_zone_reaction_v2_internal_reject_rejects_weak_directional_body(self) -> None:
+        candles = [
+            candle("00:00", 95, 96.5, 94.5, 96),
+            candle("00:15", 100.4, 106, 99.5, 100.2),
+        ]
+        resistance = zone("resistance", "bearish", 100, 110)
+        resistance["metadata"] = {"trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("bearish", "trending"),
+            candles,
+            [point("pinbar_bearish", "down", "00:15", "pa1")],
+            replace(
+                CONFIG,
+                zone_reaction_v2_internal_reject_body_min_ratio=1.5,
+                zone_reaction_v2_internal_reject_min_fill_ratio=0.4,
+            ),
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual("waiting_bos", candidates[0]["zone_reaction_state"])
+        self.assertFalse(candidates[0]["metadata"]["internal_reject_body_gate_passed"])
+        self.assertIn("below required 1.50x", " ".join(candidates[0]["reason"]))
+
+    def test_zone_reaction_v2_internal_reject_rejects_wrong_color_body(self) -> None:
+        candles = [
+            candle("00:00", 100, 100.5, 99.5, 100.1),
+            candle("00:15", 100.2, 108, 100, 106),
+        ]
+        resistance = zone("resistance", "bearish", 100, 110)
+        resistance["metadata"] = {"trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("bearish", "trending"),
+            candles,
+            [point("pinbar_bearish", "down", "00:15", "pa1")],
+            replace(
+                CONFIG,
+                zone_reaction_v2_internal_reject_body_min_ratio=1.5,
+                zone_reaction_v2_internal_reject_min_fill_ratio=0.4,
+            ),
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertFalse(candidates[0]["metadata"]["internal_reject_body_direction_aligned"])
+        self.assertIn("SHORT requires a directional reaction body", " ".join(candidates[0]["reason"]))
+
+    def test_zone_reaction_v2_sr_internal_reject_requires_forty_percent_fill(self) -> None:
+        candles = [
+            candle("00:00", 99, 99.2, 98.8, 99.1),
+            candle("00:15", 102.8, 103, 100.8, 101),
+        ]
+        resistance = zone("resistance", "bearish", 100, 110)
+        resistance["metadata"] = {"trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("bearish", "trending"),
+            candles,
+            [point("engulfing_bearish", "down", "00:15", "pa1")],
+            replace(
+                CONFIG,
+                zone_reaction_v2_internal_reject_body_min_ratio=1.5,
+                zone_reaction_v2_internal_reject_min_fill_ratio=0.4,
+            ),
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertEqual(0.3, candidates[0]["metadata"]["fill_ratio"])
+        self.assertIn("fill 30% is below required 40%", " ".join(candidates[0]["reason"]))
+
+    def test_zone_reaction_v2_sr_internal_reject_accepts_strong_body_at_forty_percent_fill(self) -> None:
+        candles = [
+            candle("00:00", 99, 99.2, 98.8, 99.1),
+            candle("00:15", 103.8, 104, 100.8, 101),
+        ]
+        resistance = zone("resistance", "bearish", 100, 110)
+        resistance["metadata"] = {"trade_modes": ["internal_reject"]}
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [resistance],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("CHOCH", "down", "00:15", "bos1"),
+                point("engulfing_bearish", "down", "00:15", "pa1"),
+            ],
+            replace(
+                CONFIG,
+                zone_reaction_v2_internal_reject_body_min_ratio=1.5,
+                zone_reaction_v2_internal_reject_min_fill_ratio=0.4,
+            ),
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
+        self.assertEqual(0.4, candidates[0]["metadata"]["fill_ratio"])
+        self.assertTrue(candidates[0]["metadata"]["internal_reject_body_gate_passed"])
+        self.assertGreaterEqual(candidates[0]["metadata"]["reaction_body_avg_ratio"], 1.5)
+
+    def test_zone_reaction_v2_fvg_internal_reject_uses_same_body_gate(self) -> None:
+        candles = [
+            candle("00:00", 122, 124, 121, 123),
+            candle("00:15", 110.2, 118, 108, 110),
+        ]
+        fvg = zone("fvg", "bearish", 100, 120)
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [fvg],
+            contexts("bearish", "trending"),
+            candles,
+            [
+                point("CHOCH", "down", "00:15", "bos1"),
+                point("pinbar_bearish", "down", "00:15", "pa1"),
+            ],
+            replace(
+                CONFIG,
+                zone_reaction_v2_internal_reject_body_min_ratio=1.5,
+                zone_reaction_v2_internal_reject_min_fill_ratio=0.4,
+            ),
+            allowed_playbooks={"zone_reaction_v2"},
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertFalse(candidates[0]["metadata"]["internal_reject_body_gate_passed"])
 
     def test_zone_reaction_v2_sr_without_explicit_modes_does_not_internal_reject(self) -> None:
         candles = [candle("00:15", 102, 109, 101, 108)]
