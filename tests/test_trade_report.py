@@ -41,6 +41,7 @@ class TradeReportTest(unittest.TestCase):
             "reason": ["Strong bearish rejection from <zone>."],
             "metadata": {
                 "as_of": "2030-01-01T01:00:00+00:00",
+                "reaction_candle_time": "2030-01-01T01:15:00+00:00",
                 "reaction_v2": "reject",
                 "reaction_open": 110.0,
                 "reaction_high": 115.0,
@@ -141,6 +142,12 @@ class TradeReportTest(unittest.TestCase):
         self.assertEqual(90.0, report.trades[0]["current_stop"])
         self.assertEqual("atr_fallback", report.trades[0]["sl_trace"]["selected_source"])
         self.assertEqual(20.0, report.trades[0]["excursion"]["mfe_price"])
+        self.assertEqual(10.0, report.trades[0]["trigger"]["body_average"])
+        self.assertEqual(2.0, report.trades[0]["trigger"]["body_average_ratio"])
+        self.assertTrue(report.trades[0]["trigger"]["strength_gate_passed"])
+        self.assertTrue(report.trades[0]["trigger"]["direction_aligned"])
+        self.assertTrue(report.trades[0]["trigger"]["touches_zone"])
+        self.assertTrue(report.trades[0]["trigger"]["reclaim_passed"])
         self.assertTrue(any("Current zone differs" in warning for warning in report.warnings))
 
     def test_renders_self_contained_escaped_html(self) -> None:
@@ -157,8 +164,40 @@ class TradeReportTest(unittest.TestCase):
         self.assertIn("<!doctype html>", output)
         self.assertIn("zone-trade-report-v1", output)
         self.assertIn("Stop-loss decision trace", output)
+        self.assertIn("Strength gate", output)
+        self.assertIn("Body / average", output)
+        self.assertIn("Classic reject: directional body", output)
         self.assertIn("Strong bearish rejection from &lt;zone&gt;.", output)
         self.assertNotIn("Strong bearish rejection from <zone>.", output)
+
+    def test_pinbar_strength_uses_wick_recovery_not_body_ratio(self) -> None:
+        from semi_bot_trading.trade_report import _trigger_quality
+
+        trigger = _trigger_quality(
+            self.conn,
+            self.config,
+            symbol="XAUUSD",
+            side="buy",
+            reaction="reject",
+            metadata={
+                "reaction_candle_time": "2030-01-01T01:15:00+00:00",
+                "reaction_open": 90.0,
+                "reaction_high": 93.0,
+                "reaction_low": 70.0,
+                "reaction_close": 92.0,
+                "reaction_body": 2.0,
+                "zone_price_low": 70.0,
+                "zone_price_high": 91.0,
+            },
+            reasons=["Bullish pinbar rejection at zone."],
+        )
+
+        self.assertEqual("pinbar_reject", trigger["validation_method"])
+        self.assertEqual(0.2, trigger["body_average_ratio"])
+        self.assertEqual(2.2, trigger["strength_ratio"])
+        self.assertTrue(trigger["strength_gate_passed"])
+        self.assertTrue(trigger["wick_body_gate_passed"])
+        self.assertTrue(trigger["wick_range_gate_passed"])
 
     def test_missing_zone_and_ideas_is_an_error(self) -> None:
         with self.assertRaisesRegex(ValueError, "Zone not found"):
@@ -168,6 +207,23 @@ class TradeReportTest(unittest.TestCase):
                 "missing-zone",
                 database=":memory:",
             )
+
+    def test_open_trade_has_no_realized_pnl_or_r(self) -> None:
+        self.conn.execute(
+            "UPDATE trade_orders SET status = 'filled', closed_at = NULL, close_price = NULL, pnl = NULL, pnl_r = NULL"
+        )
+        self.conn.commit()
+
+        report = build_zone_trade_report(
+            self.conn,
+            self.config,
+            self.zone_id,
+            database=":memory:",
+        )
+
+        self.assertEqual(0, report.stats["closed_count"])
+        self.assertIsNone(report.stats["total_pnl"])
+        self.assertIsNone(report.stats["total_r"])
 
     def test_mixed_currencies_are_grouped_without_cross_currency_average(self) -> None:
         self.conn.execute(

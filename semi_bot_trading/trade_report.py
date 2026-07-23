@@ -254,6 +254,20 @@ def _build_trade(
     opened_at = order.get("opened_at") or execution.get("created_at") or idea.get("created_at")
     closed_at = order.get("closed_at")
     account_label = order.get("account_label") or execution.get("account_label") or idea_context.get("account_label")
+    reaction_family = (
+        candidate.get("zone_reaction_state")
+        or candidate_meta.get("reaction_v2")
+        or order_meta.get("zone_reaction_state")
+    )
+    trigger = _trigger_quality(
+        conn,
+        config,
+        symbol=str(order.get("symbol") or idea.get("symbol") or ""),
+        side=side,
+        reaction=str(reaction_family or "unknown"),
+        metadata=candidate_meta,
+        reasons=candidate.get("reason") or [],
+    )
     return {
         "idea_id": idea.get("id"),
         "order_id": order.get("id"),
@@ -263,7 +277,7 @@ def _build_trade(
         "broker_symbol": execution.get("broker_symbol") or idea_context.get("broker_symbol"),
         "side": side,
         "playbook": idea.get("playbook") or candidate.get("playbook"),
-        "reaction": candidate.get("zone_reaction_state") or candidate_meta.get("reaction_v2") or order_meta.get("zone_reaction_state"),
+        "reaction": reaction_family,
         "status": order.get("status") or execution.get("status") or idea.get("status"),
         "score": candidate.get("score"),
         "risk_reward": candidate.get("risk_reward") or idea.get("risk_reward"),
@@ -293,16 +307,7 @@ def _build_trade(
             "overlays": candidate_meta.get("overlays") or [],
             "context_bypass": candidate_meta.get("context_bypass"),
         },
-        "trigger": {
-            "reaction_open": candidate_meta.get("reaction_open"),
-            "reaction_high": candidate_meta.get("reaction_high"),
-            "reaction_low": candidate_meta.get("reaction_low"),
-            "reaction_close": candidate_meta.get("reaction_close"),
-            "reaction_body": candidate_meta.get("reaction_body"),
-            "structure_types": candidate_meta.get("structure_trigger_types") or [],
-            "price_action_types": candidate_meta.get("price_action_trigger_types") or [],
-            "fill_ratio": candidate_meta.get("zone_fill_ratio") or candidate_meta.get("fill_ratio"),
-        },
+        "trigger": trigger,
         "reason": candidate.get("reason") or [],
         "blocked_reason": candidate.get("blocked_reason") or [],
         "sl_trace": sl_trace,
@@ -314,6 +319,134 @@ def _build_trade(
         "fills": fills,
         "reviews": reviews,
         "raw": {"idea": idea, "order": order, "execution": execution, "candidate": candidate},
+    }
+
+
+def _trigger_quality(
+    conn: Connection,
+    config: AppConfig,
+    *,
+    symbol: str,
+    side: str,
+    reaction: str,
+    metadata: dict[str, Any],
+    reasons: list[Any],
+) -> dict[str, Any]:
+    """Explain trigger strength from persisted data or its historical M15 window."""
+    open_ = _float(metadata.get("reaction_open"))
+    high = _float(metadata.get("reaction_high"))
+    low = _float(metadata.get("reaction_low"))
+    close = _float(metadata.get("reaction_close"))
+    body = _float(metadata.get("reaction_body"))
+    period = config.strategy.zone_reaction_v2_reject_avg_body_period
+    average = _float(metadata.get("reaction_avg_body"))
+    average_source = "persisted candidate"
+    candle_time = metadata.get("reaction_candle_time") or metadata.get("as_of")
+    if average is None and symbol and candle_time:
+        rows = conn.execute(
+            """
+            SELECT open, close
+            FROM candles
+            WHERE symbol = ? AND timeframe = 'M15' AND open_time <= ?
+            ORDER BY open_time DESC
+            LIMIT ?
+            """,
+            (symbol, candle_time, period),
+        ).fetchall()
+        bodies = [abs(float(row["close"]) - float(row["open"])) for row in rows]
+        if bodies:
+            average = sum(bodies) / len(bodies)
+            period = len(bodies)
+            average_source = "reconstructed from historical M15 candles"
+
+    ratio = _float(metadata.get("reaction_body_avg_ratio"))
+    if ratio is None and body is not None and average is not None and average > 0:
+        ratio = body / average
+    required_ratio = (
+        config.strategy.zone_reaction_v2_internal_reject_body_min_ratio
+        if reaction == "internal_reject"
+        else config.strategy.zone_reaction_v2_reject_body_min_ratio
+    )
+    required_body = average * required_ratio if average is not None else None
+    expected_bullish = side in {"long", "buy"}
+    is_pinbar = any("pinbar rejection" in str(reason).lower() for reason in reasons)
+    direction_aligned = None
+    if open_ is not None and close is not None:
+        direction_aligned = close > open_ if expected_bullish else close < open_
+    body_gate_passed = ratio >= required_ratio if ratio is not None else None
+
+    full_range = high - low if high is not None and low is not None else None
+    wick = None
+    rejection_size = None
+    if None not in (open_, high, low, close):
+        if expected_bullish:
+            wick = min(open_, close) - low
+            rejection_size = close - low
+        else:
+            wick = high - max(open_, close)
+            rejection_size = high - close
+    wick_body_ratio = wick / body if wick is not None and body is not None and body > 0 else None
+    wick_range_ratio = wick / full_range if wick is not None and full_range is not None and full_range > 0 else None
+    wick_body_min = config.strategy.zone_reaction_v2_reject_pinbar_wick_body_ratio
+    wick_range_min = config.strategy.zone_reaction_v2_reject_pinbar_min_wick_ratio
+
+    if is_pinbar:
+        strength_ratio = rejection_size / average if rejection_size is not None and average else None
+        required_move = average * required_ratio if average is not None else None
+        strength_gate_passed = (
+            strength_ratio is not None
+            and strength_ratio >= required_ratio
+            and wick_body_ratio is not None
+            and wick_body_ratio >= wick_body_min
+            and wick_range_ratio is not None
+            and wick_range_ratio >= wick_range_min
+        )
+        strength_label = "Recovery / average"
+    else:
+        strength_ratio = ratio
+        required_move = required_body
+        strength_gate_passed = metadata.get("internal_reject_body_gate_passed", body_gate_passed)
+        strength_label = "Body / average"
+
+    zone_low = _float(metadata.get("zone_price_low"))
+    zone_high = _float(metadata.get("zone_price_high"))
+    touches_zone = None
+    if high is not None and low is not None and zone_low is not None and zone_high is not None:
+        touches_zone = high >= zone_low and low <= zone_high
+    reclaim_passed = None
+    if reaction == "reject" and close is not None and zone_low is not None and zone_high is not None:
+        reclaim_passed = close > zone_high if expected_bullish else close < zone_low
+
+    if reaction == "internal_reject":
+        rule = "Internal reject: directional body >= rolling M15 average × configured ratio; close may remain inside zone."
+    elif metadata.get("wick_reject_confirmed"):
+        rule = "Confirmed wick reject: prior wick rejection plus a directional confirmation candle."
+    elif is_pinbar:
+        rule = "Pinbar reject: wick >= body × wick ratio, wick covers enough candle range, and wick-to-close recovery >= rolling average body × strength ratio."
+    else:
+        rule = "Classic reject: directional body >= rolling M15 average × configured ratio, touch zone, then close beyond the zone edge."
+
+    return {
+        "reaction_open": open_, "reaction_high": high, "reaction_low": low, "reaction_close": close,
+        "reaction_body": body,
+        "structure_types": metadata.get("structure_trigger_types") or [],
+        "price_action_types": metadata.get("price_action_trigger_types") or [],
+        "fill_ratio": metadata.get("zone_fill_ratio") or metadata.get("fill_ratio"),
+        "body_average": average, "body_average_period": period,
+        "body_average_source": average_source if average is not None else None,
+        "body_average_ratio": ratio, "body_min_ratio": required_ratio,
+        "required_body": required_body, "direction_aligned": direction_aligned,
+        "body_gate_passed": body_gate_passed,
+        "validation_method": "pinbar_reject" if is_pinbar else "directional_body_reject",
+        "strength_label": strength_label, "strength_ratio": strength_ratio,
+        "required_move": required_move, "strength_gate_passed": strength_gate_passed,
+        "wick_body_ratio": wick_body_ratio, "wick_body_min_ratio": wick_body_min,
+        "wick_body_gate_passed": wick_body_ratio >= wick_body_min if wick_body_ratio is not None else None,
+        "wick_range_ratio": wick_range_ratio, "wick_range_min_ratio": wick_range_min,
+        "wick_range_gate_passed": wick_range_ratio >= wick_range_min if wick_range_ratio is not None else None,
+        "touches_zone": touches_zone, "reclaim_passed": reclaim_passed,
+        "expected_direction": "bullish" if expected_bullish else "bearish",
+        "rule": rule,
     }
 
 
@@ -421,10 +554,10 @@ def _aggregate_stats(trades: list[dict[str, Any]]) -> dict[str, Any]:
         "wins": wins,
         "losses": losses,
         "win_rate": wins / len(closed) if closed else None,
-        "total_pnl": None if mixed_currencies else round(sum(pnl_values), 2),
+        "total_pnl": None if mixed_currencies or not closed else round(sum(pnl_values), 2),
         "pnl_by_currency": {key: round(value, 2) for key, value in sorted(pnl_by_currency.items())},
         "mixed_currencies": mixed_currencies,
-        "total_r": round(sum(r_values), 4),
+        "total_r": round(sum(r_values), 4) if r_values else None,
         "average_pnl": round(sum(pnl_values) / len(closed), 2) if closed and not mixed_currencies else None,
         "average_r": round(sum(r_values) / len(r_values), 4) if r_values else None,
     }
@@ -546,9 +679,19 @@ def _render_trade(trade: dict[str, Any]) -> str:
         ("Open", _number(trigger.get("reaction_open"), 5)), ("High", _number(trigger.get("reaction_high"), 5)),
         ("Low", _number(trigger.get("reaction_low"), 5)), ("Close", _number(trigger.get("reaction_close"), 5)),
         ("Body", _number(trigger.get("reaction_body"), 5)), ("Zone fill", _percent(trigger.get("fill_ratio"))),
+        (f"Average body ({trigger.get('body_average_period') or '--'} M15)", _number(trigger.get("body_average"), 5)),
+        ("Body / average", f"{_number(trigger.get('body_average_ratio'), 2)}×"),
+        (trigger.get("strength_label") or "Strength / average", f"{_number(trigger.get('strength_ratio'), 2)}×"),
+        ("Required strength", f">= {_number(trigger.get('body_min_ratio'), 2)}× (move >= {_number(trigger.get('required_move'), 5)})"),
+        ("Strength gate", _pass_fail(trigger.get("strength_gate_passed"))),
+        ("Pinbar wick / body", _ratio_gate(trigger.get("wick_body_ratio"), trigger.get("wick_body_min_ratio"), trigger.get("wick_body_gate_passed"), trigger.get("validation_method") == "pinbar_reject")),
+        ("Pinbar wick / range", _percent_gate(trigger.get("wick_range_ratio"), trigger.get("wick_range_min_ratio"), trigger.get("wick_range_gate_passed"), trigger.get("validation_method") == "pinbar_reject")),
+        (f"Direction ({trigger.get('expected_direction') or '--'} required)", _pass_fail(trigger.get("direction_aligned"))),
+        ("Touched zone", _pass_fail(trigger.get("touches_zone"))),
+        ("Closed beyond zone", _pass_fail(trigger.get("reclaim_passed"))),
         ("Structure", ", ".join(trigger.get("structure_types") or []) or "--"),
         ("Price action", ", ".join(trigger.get("price_action_types") or []) or "--"),
-    ])}</div>
+    ])}<div class="decision"><strong>Validation rule:</strong> {_e(trigger.get("rule") or "--")}<br><span class="muted">Average source: {_e(trigger.get("body_average_source") or "--")}</span></div></div>
   </div>
   <h3>Why eligible</h3><ul>{reason}</ul>
   <h3>Stop-loss decision trace</h3>
@@ -741,6 +884,26 @@ def _signed(value: Any, digits: int = 2) -> str:
 def _percent(value: Any) -> str:
     number = _float(value)
     return "--" if number is None else f"{number:.1%}"
+
+
+def _pass_fail(value: Any) -> str:
+    if value is True:
+        return "PASS"
+    if value is False:
+        return "FAIL"
+    return "--"
+
+
+def _ratio_gate(value: Any, minimum: Any, passed: Any, applies: bool) -> str:
+    if not applies:
+        return "--"
+    return f"{_number(value, 2)}× >= {_number(minimum, 2)}× · {_pass_fail(passed)}"
+
+
+def _percent_gate(value: Any, minimum: Any, passed: Any, applies: bool) -> str:
+    if not applies:
+        return "--"
+    return f"{_percent(value)} >= {_percent(minimum)} · {_pass_fail(passed)}"
 
 
 def _pnl_class(value: Any) -> str:

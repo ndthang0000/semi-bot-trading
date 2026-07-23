@@ -955,7 +955,8 @@ def cmd_generate_trade_report(args: argparse.Namespace) -> None:
         for currency, value in report.stats["pnl_by_currency"].items()
     ) or "--"
     print(f"Net P&L: {pnl_summary}")
-    print(f"Total R: {report.stats['total_r']:.4f}")
+    total_r = report.stats["total_r"]
+    print(f"Total R: {total_r:.4f}" if total_r is not None else "Total R: --")
     print(f"HTML report: {path.resolve()}")
 
 
