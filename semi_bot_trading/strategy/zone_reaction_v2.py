@@ -66,6 +66,13 @@ def classify_zone_reaction_v2(
 
     body = candle_body(last)
     avg_body = average_body(candles, config.zone_reaction_v2_reject_avg_body_period)
+    body_ratio = body / avg_body if avg_body > 0 else 0.0
+    # Persist the exact rolling baseline used by the runtime decision so a
+    # future trade report does not need to reconstruct it from mutable candles.
+    body_strength_metadata = {
+        "reaction_avg_body": round(avg_body, 5),
+        "reaction_body_avg_ratio": round(body_ratio, 4),
+    }
     strong_reject = body >= avg_body * config.zone_reaction_v2_reject_body_min_ratio
     fakeout_limit = atr * config.zone_reaction_v2_fakeout_max_atr
     buffer = atr * config.breakout_buffer_atr_multiplier
@@ -79,7 +86,7 @@ def classify_zone_reaction_v2(
             last,
             [f"Confirmed {expected} wick rejection from zone."],
             buffer,
-            confirmed_wick_reject,
+            {**confirmed_wick_reject, **body_strength_metadata},
         )
 
     if expected == "long":
@@ -99,7 +106,15 @@ def classify_zone_reaction_v2(
                 },
             )
         if touched and close > zone_high and close > open_ and strong_reject:
-            return reaction_v2("reject", "long", True, last, ["Strong bullish rejection from zone."], buffer)
+            return reaction_v2(
+                "reject",
+                "long",
+                True,
+                last,
+                ["Strong bullish rejection from zone."],
+                buffer,
+                body_strength_metadata,
+            )
         if (
             config.zone_reaction_v2_reject_pinbar_enabled
             and low <= zone_high
@@ -112,7 +127,15 @@ def classify_zone_reaction_v2(
                 body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
             )
         ):
-            return reaction_v2("reject", "long", True, last, ["Bullish pinbar rejection at zone."], buffer)
+            return reaction_v2(
+                "reject",
+                "long",
+                True,
+                last,
+                ["Bullish pinbar rejection at zone."],
+                buffer,
+                body_strength_metadata,
+            )
         wick_reject = wick_rejection_metadata(last, "long", zone_low, zone_high, avg_body, config)
         if wick_reject is not None:
             return reaction_v2(
@@ -141,7 +164,15 @@ def classify_zone_reaction_v2(
                 },
             )
         if touched and close < zone_low and close < open_ and strong_reject:
-            return reaction_v2("reject", "short", True, last, ["Strong bearish rejection from zone."], buffer)
+            return reaction_v2(
+                "reject",
+                "short",
+                True,
+                last,
+                ["Strong bearish rejection from zone."],
+                buffer,
+                body_strength_metadata,
+            )
         if (
             config.zone_reaction_v2_reject_pinbar_enabled
             and high >= zone_low
@@ -154,7 +185,15 @@ def classify_zone_reaction_v2(
                 body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
             )
         ):
-            return reaction_v2("reject", "short", True, last, ["Bearish pinbar rejection at zone."], buffer)
+            return reaction_v2(
+                "reject",
+                "short",
+                True,
+                last,
+                ["Bearish pinbar rejection at zone."],
+                buffer,
+                body_strength_metadata,
+            )
         wick_reject = wick_rejection_metadata(last, "short", zone_low, zone_high, avg_body, config)
         if wick_reject is not None:
             return reaction_v2(

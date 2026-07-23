@@ -246,6 +246,8 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("reject", reaction.state)
         self.assertEqual("long", reaction.direction)
+        self.assertIn("reaction_avg_body", reaction.metadata)
+        self.assertIn("reaction_body_avg_ratio", reaction.metadata)
         self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
 
     def test_zone_reaction_v2_carries_recent_reject_after_price_leaves_zone(self) -> None:
@@ -452,6 +454,13 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("reject", reaction.state)
         self.assertEqual("long", reaction.direction)
+        expected_average = (1.0 + 1.0 + 11.003) / 3
+        self.assertAlmostEqual(expected_average, reaction.metadata["reaction_avg_body"], places=5)
+        self.assertAlmostEqual(
+            11.003 / expected_average,
+            reaction.metadata["reaction_body_avg_ratio"],
+            places=4,
+        )
 
     def test_m15_price_zone_does_not_create_setup_candidate(self) -> None:
         candles = [
@@ -495,6 +504,8 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(["zone_reaction_v2"], [candidate["playbook"] for candidate in candidates])
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("reject", candidates[0]["zone_reaction_state"])
+        self.assertIn("reaction_avg_body", candidates[0]["metadata"])
+        self.assertIn("reaction_body_avg_ratio", candidates[0]["metadata"])
 
     def test_active_sr_zone_without_expiry_is_tradeable(self) -> None:
         candles = [

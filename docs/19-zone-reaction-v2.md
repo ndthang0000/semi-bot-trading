@@ -111,6 +111,13 @@ Phase hien tai la reject-family. Chi `reject` va `internal_reject` duoc phep tao
 
 Strong body reject phai dung mau nen theo huong entry: long reject can bullish candle (`close > open`), short reject can bearish candle (`close < open`). Neu candle cham resistance/support co wick reject nhung dong nguoc mau, setup khong duoc promote thanh strong reject; no chuyen sang `waiting_bos` voi metadata `wick_reject=true`. Candle ke tiep moi duoc promote thanh `reject` khi xac nhan cung huong: short can bearish candle pha low cua wick candle, long can bullish candle pha high cua wick candle.
 
+Moi trade `reject` va `internal_reject` luu snapshot body-strength trong candidate/order metadata:
+
+- `reaction_avg_body`: average body M15 dung tai thoi diem runtime.
+- `reaction_body_avg_ratio`: `reaction_body / reaction_avg_body`.
+
+Snapshot nay giu report va research dung voi quyet dinh runtime ngay ca khi bang candle sau nay duoc import lai. Trade cu khong co hai field van duoc report reconstruct tu historical M15 candles.
+
 Impulse reject khong duoc chase market neu gia da dong cua qua xa zone. Voi `reject`:
 
 - Neu range cua nen reaction `> impulse_limit_range_atr * ATR_M15`.
