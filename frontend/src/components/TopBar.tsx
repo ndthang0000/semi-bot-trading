@@ -4,7 +4,7 @@ import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/a
 import type { NewsResponse } from "../api/chart";
 import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
-import type { AddEntityKind, PlaybookKey, Timeframe, ZoneVisibilityKey } from "../types";
+import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
 import { NewsPill } from "./NewsWidget";
 
 type TopBarProps = {
@@ -356,6 +356,7 @@ function LayerMenu() {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
+  const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const setActiveZonesOnly = useChartStore((state) => state.setActiveZonesOnly);
@@ -363,6 +364,7 @@ function LayerMenu() {
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setAllZoneTypesVisible = useChartStore((state) => state.setAllZoneTypesVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
+  const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
   const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
   const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
 
@@ -378,7 +380,7 @@ function LayerMenu() {
   }, [open]);
 
   const visibleZoneCount = Object.values(zoneTypeVisibility).filter(Boolean).length;
-  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0);
+  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
   const allZonesVisible = visibleZoneCount === LAYER_ITEMS.length;
 
   return (
@@ -449,6 +451,20 @@ function LayerMenu() {
               />
             ))}
             <MenuCheck checked={showStructure} colorClass="bg-blue-400" label="Structure + ZigZag" onChange={setShowStructure} />
+            <label className="flex items-center gap-2 rounded px-1.5 py-1 text-slate-300">
+              <span className="h-2.5 w-2.5 rounded-sm bg-fuchsia-400" />
+              <span className="flex-1">Trades</span>
+              <select
+                className="h-7 rounded border border-ink-700 bg-ink-850 px-2 text-xs text-slate-100 outline-none"
+                value={tradeVisibilityMode}
+                onChange={(event) => setTradeVisibilityMode(event.target.value as TradeVisibilityMode)}
+              >
+                <option value="visible">Visible trades</option>
+                <option value="hidden">Hidden trades</option>
+                <option value="all">All trades</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
           </div>
         </div>
       ) : null}

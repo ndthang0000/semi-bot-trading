@@ -497,7 +497,7 @@ def load_chart_trades(
                trade_orders.stop_loss, trade_orders.take_profit_json,
                trade_orders.quantity, trade_orders.opened_at, trade_orders.closed_at,
                trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
-               trade_orders.source, trade_orders.metadata_json,
+               trade_orders.hidden_on_chart, trade_orders.source, trade_orders.metadata_json,
                trade_ideas.playbook, trade_ideas.direction,
                trade_reviews.id AS review_id,
                trade_reviews.grade AS review_grade,
@@ -609,6 +609,7 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
         "close_price": float(row["close_price"]) if row["close_price"] is not None else None,
         "pnl": float(row["pnl"]) if row["pnl"] is not None else None,
         "pnl_r": float(row["pnl_r"]) if row["pnl_r"] is not None else None,
+        "hidden_on_chart": bool(row["hidden_on_chart"]) if row_has_key(row, "hidden_on_chart") else False,
         "source": row["source"],
         "metadata": json_loads(row["metadata_json"], {}),
     }

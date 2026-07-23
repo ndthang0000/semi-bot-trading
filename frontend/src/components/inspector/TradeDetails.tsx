@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Save } from "lucide-react";
+import { Camera, Eye, EyeOff, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toPng } from "html-to-image";
-import { createTradeReviewAttachment, fetchTradeReviewAttachments, updateTradeReview } from "../../api/chart";
+import { createTradeReviewAttachment, fetchTradeReviewAttachments, updateTradeReview, updateTradeVisibility } from "../../api/chart";
 import { authFetch } from "../../api/auth";
 import { compactTime, price } from "../../lib/time";
 import { useChartStore } from "../../store/chartStore";
-import type { TradeOrder, TradeReview, TradeReviewAttachment } from "../../types";
+import type { ChartPayload, TradeHistoryResponse, TradeOrder, TradeReview, TradeReviewAttachment } from "../../types";
 
 type ToastKind = "success" | "error";
 
@@ -17,6 +17,7 @@ type StateMachineStep = {
 };
 
 export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kind: ToastKind, text: string) => void }) {
+  const queryClient = useQueryClient();
   const setSelected = useChartStore((state) => state.setSelected);
   const metadata = trade.metadata ?? {};
   const candidateMetadata = readObject(metadata.candidate_metadata);
@@ -32,6 +33,26 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const showCurrentStopLoss =
     initialStopLoss !== null && trade.stop_loss !== null && Math.abs(initialStopLoss - trade.stop_loss) > 1e-9;
   const statusNote = tradeStatusNote(trade.status);
+  const visibilityMutation = useMutation({
+    mutationFn: () => updateTradeVisibility(trade.id, !trade.hidden_on_chart),
+    onSuccess: (saved) => {
+      const updateTrade = (item: TradeOrder): TradeOrder =>
+        item.id === saved.id ? { ...item, hidden_on_chart: saved.hidden_on_chart } : item;
+      queryClient.setQueriesData<ChartPayload>({ queryKey: ["chart"] }, (current) =>
+        current
+          ? { ...current, layers: { ...current.layers, trades: current.layers.trades.map(updateTrade) } }
+          : current,
+      );
+      queryClient.setQueriesData<TradeHistoryResponse>({ queryKey: ["trade-history"] }, (current) =>
+        current ? { ...current, trades: current.trades.map(updateTrade) } : current,
+      );
+      setSelected({ kind: "trade", entity: updateTrade(trade) });
+      showToast("success", saved.hidden_on_chart ? "Trade hidden from chart." : "Trade restored on chart.");
+    },
+    onError: (error) => {
+      showToast("error", error instanceof Error ? error.message : "Could not update trade visibility.");
+    },
+  });
 
   return (
     <div className="grid gap-3 text-sm">
@@ -47,6 +68,20 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
           {statusNote}
         </div>
       ) : null}
+
+      <button
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-200 hover:border-cyan-500 disabled:opacity-50"
+        disabled={visibilityMutation.isPending}
+        type="button"
+        onClick={() => visibilityMutation.mutate()}
+      >
+        {trade.hidden_on_chart ? <Eye size={15} /> : <EyeOff size={15} />}
+        {visibilityMutation.isPending
+          ? "Saving..."
+          : trade.hidden_on_chart
+            ? "Show on chart"
+            : "Hide from chart"}
+      </button>
 
       <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/60 p-3">
         <TradeMetric label="Entry" value={price(trade.entry_price)} />

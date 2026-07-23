@@ -62,12 +62,20 @@ Các thành phần:
 Filter:
 
 - Show all trades.
+- Visible trades: mặc định chỉ vẽ các trade chưa được đánh dấu `hidden_on_chart`.
+- Hidden trades: chỉ vẽ các trade đã hidden để review và bấm `Show on chart`.
+- All trades: vẽ cả trade đã hidden để có thể chọn và khôi phục.
+- Off: ẩn toàn bộ trade overlay.
 - Backtest only.
 - Live only.
 - Winning/losing trades.
 - Filter theo playbook.
 
 Mục tiêu là khi review một setup, user thấy được trade đã vào ở đâu so với OB/FVG/SR/liquidity và bias/regime lúc đó.
+
+Mỗi trade có action `Hide from chart` / `Show on chart`. Đây chỉ là trạng thái
+trình bày được lưu trong `trade_orders.hidden_on_chart`; trade vẫn còn nguyên
+trong history, report, thống kê P&L và không ảnh hưởng strategy/execution.
 
 ## Chart payload contract MVP
 

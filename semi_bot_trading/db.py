@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS trade_orders (
     close_price REAL,
     pnl REAL,
     pnl_r REAL,
+    hidden_on_chart INTEGER NOT NULL DEFAULT 0,
     source TEXT NOT NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -399,6 +400,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "execution_requests", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "trade_orders", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "trade_orders", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+    ensure_column(conn, "trade_orders", "hidden_on_chart", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "trade_reviews", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_account_scoped_indexes(conn)

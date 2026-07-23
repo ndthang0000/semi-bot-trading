@@ -21,6 +21,7 @@ function trade(id: string, closedAt: string, reviewed = false): TradeOrder {
     close_price: 4110,
     pnl: 100,
     pnl_r: 1,
+    hidden_on_chart: false,
     source: "live",
     metadata: {},
     review: reviewed

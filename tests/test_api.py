@@ -261,6 +261,33 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(trade["review"]["strategy_review"]["entry_quality"], "late")
         self.assertEqual(trade["review"]["operator_review"]["followed_plan"], "yes")
 
+    def test_trade_visibility_can_be_hidden_and_restored(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade(db_path)
+
+            client = authenticated_test_client(root, config_path)
+            initial = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=5")
+            hide = client.patch("/api/trades/order-1/visibility", json={"hidden_on_chart": True})
+            hidden_history = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=5")
+            hidden_chart = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=2")
+            restore = client.patch("/api/trades/order-1/visibility", json={"hidden_on_chart": False})
+            restored_history = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=5")
+            missing = client.patch("/api/trades/missing/visibility", json={"hidden_on_chart": True})
+
+        self.assertFalse(initial.json()["trades"][0]["hidden_on_chart"])
+        self.assertEqual(hide.status_code, 200)
+        self.assertTrue(hide.json()["hidden_on_chart"])
+        self.assertTrue(hidden_history.json()["trades"][0]["hidden_on_chart"])
+        self.assertTrue(hidden_chart.json()["layers"]["trades"][0]["hidden_on_chart"])
+        self.assertEqual(restore.status_code, 200)
+        self.assertFalse(restored_history.json()["trades"][0]["hidden_on_chart"])
+        self.assertEqual(missing.status_code, 404)
+
     def test_trade_review_attachment_upload_list_file_and_delete(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

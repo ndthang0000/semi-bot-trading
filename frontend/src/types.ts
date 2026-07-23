@@ -10,6 +10,8 @@ export type ZoneVisibilityKey =
 
 export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 
+export type TradeVisibilityMode = "visible" | "hidden" | "all" | "off";
+
 export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1";
 
 export type AddEntityKind =
@@ -126,6 +128,7 @@ export type TradeOrder = {
   close_price: number | null;
   pnl: number | null;
   pnl_r: number | null;
+  hidden_on_chart: boolean;
   source: string;
   metadata: Record<string, unknown>;
   chart_index?: number | null;

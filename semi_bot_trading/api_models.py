@@ -71,6 +71,10 @@ class TradeReviewRequest(BaseModel):
     operator_review: dict[str, Any] = Field(default_factory=dict)
 
 
+class TradeVisibilityRequest(BaseModel):
+    hidden_on_chart: bool
+
+
 class TradeReviewAttachmentRequest(BaseModel):
     kind: str = "review"
     image_data: str

@@ -7,6 +7,7 @@ import type {
   SelectedEntity,
   TradeOrder,
   TradeFocusRequest,
+  TradeVisibilityMode,
   Timeframe,
   ZoneFocusRequest,
   ZoneTypeVisibility,
@@ -38,6 +39,7 @@ type ChartState = {
   showZones: boolean;
   zoneTypeVisibility: ZoneTypeVisibility;
   showStructure: boolean;
+  tradeVisibilityMode: TradeVisibilityMode;
   importantZonesOnly: boolean;
   maxVisibleZones: number;
   autoRefreshEnabled: boolean;
@@ -55,6 +57,7 @@ type ChartState = {
   setZoneTypeVisible: (zoneType: ZoneVisibilityKey, visible: boolean) => void;
   setAllZoneTypesVisible: (visible: boolean) => void;
   setShowStructure: (showStructure: boolean) => void;
+  setTradeVisibilityMode: (mode: TradeVisibilityMode) => void;
   setImportantZonesOnly: (importantZonesOnly: boolean) => void;
   setMaxVisibleZones: (maxVisibleZones: number) => void;
   setAutoRefreshEnabled: (autoRefreshEnabled: boolean) => void;
@@ -77,6 +80,7 @@ export const useChartStore = create<ChartState>()(
       showZones: true,
       zoneTypeVisibility: defaultZoneTypeVisibility,
       showStructure: true,
+      tradeVisibilityMode: "visible",
       importantZonesOnly: true,
       maxVisibleZones: 8,
       autoRefreshEnabled: true,
@@ -129,6 +133,7 @@ export const useChartStore = create<ChartState>()(
         set((state) => ({
           showStructure: requiresStructureForPlaybooks(state.selectedPlaybooks) ? true : showStructure,
         })),
+      setTradeVisibilityMode: (tradeVisibilityMode) => set({ tradeVisibilityMode }),
       setImportantZonesOnly: (importantZonesOnly) => set({ importantZonesOnly }),
       setMaxVisibleZones: (maxVisibleZones) => set({ maxVisibleZones: Math.min(Math.max(maxVisibleZones, 1), 40) }),
       setAutoRefreshEnabled: (autoRefreshEnabled) => set({ autoRefreshEnabled }),
@@ -165,6 +170,7 @@ export const useChartStore = create<ChartState>()(
         showZones: state.showZones,
         zoneTypeVisibility: state.zoneTypeVisibility,
         showStructure: state.showStructure,
+        tradeVisibilityMode: state.tradeVisibilityMode,
         importantZonesOnly: state.importantZonesOnly,
         maxVisibleZones: state.maxVisibleZones,
         autoRefreshEnabled: state.autoRefreshEnabled,
@@ -183,6 +189,7 @@ export const useChartStore = create<ChartState>()(
             ...(layerSettings?.zoneTypeVisibility ?? {}),
           },
           maxVisibleZones: Math.min(Math.max(Number(layerSettings?.maxVisibleZones ?? current.maxVisibleZones), 1), 40),
+          tradeVisibilityMode: normalizeTradeVisibilityMode(layerSettings?.tradeVisibilityMode),
           startIndex:
             layerSettings?.startIndex === null || layerSettings?.startIndex === undefined
               ? null
@@ -236,4 +243,8 @@ function requiredZoneTypesForPlaybooks(playbooks: PlaybookKey[]): Set<ZoneVisibi
 
 function requiresStructureForPlaybooks(playbooks: PlaybookKey[]): boolean {
   return playbooks.some((playbook) => playbookLayerRequirements[playbook].structure);
+}
+
+function normalizeTradeVisibilityMode(value: unknown): TradeVisibilityMode {
+  return value === "hidden" || value === "all" || value === "off" ? value : "visible";
 }

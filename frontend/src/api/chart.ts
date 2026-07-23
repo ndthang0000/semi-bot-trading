@@ -113,6 +113,22 @@ export async function fetchTradeHistory(query: TradeHistoryQuery): Promise<Trade
   return response.json();
 }
 
+export async function updateTradeVisibility(
+  tradeOrderId: string,
+  hiddenOnChart: boolean,
+): Promise<{ id: string; hidden_on_chart: boolean }> {
+  const response = await authFetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/visibility`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hidden_on_chart: hiddenOnChart }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Trade visibility update failed with ${response.status}`);
+  }
+  return response.json();
+}
+
 export type TradeReviewInput = {
   grade?: string | null;
   verdict: string;

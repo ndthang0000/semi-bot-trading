@@ -106,6 +106,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
+  const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const addEntityKind = useChartStore((state) => state.addEntityKind);
@@ -134,6 +135,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const showZonesRef = useRef(showZones);
   const zoneTypeVisibilityRef = useRef(zoneTypeVisibility);
   const showStructureRef = useRef(showStructure);
+  const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
   const maxVisibleZonesRef = useRef(maxVisibleZones);
   const addEntityKindRef = useRef(addEntityKind);
@@ -179,6 +181,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   showZonesRef.current = showZones;
   zoneTypeVisibilityRef.current = zoneTypeVisibility;
   showStructureRef.current = showStructure;
+  tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
   maxVisibleZonesRef.current = maxVisibleZones;
   addEntityKindRef.current = addEntityKind;
@@ -255,7 +258,15 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       ({ x, y }) => x >= -12 && x <= plotWidth + 12 && y >= -12 && y <= height + 12,
     );
     const visibleSwings = allSwings.filter(({ x, y }) => x >= -12 && x <= plotWidth + 12 && y >= -12 && y <= height + 12);
-    const tradeBoxes = currentPayload.layers.trades.flatMap((trade) => {
+    const chartTrades =
+      tradeVisibilityModeRef.current === "off"
+        ? []
+        : currentPayload.layers.trades.filter(
+            (trade) =>
+              tradeVisibilityModeRef.current === "all"
+              || (tradeVisibilityModeRef.current === "hidden" ? trade.hidden_on_chart : !trade.hidden_on_chart),
+          );
+    const tradeBoxes = chartTrades.flatMap((trade) => {
       const box = tradeToBox(trade, currentPayload.range.start, currentPayload.range.end, candleDataRef.current, plotWidth, height, timeScale, series);
       return box ? [box] : [];
     });
@@ -650,7 +661,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   useEffect(() => {
     payloadRef.current = payload;
     scheduleOverlayRecalc();
-  }, [importantZonesOnly, maxVisibleZones, payload, scheduleOverlayRecalc, showStructure, showZones]);
+  }, [importantZonesOnly, maxVisibleZones, payload, scheduleOverlayRecalc, showStructure, showZones, tradeVisibilityMode]);
 
   useEffect(() => {
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructure));

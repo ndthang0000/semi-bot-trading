@@ -20,6 +20,7 @@ from .api_models import (
     RefreshRequest,
     TradeReviewAttachmentRequest,
     TradeReviewRequest,
+    TradeVisibilityRequest,
     ZoneCreateRequest,
     ZoneOverrideRequest,
 )
@@ -493,7 +494,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        trade_orders.stop_loss, trade_orders.take_profit_json,
                        trade_orders.quantity, trade_orders.opened_at, trade_orders.closed_at,
                        trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
-                       trade_orders.source, trade_orders.metadata_json,
+                       trade_orders.hidden_on_chart, trade_orders.source, trade_orders.metadata_json,
                        trade_ideas.playbook, trade_ideas.direction,
                        trade_reviews.id AS review_id,
                        trade_reviews.grade AS review_grade,
@@ -535,6 +536,27 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 for row in rows
             ],
         }
+
+    @app.patch("/api/trades/{trade_order_id}/visibility")
+    def update_trade_visibility(
+        trade_order_id: str,
+        request: TradeVisibilityRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            updated = conn.execute(
+                """
+                UPDATE trade_orders
+                SET hidden_on_chart = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(request.hidden_on_chart), utc_now_iso(), trade_order_id),
+            )
+            if updated.rowcount == 0:
+                raise HTTPException(status_code=404, detail=f"Trade not found: {trade_order_id}")
+            conn.commit()
+        return {"id": trade_order_id, "hidden_on_chart": request.hidden_on_chart}
 
     @app.get("/api/trades/{trade_order_id}/review")
     def get_trade_review(trade_order_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
