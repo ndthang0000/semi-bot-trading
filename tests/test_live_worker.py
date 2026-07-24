@@ -1112,6 +1112,7 @@ class TestSyncClosedPositions(unittest.TestCase):
         self._insert_order("ord-3", broker_order_id="111", broker_deal_id="222")
         closed_deal = {
             "profit": 40.0, "profit_raw": 40.0, "swap": -0.5, "commission": -1.0,
+            "fee": -0.25,
             "price": 3040.0, "time_iso": datetime.now(UTC).isoformat(),
         }
         client = _fake_client(open_tickets=set(), closed_deal=closed_deal, contract_size=100.0)
@@ -1119,8 +1120,39 @@ class TestSyncClosedPositions(unittest.TestCase):
 
         row = self._conn.execute("SELECT * FROM trade_orders WHERE id='ord-3'").fetchone()
         self.assertEqual("closed", row["status"])
-        self.assertAlmostEqual(38.5, row["pnl"], places=2)   # 40 - 0.5 - 1
+        self.assertAlmostEqual(38.25, row["pnl"], places=2)   # 40 - 0.5 - 1 - 0.25
         self.assertIsNotNone(row["pnl_r"])
+        costs = json.loads(row["metadata_json"])["broker_close_costs"]
+        self.assertEqual(
+            {
+                "gross_profit": 40.0,
+                "commission": -1.0,
+                "swap": -0.5,
+                "fee": -0.25,
+                "net_profit": 38.25,
+            },
+            costs,
+        )
+
+    def test_existing_closed_order_backfills_full_costs_without_new_alert(self):
+        self._insert_order("ord-old", broker_order_id="111", status="closed")
+        closed_deal = {
+            "profit": 89.70, "profit_raw": 89.70, "swap": 0.0, "commission": -2.66,
+            "fee": 0.0,
+            "price": 4127.08, "time_iso": datetime.now(UTC).isoformat(),
+        }
+        client = _fake_client(open_tickets=set(), closed_deal=closed_deal, contract_size=100.0)
+
+        self._run(client)
+
+        row = self._conn.execute("SELECT * FROM trade_orders WHERE id='ord-old'").fetchone()
+        self.assertAlmostEqual(87.04, row["pnl"], places=2)
+        costs = json.loads(row["metadata_json"])["broker_close_costs"]
+        self.assertEqual(-2.66, costs["commission"])
+        alert_count = self._conn.execute(
+            "SELECT COUNT(*) count FROM alert_events WHERE entity_ids_json LIKE '%ord-old%'"
+        ).fetchone()["count"]
+        self.assertEqual(0, alert_count)
 
     def test_missing_broker_ids_skipped(self):
         self._insert_order("ord-4", broker_order_id="", broker_deal_id="")

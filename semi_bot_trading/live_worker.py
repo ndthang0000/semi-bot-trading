@@ -1567,19 +1567,24 @@ def sync_closed_positions(
 ) -> None:
     """Sync MT5 position closures back to trade_orders.
 
-    Called every live iteration. Finds any 'filled' live orders whose MT5
-    position has since been closed (TP / SL / manual) and updates the DB
-    with close_price, pnl, pnl_r, and status='closed'. Without this the
-    risk manager's daily loss query returns nothing.
+    Called every live iteration. Finds open live orders whose MT5 position has
+    closed and repairs historical closed rows that predate the full-cost P&L
+    snapshot. Without this the risk manager's daily loss query is incomplete.
     """
     rows = conn.execute(
         """
-        SELECT id, side, entry_price, stop_loss, quantity, metadata_json
+        SELECT id, side, entry_price, stop_loss, quantity, status, metadata_json
         FROM trade_orders
         WHERE symbol = ?
           AND account_label = ?
-          AND status IN ('filled', 'pending_fill')
           AND source = 'live'
+          AND (
+                status IN ('filled', 'pending_fill')
+                OR (
+                    status = 'closed'
+                    AND json_extract(metadata_json, '$.broker_close_costs') IS NULL
+                )
+          )
         """,
         (config.symbol, env.account_label),
     ).fetchall()
@@ -1598,6 +1603,7 @@ def sync_closed_positions(
 
     for row in rows:
         metadata = json.loads(row["metadata_json"] or "{}")
+        already_closed = str(row["status"]) == "closed"
         broker_order_id = str(metadata.get("broker_order_id", ""))
         broker_deal_id = str(metadata.get("broker_deal_id", ""))
 
@@ -1617,8 +1623,13 @@ def sync_closed_positions(
         if deal is None:
             continue  # MT5 history not yet available
 
-        # Total P&L includes swap and commission
-        pnl = round(deal["profit"] + deal.get("swap", 0) + deal.get("commission", 0), 2)
+        # Broker net P&L includes costs from both entry and exit deals. The MT5
+        # client aggregates those position-level costs before returning here.
+        gross_profit = float(deal["profit"])
+        swap = float(deal.get("swap", 0) or 0)
+        commission = float(deal.get("commission", 0) or 0)
+        fee = float(deal.get("fee", 0) or 0)
+        pnl = round(gross_profit + swap + commission + fee, 2)
         close_price = deal["price"]
         closed_at = deal["time_iso"]
 
@@ -1664,6 +1675,13 @@ def sync_closed_positions(
         except (TypeError, ValueError, ZeroDivisionError):
             pass
 
+        metadata["broker_close_costs"] = {
+            "gross_profit": round(gross_profit, 2),
+            "commission": round(commission, 2),
+            "swap": round(swap, 2),
+            "fee": round(fee, 2),
+            "net_profit": pnl,
+        }
         conn.execute(
             """
             UPDATE trade_orders
@@ -1672,27 +1690,29 @@ def sync_closed_positions(
                 pnl = ?,
                 pnl_r = ?,
                 closed_at = ?,
+                metadata_json = ?,
                 updated_at = ?
             WHERE id = ?
             """,
-            (close_price, pnl, pnl_r, closed_at, now, row["id"]),
+            (close_price, pnl, pnl_r, closed_at, json.dumps(metadata), now, row["id"]),
         )
         closed_any = True
-        pnl_str = f"+{pnl:.2f}" if pnl >= 0 else f"{pnl:.2f}"
-        queue_alert(
-            conn,
-            symbol=config.symbol,
-            timeframe=config.strategy.timeframe,
-            event_type="execution_event",
-            severity="important",
-            entity_ids=[row["id"]],
-            payload={
-                "title": "Live position closed",
-                "account": env.account_label,
-                "reason": [f"P&L: ${pnl_str}", f"Close: {close_price}"],
-            },
-            dedupe_key=f"position-closed:{env.account_label}:{row['id']}",
-        )
+        if not already_closed:
+            pnl_str = f"+{pnl:.2f}" if pnl >= 0 else f"{pnl:.2f}"
+            queue_alert(
+                conn,
+                symbol=config.symbol,
+                timeframe=config.strategy.timeframe,
+                event_type="execution_event",
+                severity="important",
+                entity_ids=[row["id"]],
+                payload={
+                    "title": "Live position closed",
+                    "account": env.account_label,
+                    "reason": [f"P&L: ${pnl_str}", f"Close: {close_price}"],
+                },
+                dedupe_key=f"position-closed:{env.account_label}:{row['id']}",
+            )
 
     if closed_any:
         conn.commit()

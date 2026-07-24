@@ -457,11 +457,15 @@ class MT5BrokerClient:
             int(latest_deal.time),
             self.credentials.server_utc_offset_hours,
         )
+        # MT5 can charge commission on both DEAL_ENTRY_IN and DEAL_ENTRY_OUT.
+        # Profit/close price belong to exit deals, but position-level costs must
+        # include every deal or the stored net P&L misses the opening charge.
         return {
             "price": weighted_price,
             "profit": sum(float(deal.profit) for deal in close_deals),
-            "swap": sum(float(getattr(deal, "swap", 0) or 0) for deal in close_deals),
-            "commission": sum(float(getattr(deal, "commission", 0) or 0) for deal in close_deals),
+            "swap": sum(float(getattr(deal, "swap", 0) or 0) for deal in deals),
+            "commission": sum(float(getattr(deal, "commission", 0) or 0) for deal in deals),
+            "fee": sum(float(getattr(deal, "fee", 0) or 0) for deal in deals),
             "time_iso": close_time.replace(microsecond=0).isoformat(),
             "volume": total_volume,
             "deal_ticket": ",".join(str(deal.ticket) for deal in close_deals),

@@ -40,6 +40,45 @@ class MT5TimestampNormalizationTest(unittest.TestCase):
         self.assertIsNotNone(deal)
         self.assertEqual("2026-07-17T12:43:04+00:00", deal["time_iso"])
 
+    def test_closed_position_costs_include_open_and_close_deals(self) -> None:
+        encoded_open_time = int(datetime(2026, 7, 23, 1, 15, 1, tzinfo=UTC).timestamp())
+        encoded_close_time = int(datetime(2026, 7, 23, 3, 11, 52, tzinfo=UTC).timestamp())
+        mt5 = MagicMock()
+        mt5.history_deals_get.return_value = [
+            SimpleNamespace(
+                entry=0,
+                volume=0.46,
+                price=4125.13,
+                profit=0.0,
+                swap=0.0,
+                commission=-1.33,
+                fee=-0.10,
+                time=encoded_open_time,
+                ticket=1001,
+            ),
+            SimpleNamespace(
+                entry=1,
+                volume=0.46,
+                price=4127.08,
+                profit=89.70,
+                swap=0.0,
+                commission=-1.33,
+                fee=-0.15,
+                time=encoded_close_time,
+                ticket=1002,
+            ),
+        ]
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.credentials = MT5Credentials(123, "secret", "FTMO-Server3", server_utc_offset_hours=3)
+
+        deal = client.get_closed_deal_for_position("169691716")
+
+        self.assertIsNotNone(deal)
+        self.assertAlmostEqual(89.70, deal["profit"])
+        self.assertAlmostEqual(-2.66, deal["commission"])
+        self.assertAlmostEqual(-0.25, deal["fee"])
+
 
 if __name__ == "__main__":
     unittest.main()

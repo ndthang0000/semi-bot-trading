@@ -235,6 +235,15 @@ PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 
 Rule nay chi ap dung cho `trade_orders.source = live` dang `filled`; pending limit order phai filled thanh position truoc khi duoc quan ly.
 
+Khi MT5 position dong, worker tinh net P&L tu gross exit profit cong voi
+commission, swap va fee cua **toan bo deals** thuoc position. Commission co the
+bi charge rieng o deal mo (`DEAL_ENTRY_IN`) va deal dong (`DEAL_ENTRY_OUT`), nen
+chi doc closing deal se lam P&L cao hon broker balance. Breakdown duoc snapshot
+vao `trade_orders.metadata_json.broker_close_costs` gom `gross_profit`,
+`commission`, `swap`, `fee` va `net_profit`.
+Live trade cu da `closed` nhung chua co snapshot nay duoc worker resync mot lan
+tu MT5 history; backfill khong tao lai Telegram close alert.
+
 ## Spread Monitoring
 
 Live worker lưu bid/ask/spread của XAUUSD mỗi vòng poll vào `spread_snapshots`. Spread được lưu theo price unit giống `MAX_SPREAD_PRICE`, ví dụ XAUUSD spread `1.20` nghĩa là ask-bid lệch 1.20 USD.
