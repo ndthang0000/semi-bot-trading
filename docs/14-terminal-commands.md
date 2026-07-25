@@ -763,6 +763,36 @@ python -m semi_bot_trading.cli fetch-news
 
 ## 12. VPS update script
 
+### Cleanup legacy account labels and remove FTMO Demo
+
+Audit database trước, không thay đổi dữ liệu:
+
+```powershell
+python .\scripts\cleanup-account-labels.py --db .\var\trading.sqlite3
+```
+
+Nếu target counts đúng, chạy apply. Script tự backup database, dùng transaction,
+chỉ xóa account label chính xác `FTMO Demo`, và kiểm tra
+`FTMO 100K 2-Step` không thay đổi:
+
+```powershell
+python .\scripts\cleanup-account-labels.py --db .\var\trading.sqlite3 --apply
+```
+
+Script chỉ đổi các live trade/order cũ từ `Default` sang `Exness Personal`;
+backtest orders và legacy spread snapshots mang label `Default` được giữ nguyên.
+Nếu label hoặc broker symbol trên VPS khác, truyền explicit:
+
+```powershell
+python .\scripts\cleanup-account-labels.py `
+  --db .\var\trading.sqlite3 `
+  --expected-exness-symbol XAUUSDc `
+  --exness-label "Exness Personal" `
+  --ftmo-demo-label "FTMO Demo" `
+  --ftmo-real-label "FTMO 100K 2-Step" `
+  --apply
+```
+
 Pull latest code, install package, fetch news, restart API only:
 
 ```powershell
