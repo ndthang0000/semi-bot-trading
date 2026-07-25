@@ -69,6 +69,7 @@ internal_reject_watch_after_fvg_fill_bars = 8
 internal_reject_body_min_ratio = 1.5
 internal_reject_min_fill_ratio = 0.4
 internal_reject_deep_fvg_fill_ratio = 0.8
+internal_reject_stop_buffer_atr = 0.4
 allow_neutral_range_trade = true
 block_news_or_risk_off = true
 fvg_max_trades_per_zone = 2
@@ -232,7 +233,7 @@ fakeout_reaction_depth_atr = abs(close - wick_extreme) / ATR_M15
 
 Neu `fakeout_reaction_depth_atr > 1.5`, setup giu trang thai `waiting_confirmation`. Ly do: nhom fakeout co wick qua sau thuong tao SL lon va de bi nhieu.
 
-Stop loss duoc dat ngoai zone/reaction wick voi buffer:
+Classic reject dat stop ngoai zone/reaction wick voi buffer:
 
 ```text
 buffer = max(0.2 * ATR_M15, 0.01)
@@ -290,11 +291,16 @@ Nghia la moi `primary_zone_id` co `zone_type = fvg` chi duoc accept toi da 2 tra
 Rieng `internal_reject`, stop khong dat qua toan bo zone nua. Bot dat stop theo wick cua nen phan ung:
 
 ```text
-long internal_reject:  stop = reaction_low - 0.2 ATR
-short internal_reject: stop = reaction_high + 0.2 ATR
+internal_buffer = max(internal_reject_stop_buffer_atr * ATR_M15, 0.01)
+long internal_reject:  stop = reaction_low - internal_buffer
+short internal_reject: stop = reaction_high + internal_buffer
 ```
 
-Sau do van ap dung `min_stop_distance`. Cach nay tranh truong hop zone SR/FVG rat rong lam SL bi day ve dau kia cua zone.
+Mac dinh `internal_reject_stop_buffer_atr = 0.4`. Wick SL cua internal reject
+duoc phep nam trong parent zone, vi diem invalidation la reaction wick thay vi
+bien ngoai cua toan bo zone. Sau do bot van ap dung `min_stop_distance`; neu
+khoang SL vuot `max_stop_distance`, bot moi fallback sang ATR H1. Cach nay tranh
+truong hop zone SR/FVG rat rong lam SL bi day ve dau kia cua zone.
 
 ## Live Intrabar Evaluation
 

@@ -464,7 +464,17 @@ def _stop_trace(
     zone_high = _float(metadata.get("zone_price_high"))
     reaction_low = _float(metadata.get("reaction_low"))
     reaction_high = _float(metadata.get("reaction_high"))
-    buffer = atr * config.strategy.zone_reaction_v2_stop_buffer_atr if atr is not None else None
+    reaction_state = str(metadata.get("reaction_v2") or metadata.get("zone_reaction_state") or "")
+    buffer_multiplier = _float(metadata.get("stop_buffer_atr_multiplier"))
+    if buffer_multiplier is None:
+        buffer_multiplier = (
+            config.strategy.zone_reaction_v2_internal_reject_stop_buffer_atr
+            if reaction_state == "internal_reject"
+            else config.strategy.zone_reaction_v2_stop_buffer_atr
+        )
+    buffer = _float(metadata.get("stop_buffer"))
+    if buffer is None and atr is not None:
+        buffer = max(atr * buffer_multiplier, 0.01)
     full_zone_stop = None
     wick_stop = None
     if side in {"long", "buy"}:
@@ -485,6 +495,7 @@ def _stop_trace(
         "risk_distance": abs(entry - initial_stop) if entry is not None and initial_stop is not None else metadata.get("stop_distance"),
         "m15_atr": atr,
         "buffer": buffer,
+        "buffer_atr_multiplier": buffer_multiplier,
         "full_zone_stop_estimate": full_zone_stop,
         "reaction_wick_stop_estimate": wick_stop,
         "max_stop_distance": config.strategy.zone_reaction_v2_max_stop_distance,

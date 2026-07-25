@@ -23,7 +23,12 @@ def compute_zone_reaction_v2_levels(
     zone_high = float(zone["price_high"])
     reaction_low = float(metadata.get("reaction_low", zone_low))
     reaction_high = float(metadata.get("reaction_high", zone_high))
-    buffer = max(atr * config.zone_reaction_v2_stop_buffer_atr, 0.01)
+    buffer_atr_multiplier = (
+        config.zone_reaction_v2_internal_reject_stop_buffer_atr
+        if reaction.state == "internal_reject"
+        else config.zone_reaction_v2_stop_buffer_atr
+    )
+    buffer = max(atr * buffer_atr_multiplier, 0.01)
     min_stop_distance = max(config.zone_reaction_v2_min_stop_price, atr * config.zone_reaction_v2_min_stop_atr)
     target_rr = config.zone_reaction_v2_rr_minimum
     entry = round(last_close, 5)
@@ -41,8 +46,11 @@ def compute_zone_reaction_v2_levels(
         if should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(min(wick_natural_stop, entry - min_stop_distance), 5)
             stop_source = "reaction_wick"
-        if should_fallback_wide_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
-            zone, direction, stop_source, stop
+        # Internal reject deliberately invalidates at its reaction wick even
+        # when that wick-based stop remains inside the wider parent zone.
+        if should_fallback_wide_stop_to_atr(reaction, config, entry, stop) or (
+            reaction.state != "internal_reject"
+            and _wick_stop_inside_zone(zone, direction, stop_source, stop)
         ):
             stop = round(entry - _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
@@ -51,7 +59,15 @@ def compute_zone_reaction_v2_levels(
             stop_source = "atr_fallback"
         risk = entry - stop
         if risk <= 0:
-            _write_level_metadata(level_metadata, stop_source, fallback_atr, fallback_atr_timeframe, config)
+            _write_level_metadata(
+                level_metadata,
+                stop_source,
+                fallback_atr,
+                fallback_atr_timeframe,
+                buffer,
+                buffer_atr_multiplier,
+                config,
+            )
             return entry, stop, [], None
         take_profit = [round(entry + risk * target_rr, 5)]
     else:
@@ -62,8 +78,11 @@ def compute_zone_reaction_v2_levels(
         if should_fallback_reject_stop_to_wick(reaction, config, entry, stop):
             stop = round(max(wick_natural_stop, entry + min_stop_distance), 5)
             stop_source = "reaction_wick"
-        if should_fallback_wide_stop_to_atr(reaction, config, entry, stop) or _wick_stop_inside_zone(
-            zone, direction, stop_source, stop
+        # Internal reject deliberately invalidates at its reaction wick even
+        # when that wick-based stop remains inside the wider parent zone.
+        if should_fallback_wide_stop_to_atr(reaction, config, entry, stop) or (
+            reaction.state != "internal_reject"
+            and _wick_stop_inside_zone(zone, direction, stop_source, stop)
         ):
             stop = round(entry + _reject_atr_stop_distance(fallback_atr, min_stop_distance, config), 5)
             stop_source = "atr_fallback"
@@ -72,10 +91,26 @@ def compute_zone_reaction_v2_levels(
             stop_source = "atr_fallback"
         risk = stop - entry
         if risk <= 0:
-            _write_level_metadata(level_metadata, stop_source, fallback_atr, fallback_atr_timeframe, config)
+            _write_level_metadata(
+                level_metadata,
+                stop_source,
+                fallback_atr,
+                fallback_atr_timeframe,
+                buffer,
+                buffer_atr_multiplier,
+                config,
+            )
             return entry, stop, [], None
         take_profit = [round(entry - risk * target_rr, 5)]
-    _write_level_metadata(level_metadata, stop_source, fallback_atr, fallback_atr_timeframe, config)
+    _write_level_metadata(
+        level_metadata,
+        stop_source,
+        fallback_atr,
+        fallback_atr_timeframe,
+        buffer,
+        buffer_atr_multiplier,
+        config,
+    )
     return entry, stop, take_profit, round(target_rr, 4)
 
 
@@ -115,6 +150,8 @@ def _write_level_metadata(
     stop_source: str,
     stop_fallback_atr: float,
     stop_fallback_atr_timeframe: str,
+    stop_buffer: float,
+    stop_buffer_atr_multiplier: float,
     config: StrategyConfig,
 ) -> None:
     level_metadata.update(
@@ -123,6 +160,8 @@ def _write_level_metadata(
             "stop_fallback_atr": round(stop_fallback_atr, 5),
             "stop_fallback_atr_timeframe": stop_fallback_atr_timeframe,
             "stop_fallback_atr_multiplier": config.zone_reaction_v2_reject_atr_stop,
+            "stop_buffer": round(stop_buffer, 5),
+            "stop_buffer_atr_multiplier": stop_buffer_atr_multiplier,
         }
     )
 

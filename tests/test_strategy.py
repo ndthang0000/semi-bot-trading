@@ -134,6 +134,7 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_internal_reject_body_min_ratio=0.0,
     zone_reaction_v2_internal_reject_min_fill_ratio=0.5,
     zone_reaction_v2_internal_reject_deep_fvg_fill_ratio=0.8,
+    zone_reaction_v2_internal_reject_stop_buffer_atr=0.4,
     zone_reaction_v2_allow_neutral_range_trade=True,
     zone_reaction_v2_block_news_or_risk_off=True,
     zone_reaction_v2_macro_gate_enabled=True,
@@ -1208,6 +1209,37 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(121, stop)
         self.assertEqual("atr_fallback", metadata["stop_source"])
         self.assertEqual("H1", metadata["stop_fallback_atr_timeframe"])
+
+    def test_internal_reject_wick_stop_can_remain_inside_zone_with_dedicated_buffer(self) -> None:
+        metadata: dict[str, object] = {}
+
+        entry, stop, _take_profit, _rr = compute_zone_reaction_v2_levels(
+            zone("support", "bullish", 100, 150),
+            "long",
+            ReactionResult(
+                state="internal_reject",
+                direction="long",
+                touched=True,
+                candle_time="2026-01-01T00:45:00+00:00",
+                reason=[],
+                metadata={"reaction_high": 148, "reaction_low": 130},
+            ),
+            last_close=145,
+            atr=4,
+            config=replace(
+                CONFIG,
+                zone_reaction_v2_internal_reject_stop_buffer_atr=0.4,
+            ),
+            stop_fallback_atr=20,
+            stop_fallback_atr_timeframe="H1",
+            level_metadata=metadata,
+        )
+
+        self.assertEqual(145, entry)
+        self.assertAlmostEqual(128.4, stop)
+        self.assertEqual("reaction_wick", metadata["stop_source"])
+        self.assertEqual(1.6, metadata["stop_buffer"])
+        self.assertEqual(0.4, metadata["stop_buffer_atr_multiplier"])
 
     def test_zone_reaction_v2_wide_slow_reaction_stays_waiting_not_blocked(self) -> None:
         support = zone("support", "bullish", 4097, 4140)

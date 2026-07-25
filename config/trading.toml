@@ -178,6 +178,9 @@ internal_reject_body_min_ratio = 1.5
 # This avoids an ATR-based SR threshold changing meaning when zone width changes.
 internal_reject_min_fill_ratio = 0.4
 internal_reject_deep_fvg_fill_ratio = 0.8
+# Internal reject invalidates beyond its reaction wick, even when that stop
+# remains inside the wider parent zone.
+internal_reject_stop_buffer_atr = 0.4
 allow_neutral_range_trade = true
 block_news_or_risk_off = true
 # Block shorts when macro trend is up and longs when macro trend is down.
