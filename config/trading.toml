@@ -151,7 +151,7 @@ rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.5
-max_stop_distance = 30.0
+max_stop_distance = 25.0
 # If both full-zone and reaction-wick stops are too wide, use 1.2x H1 context
 # ATR as the final stop layer instead of blocking. max_stop_distance is a
 # fallback trigger threshold, not a hard reject cap.

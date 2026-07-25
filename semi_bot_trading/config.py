@@ -413,7 +413,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             zone_reaction_v2_stop_buffer_atr=float(zone_reaction_v2.get("stop_buffer_atr", 0.2)),
             zone_reaction_v2_min_stop_price=float(zone_reaction_v2.get("min_stop_price", 4.0)),
             zone_reaction_v2_min_stop_atr=float(zone_reaction_v2.get("min_stop_atr", 1.5)),
-            zone_reaction_v2_max_stop_distance=float(zone_reaction_v2.get("max_stop_distance", 30.0)),
+            zone_reaction_v2_max_stop_distance=float(zone_reaction_v2.get("max_stop_distance", 25.0)),
             zone_reaction_v2_reject_wide_stop_fallback=str(
                 zone_reaction_v2.get("reject_wide_stop_fallback", "atr")
             ).lower(),

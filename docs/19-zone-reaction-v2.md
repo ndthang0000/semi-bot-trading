@@ -53,7 +53,7 @@ rr_minimum = 2.5
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.5
-max_stop_distance = 30.0
+max_stop_distance = 25.0
 reject_wide_stop_fallback = "atr"
 reject_atr_stop = 1.2
 impulse_limit_range_atr = 4.0
@@ -250,7 +250,7 @@ Voi XAUUSD H1/M15, rule nay tranh cac lenh co SL qua chat nhu 0.6-3 gia, la nhom
 Sau khi tinh stop, neu stop distance qua lon, bot khong block setup. `max_stop_distance` chi la nguong kich hoat fallback sang SL theo ATR:
 
 ```text
-max_stop_distance = 30.0 gia
+max_stop_distance = 25.0 gia
 ```
 
 Voi classic `reject`, bot mac dinh uu tien stop ngoai toan bo zone. Neu stop theo zone qua rong, bot fallback sang wick cua nen phan ung. Wick fallback chi hop le khi SL nam ngoai H1 zone; neu wick SL van nam trong zone, bot bo qua wick va fallback tiep sang ATR H1. Neu bat ky stop theo zone/wick cua `reject`, `internal_reject`, `slow_reaction`, `waiting_bos`, hoac `fakeout` van qua rong va:
