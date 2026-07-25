@@ -369,7 +369,10 @@ def _trigger_quality(
     )
     required_body = average * required_ratio if average is not None else None
     expected_bullish = side in {"long", "buy"}
-    is_pinbar = any("pinbar rejection" in str(reason).lower() for reason in reasons)
+    is_pinbar = (
+        metadata.get("reaction_trigger_method") == "pinbar"
+        or any("pinbar rejection" in str(reason).lower() for reason in reasons)
+    )
     direction_aligned = None
     if open_ is not None and close is not None:
         direction_aligned = close > open_ if expected_bullish else close < open_
@@ -377,21 +380,25 @@ def _trigger_quality(
 
     full_range = high - low if high is not None and low is not None else None
     wick = None
-    rejection_size = None
+    rejection_size = _float(metadata.get("reaction_rejection_size"))
     if None not in (open_, high, low, close):
         if expected_bullish:
             wick = min(open_, close) - low
-            rejection_size = close - low
+            if rejection_size is None:
+                rejection_size = close - low
         else:
             wick = high - max(open_, close)
-            rejection_size = high - close
+            if rejection_size is None:
+                rejection_size = high - close
     wick_body_ratio = wick / body if wick is not None and body is not None and body > 0 else None
     wick_range_ratio = wick / full_range if wick is not None and full_range is not None and full_range > 0 else None
     wick_body_min = config.strategy.zone_reaction_v2_reject_pinbar_wick_body_ratio
     wick_range_min = config.strategy.zone_reaction_v2_reject_pinbar_min_wick_ratio
 
     if is_pinbar:
-        strength_ratio = rejection_size / average if rejection_size is not None and average else None
+        strength_ratio = _float(metadata.get("reaction_rejection_avg_ratio"))
+        if strength_ratio is None:
+            strength_ratio = rejection_size / average if rejection_size is not None and average else None
         required_move = average * required_ratio if average is not None else None
         strength_gate_passed = (
             strength_ratio is not None
@@ -428,7 +435,8 @@ def _trigger_quality(
 
     return {
         "reaction_open": open_, "reaction_high": high, "reaction_low": low, "reaction_close": close,
-        "reaction_body": body,
+        "reaction_body": body, "reaction_trigger_method": metadata.get("reaction_trigger_method"),
+        "reaction_rejection_size": rejection_size,
         "structure_types": metadata.get("structure_trigger_types") or [],
         "price_action_types": metadata.get("price_action_trigger_types") or [],
         "fill_ratio": metadata.get("zone_fill_ratio") or metadata.get("fill_ratio"),

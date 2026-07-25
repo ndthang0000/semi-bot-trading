@@ -25,11 +25,34 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const reasons = readStringList(metadata.reason);
   const blockedReasons = readStringList(metadata.blocked_reason);
   const triggerTypes = readStringList(candidateMetadata.trigger_types);
+  const stopLossMode = readString(candidateMetadata.stop_source) ?? readString(metadata.stop_source);
   const takeProfit = firstTakeProfitPrice(trade.take_profit);
   const partialPlan = readObject(metadata.partial_take_profit);
   const partialDone = partialPlan.done === true;
   const breakevenApplied = partialPlan.breakeven_applied === true;
   const initialStopLoss = readNumber(metadata.initial_stop_loss);
+  const displayedStopLoss = initialStopLoss ?? trade.stop_loss;
+  const stopLossSize =
+    trade.entry_price !== null && displayedStopLoss !== null
+      ? Math.abs(trade.entry_price - displayedStopLoss)
+      : null;
+  const reactionBody = readNumber(candidateMetadata.reaction_body) ?? readNumber(metadata.reaction_body);
+  const reactionAverageBody =
+    readNumber(candidateMetadata.reaction_avg_body) ?? readNumber(metadata.reaction_avg_body);
+  const reactionTriggerMethod =
+    readString(candidateMetadata.reaction_trigger_method) ?? readString(metadata.reaction_trigger_method);
+  const reactionRejectionSize =
+    readNumber(candidateMetadata.reaction_rejection_size) ?? readNumber(metadata.reaction_rejection_size);
+  const reactionRejectionRatio =
+    readNumber(candidateMetadata.reaction_rejection_avg_ratio) ??
+    readNumber(metadata.reaction_rejection_avg_ratio);
+  const storedReactionBodyRatio =
+    readNumber(candidateMetadata.reaction_body_avg_ratio) ?? readNumber(metadata.reaction_body_avg_ratio);
+  const reactionBodyRatio =
+    storedReactionBodyRatio ??
+    (reactionBody !== null && reactionAverageBody !== null && reactionAverageBody > 0
+      ? reactionBody / reactionAverageBody
+      : null);
   const showCurrentStopLoss =
     initialStopLoss !== null && trade.stop_loss !== null && Math.abs(initialStopLoss - trade.stop_loss) > 1e-9;
   const statusNote = tradeStatusNote(trade.status);
@@ -85,10 +108,21 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
 
       <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/60 p-3">
         <TradeMetric label="Entry" value={price(trade.entry_price)} />
-        <TradeMetric label={showCurrentStopLoss ? "Initial SL" : "SL"} value={price(initialStopLoss ?? trade.stop_loss)} />
+        <TradeMetric label={showCurrentStopLoss ? "Initial SL" : "SL"} value={price(displayedStopLoss)} />
         {showCurrentStopLoss ? <TradeMetric label="Current SL" value={price(trade.stop_loss)} /> : null}
         <TradeMetric label="TP" value={price(takeProfit)} />
         <TradeMetric label="Exit" value={price(trade.close_price)} />
+        <TradeMetric label="SL size" value={price(stopLossSize)} />
+        <TradeMetric
+          label="BT/R"
+          value={formatBodyTriggerMetric(reactionBody, reactionBodyRatio, reactionAverageBody)}
+        />
+        {reactionTriggerMethod === "pinbar" ? (
+          <TradeMetric
+            label="Pinbar/R"
+            value={formatReactionStrengthMetric(reactionRejectionSize, reactionRejectionRatio)}
+          />
+        ) : null}
         <TradeMetric label="PnL R" value={trade.pnl_r === null ? "--" : `${trade.pnl_r.toFixed(2)}R`} />
         <TradeMetric label="Score" value={formatUnknownNumber(metadata.score)} />
       </div>
@@ -110,6 +144,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         <Detail label="Closed" value={compactTime(trade.closed_at)} />
         <Detail label="Reaction" value={String(metadata.zone_reaction_state ?? "--")} />
         <Detail label="Zone" value={String(candidateMetadata.zone_type ?? "--")} />
+        <Detail label="SL mode" value={stopLossMode ?? "--"} />
         <Detail label="Trigger" value={triggerTypes.length > 0 ? triggerTypes.join(" + ") : "--"} />
       </div>
 
@@ -503,6 +538,10 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null {
   const first = values.at(0);
   if (typeof first === "number") return first;
@@ -512,6 +551,16 @@ function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null 
 
 function formatUnknownNumber(value: unknown): string {
   return typeof value === "number" ? value.toFixed(2) : "--";
+}
+
+function formatBodyTriggerMetric(body: number | null, ratio: number | null, averageBody: number | null): string {
+  if (body === null || ratio === null || averageBody === null) return "--";
+  return `${body.toFixed(2)} / ${ratio.toFixed(2)}x · avg20 ${averageBody.toFixed(2)}`;
+}
+
+function formatReactionStrengthMetric(size: number | null, ratio: number | null): string {
+  if (size === null || ratio === null) return "--";
+  return `${size.toFixed(2)} / ${ratio.toFixed(2)}x`;
 }
 
 function tradeStatusNote(status: string): string | null {

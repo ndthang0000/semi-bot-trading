@@ -6,7 +6,6 @@ from typing import Any
 from ..config import StrategyConfig
 from ..timeframes import timeframe_delta
 from .helpers import (
-    _is_pinbar_reject,
     average_body,
     bias_to_direction,
     candle_body,
@@ -18,6 +17,7 @@ from .helpers import (
     inside_zone_close_position,
     internal_reject_window_metadata,
     parse_utc_datetime,
+    pinbar_rejection_metadata,
     reaction,
     reaction_v2,
     trigger_points_for_direction,
@@ -115,18 +115,18 @@ def classify_zone_reaction_v2(
                 buffer,
                 body_strength_metadata,
             )
-        if (
-            config.zone_reaction_v2_reject_pinbar_enabled
-            and low <= zone_high
-            and close > zone_high
-            and _is_pinbar_reject(
+        pinbar_metadata = (
+            pinbar_rejection_metadata(
                 last, "long",
                 config.zone_reaction_v2_reject_pinbar_wick_body_ratio,
                 config.zone_reaction_v2_reject_pinbar_min_wick_ratio,
                 avg_body=avg_body,
                 body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
             )
-        ):
+            if config.zone_reaction_v2_reject_pinbar_enabled
+            else None
+        )
+        if low <= zone_high and close > zone_high and pinbar_metadata is not None:
             return reaction_v2(
                 "reject",
                 "long",
@@ -134,7 +134,7 @@ def classify_zone_reaction_v2(
                 last,
                 ["Bullish pinbar rejection at zone."],
                 buffer,
-                body_strength_metadata,
+                {**body_strength_metadata, **pinbar_metadata},
             )
         wick_reject = wick_rejection_metadata(last, "long", zone_low, zone_high, avg_body, config)
         if wick_reject is not None:
@@ -173,18 +173,18 @@ def classify_zone_reaction_v2(
                 buffer,
                 body_strength_metadata,
             )
-        if (
-            config.zone_reaction_v2_reject_pinbar_enabled
-            and high >= zone_low
-            and close < zone_low
-            and _is_pinbar_reject(
+        pinbar_metadata = (
+            pinbar_rejection_metadata(
                 last, "short",
                 config.zone_reaction_v2_reject_pinbar_wick_body_ratio,
                 config.zone_reaction_v2_reject_pinbar_min_wick_ratio,
                 avg_body=avg_body,
                 body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
             )
-        ):
+            if config.zone_reaction_v2_reject_pinbar_enabled
+            else None
+        )
+        if high >= zone_low and close < zone_low and pinbar_metadata is not None:
             return reaction_v2(
                 "reject",
                 "short",
@@ -192,7 +192,7 @@ def classify_zone_reaction_v2(
                 last,
                 ["Bearish pinbar rejection at zone."],
                 buffer,
-                body_strength_metadata,
+                {**body_strength_metadata, **pinbar_metadata},
             )
         wick_reject = wick_rejection_metadata(last, "short", zone_low, zone_high, avg_body, config)
         if wick_reject is not None:

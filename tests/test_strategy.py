@@ -212,6 +212,56 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("reject", reaction.state)
         self.assertEqual("short", reaction.direction)
 
+    def test_bearish_pinbar_persists_rejection_strength_without_overwriting_body(self) -> None:
+        candles = [
+            candle("00:00", 4070.0, 4077.0, 4069.0, 4076.0),
+            candle("00:15", 4070.0, 4078.0, 4069.0, 4077.0),
+            candle("00:30", 4074.495, 4082.120, 4071.766, 4074.912),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("resistance", "bearish", 4081.14, 4100.45),
+            candles,
+            atr=10.27679,
+            config=CONFIG,
+        )
+
+        average = (6.0 + 7.0 + 0.417) / 3
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("pinbar", reaction.metadata["reaction_trigger_method"])
+        self.assertAlmostEqual(0.417, reaction.metadata["reaction_body"], places=5)
+        self.assertAlmostEqual(7.208, reaction.metadata["reaction_rejection_size"], places=5)
+        self.assertAlmostEqual(
+            7.208 / average,
+            reaction.metadata["reaction_rejection_avg_ratio"],
+            places=4,
+        )
+
+    def test_bullish_pinbar_persists_rejection_strength_without_overwriting_body(self) -> None:
+        candles = [
+            candle("00:00", 92.0, 93.0, 89.0, 90.0),
+            candle("00:15", 91.0, 92.0, 88.0, 89.0),
+            candle("00:30", 91.5, 92.0, 86.0, 91.1),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("support", "bullish", 85.0, 90.0),
+            candles,
+            atr=10.0,
+            config=CONFIG,
+        )
+
+        average = (2.0 + 2.0 + 0.4) / 3
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("pinbar", reaction.metadata["reaction_trigger_method"])
+        self.assertAlmostEqual(0.4, reaction.metadata["reaction_body"], places=5)
+        self.assertAlmostEqual(5.1, reaction.metadata["reaction_rejection_size"], places=5)
+        self.assertAlmostEqual(
+            5.1 / average,
+            reaction.metadata["reaction_rejection_avg_ratio"],
+            places=4,
+        )
+
     def test_bullish_strong_reject_requires_bullish_candle_body(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),

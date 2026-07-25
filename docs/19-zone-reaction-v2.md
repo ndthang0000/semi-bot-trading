@@ -116,6 +116,12 @@ Moi trade `reject` va `internal_reject` luu snapshot body-strength trong candida
 
 - `reaction_avg_body`: average body M15 dung tai thoi diem runtime.
 - `reaction_body_avg_ratio`: `reaction_body / reaction_avg_body`.
+- `reaction_body` luon la than nen that `abs(close - open)`, ke ca voi pinbar.
+- Pinbar luu them `reaction_trigger_method = pinbar`,
+  `reaction_rejection_size` (khoang cach tu wick extreme ve close), va
+  `reaction_rejection_avg_ratio = reaction_rejection_size / reaction_avg_body`.
+  Khong ghi de rejection size vao `reaction_body`, de giu cung mot semantics
+  cho report va thong ke giua strong-body reject, pinbar va internal reject.
 
 Snapshot nay giu report va research dung voi quyet dinh runtime ngay ca khi bang candle sau nay duoc import lai. Trade cu khong co hai field van duoc report reconstruct tu historical M15 candles.
 
