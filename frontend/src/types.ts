@@ -232,6 +232,36 @@ export type SetupCandidate = {
   metadata: Record<string, unknown>;
 };
 
+export type M15SignalSnapshot = {
+  candle_time: string;
+  candle_close_time: string | null;
+  candle_closed: boolean;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  candle_direction: "bullish" | "bearish" | "doji";
+  avg_body_period: number;
+  avg_body: number;
+  body: number;
+  body_avg_ratio: number | null;
+  candidate_count: number;
+  candidate_id: string | null;
+  status: string;
+  reaction_state: string | null;
+  trigger_method: string | null;
+  trigger_candle_time: string | null;
+  trigger_is_latest_closed_candle: boolean;
+  trigger_avg_body: number | null;
+  trigger_body: number | null;
+  trigger_body_avg_ratio: number | null;
+  strength_size: number | null;
+  strength_avg_ratio: number | null;
+  zone_id: string | null;
+  zone_type: string | null;
+  reason: string | null;
+};
+
 export type ChartPayload = {
   version: number;
   symbol: string;
@@ -255,6 +285,7 @@ export type ChartPayload = {
     trades: TradeOrder[];
     setup_candidates: SetupCandidate[];
     m15_triggers: M15TriggerOverlay[];
+    m15_signal: M15SignalSnapshot | null;
   };
   replay?: {
     enabled: boolean;

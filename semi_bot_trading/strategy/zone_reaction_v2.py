@@ -291,6 +291,16 @@ def confirmed_wick_rejection(
     return {
         **previous_wick,
         "wick_reject_confirmed": True,
+        # The rejection happened on the previous candle; keep its own rolling
+        # baseline so UI/report strength does not accidentally use the smaller
+        # confirmation candle body.
+        "wick_reject_avg_body": round(avg_body, 5),
+        "wick_reject_rejection_avg_ratio": round(
+            float(previous_wick["wick_reject_rejection_size"]) / avg_body,
+            4,
+        )
+        if avg_body > 0
+        else None,
         "wick_reject_confirmation_time": current.get("time"),
         "wick_reject_confirmation_close": current_close,
     }

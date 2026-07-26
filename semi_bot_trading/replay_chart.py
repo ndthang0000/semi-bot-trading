@@ -5,6 +5,7 @@ from typing import Any
 
 from .chart import (
     CHART_PAYLOAD_VERSION,
+    build_m15_signal_snapshot,
     build_m15_trigger_overlays,
     build_atr_snapshot,
     build_rsi_snapshot,
@@ -202,6 +203,11 @@ def build_realtime_replay_payload(
         chart_zones,
         setup_candidates,
     )
+    m15_signal = build_m15_signal_snapshot(
+        strategy_candles,
+        setup_candidates,
+        avg_body_period=config.strategy.zone_reaction_v2_reject_avg_body_period,
+    )
     payload = {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,
@@ -225,6 +231,7 @@ def build_realtime_replay_payload(
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
             "m15_triggers": m15_triggers,
+            "m15_signal": m15_signal,
         },
     }
     if replay_enabled:

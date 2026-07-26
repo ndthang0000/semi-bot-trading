@@ -227,6 +227,7 @@ function DetailPanel({ trade, onClose, onSaved }: {
 
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
         <InfoSection title="Bot Decision" rows={[
+          ["Account", trade.account_label || "Default"],
           ["Direction", trade.direction ?? trade.side],
           ["Entry", trade.entry_price?.toFixed(2) ?? "-"],
           ["Stop Loss", trade.stop_loss?.toFixed(2) ?? "-"],
@@ -577,12 +578,21 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
 function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: boolean; onClick: () => void }) {
   const r = trade.pnl_r;
   const reviewed = isTradeReviewComplete(trade.review);
+  const accountLabel = trade.account_label || "Default";
   return (
     <tr
       onClick={onClick}
       className={`cursor-pointer border-b border-ink-700/50 text-xs transition-colors ${selected ? "bg-blue-600/10" : "hover:bg-ink-800"}`}
     >
       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{fmt(trade.opened_at)}</td>
+      <td className="whitespace-nowrap px-3 py-2">
+        <span
+          className={`inline-block max-w-40 truncate rounded border px-1.5 py-0.5 align-middle text-[11px] font-semibold ${accountBadgeClass(accountLabel)}`}
+          title={accountLabel}
+        >
+          {accountLabel}
+        </span>
+      </td>
       <td className="px-3 py-2 text-slate-300">{trade.playbook}</td>
       <td className={`px-3 py-2 font-medium ${trade.direction === "long" || trade.side === "buy" ? "text-green-400" : "text-red-400"}`}>
         {trade.direction ?? trade.side}
@@ -601,6 +611,17 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
       </td>
     </tr>
   );
+}
+
+function accountBadgeClass(accountLabel: string): string {
+  const normalized = accountLabel.toLowerCase();
+  if (normalized.includes("exness")) {
+    return "border-amber-300/35 bg-amber-400/15 text-amber-200 shadow-[0_0_10px_rgba(251,191,36,0.10)]";
+  }
+  if (normalized.includes("ftmo")) {
+    return "border-indigo-400/30 bg-gradient-to-r from-slate-950 via-blue-950 to-indigo-950 text-cyan-200 shadow-[0_0_12px_rgba(56,189,248,0.14)]";
+  }
+  return "border-slate-600/40 bg-slate-700/45 text-slate-300";
 }
 
 function PatternsTab() {
@@ -722,16 +743,17 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
         ) : (
           <>
             <FilterBar filters={filters} onChange={setFilters} />
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-auto">
               {isLoading ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-500">Loading...</div>
               ) : trades.length === 0 ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-600">No trades found</div>
               ) : (
-                <table className="w-full">
+                <table className="w-full min-w-[920px]">
                   <thead>
                     <tr className="border-b border-ink-700 bg-ink-900 text-xs text-slate-500">
                       <th className="px-3 py-2 text-left font-normal">Date (UTC)</th>
+                      <th className="px-3 py-2 text-left font-normal">Account</th>
                       <th className="px-3 py-2 text-left font-normal">Playbook</th>
                       <th className="px-3 py-2 text-left font-normal">Dir</th>
                       <th className="px-3 py-2 text-left font-normal">Entry</th>

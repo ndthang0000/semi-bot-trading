@@ -1,18 +1,145 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from sqlite3 import Connection
 from typing import Any
 
 from .context import score_macro_trend
 from .indicators import latest_rsi_snapshot
-from .strategy import build_setup_candidates
+from .strategy import average_body, build_setup_candidates, candle_body
 from .zones import CandleSlice, latest_atr
 
 
 CHART_PAYLOAD_VERSION = 1
 MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS = 500
+
+
+def build_m15_signal_snapshot(
+    candles: list[dict[str, Any]],
+    setup_candidates: list[dict[str, Any]],
+    avg_body_period: int = 20,
+) -> dict[str, Any] | None:
+    """Describe the last closed M15 candle and its best zone-trigger candidate.
+
+    The dashboard intentionally receives closed-candle data only. Live/forming
+    candles can be useful for chart touch overlays, but they must not look like
+    a confirmed strategy trigger before the worker can evaluate them.
+    """
+    if not candles:
+        return None
+    candle = candles[-1]
+    period = max(int(avg_body_period), 1)
+    average = average_body(candles, period)
+    body = candle_body(candle)
+    body_ratio = body / average if average > 0 else None
+    close = float(candle["close"])
+    open_ = float(candle["open"])
+    direction = "bullish" if close > open_ else "bearish" if close < open_ else "doji"
+
+    status_priority = {
+        "eligible": 0,
+        "waiting_confirmation": 1,
+        "blocked": 2,
+        "watching": 3,
+        "approaching": 4,
+    }
+    best_candidate = min(
+        setup_candidates,
+        key=lambda candidate: (
+            status_priority.get(str(candidate.get("status") or ""), 9),
+            -float(candidate.get("score") or 0.0),
+            str(candidate.get("id") or ""),
+        ),
+        default=None,
+    )
+    result: dict[str, Any] = {
+        "candle_time": candle["time"],
+        "candle_close_time": candle.get("close_time"),
+        "candle_closed": True,
+        "open": open_,
+        "high": float(candle["high"]),
+        "low": float(candle["low"]),
+        "close": close,
+        "candle_direction": direction,
+        "avg_body_period": period,
+        "avg_body": round(average, 5),
+        "body": round(body, 5),
+        "body_avg_ratio": round(body_ratio, 4) if body_ratio is not None else None,
+        "candidate_count": len(setup_candidates),
+        "candidate_id": None,
+        "status": "watching",
+        "reaction_state": None,
+        "trigger_method": None,
+        "trigger_candle_time": None,
+        "trigger_is_latest_closed_candle": False,
+        "trigger_avg_body": None,
+        "trigger_body": None,
+        "trigger_body_avg_ratio": None,
+        "strength_size": None,
+        "strength_avg_ratio": None,
+        "zone_id": None,
+        "zone_type": None,
+        "reason": None,
+    }
+    if best_candidate is None:
+        return result
+
+    metadata = best_candidate.get("metadata") if isinstance(best_candidate.get("metadata"), dict) else {}
+    reasons = best_candidate.get("reason") if isinstance(best_candidate.get("reason"), list) else []
+    reaction_state = str(best_candidate.get("zone_reaction_state") or metadata.get("reaction_v2") or "")
+    trigger_method = str(metadata.get("reaction_trigger_method") or "")
+    if not trigger_method:
+        if metadata.get("wick_reject_confirmed") is True:
+            trigger_method = "confirmed_wick"
+        elif reaction_state == "internal_reject":
+            trigger_method = "strong_body"
+        elif any("strong " in str(reason).lower() and "rejection" in str(reason).lower() for reason in reasons):
+            trigger_method = "strong_body"
+    trigger_time = str(metadata.get("reaction_candle_time") or "")
+    reaction_body = _optional_float(metadata.get("reaction_body"))
+    reaction_average = _optional_float(metadata.get("reaction_avg_body"))
+    reaction_body_ratio = _optional_float(metadata.get("reaction_body_avg_ratio"))
+    rejection_size = _optional_float(metadata.get("reaction_rejection_size"))
+    rejection_ratio = _optional_float(metadata.get("reaction_rejection_avg_ratio"))
+    if trigger_method == "pinbar":
+        strength_size = rejection_size
+        strength_ratio = rejection_ratio
+    elif trigger_method == "confirmed_wick":
+        strength_size = _optional_float(metadata.get("wick_reject_rejection_size"))
+        strength_ratio = _optional_float(metadata.get("wick_reject_rejection_avg_ratio"))
+    else:
+        strength_size = reaction_body
+        strength_ratio = reaction_body_ratio
+
+    result.update(
+        {
+            "candidate_id": best_candidate.get("id"),
+            "status": best_candidate.get("status"),
+            "reaction_state": reaction_state or None,
+            "trigger_method": trigger_method or None,
+            "trigger_candle_time": trigger_time or None,
+            "trigger_is_latest_closed_candle": trigger_time == str(candle["time"]),
+            "trigger_avg_body": round(reaction_average, 5) if reaction_average is not None else None,
+            "trigger_body": round(reaction_body, 5) if reaction_body is not None else None,
+            "trigger_body_avg_ratio": round(reaction_body_ratio, 4) if reaction_body_ratio is not None else None,
+            "strength_size": round(strength_size, 5) if strength_size is not None else None,
+            "strength_avg_ratio": round(strength_ratio, 4) if strength_ratio is not None else None,
+            "zone_id": best_candidate.get("primary_zone_id"),
+            "zone_type": metadata.get("zone_type"),
+            "reason": str(reasons[0]) if reasons else None,
+        }
+    )
+    return result
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def compute_live_macro_trend_context(
@@ -161,7 +288,7 @@ def load_chart_candles(
     if start_index is not None and start is None and end is None:
         rows = conn.execute(
             """
-            SELECT open_time, open, high, low, close, volume
+            SELECT open_time, close_time, open, high, low, close, volume
             FROM candles
             WHERE symbol = ? AND timeframe = ?
             ORDER BY open_time
@@ -182,9 +309,9 @@ def load_chart_candles(
 
     rows = conn.execute(
         f"""
-        SELECT open_time, open, high, low, close, volume
+        SELECT open_time, close_time, open, high, low, close, volume
         FROM (
-            SELECT open_time, open, high, low, close, volume
+            SELECT open_time, close_time, open, high, low, close, volume
             FROM candles
             WHERE {' AND '.join(clauses)}
             ORDER BY open_time DESC
@@ -201,6 +328,7 @@ def chart_candle_rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     return [
         {
             "time": row["open_time"],
+            "close_time": row["close_time"],
             "open": float(row["open"]),
             "high": float(row["high"]),
             "low": float(row["low"]),
@@ -688,6 +816,11 @@ def build_chart_payload(
             live_macro = compute_live_macro_trend_context(conn, symbol, macro_trend_config)
             if live_macro is not None:
                 contexts.setdefault(macro_timeframe, {})["macro_trend"] = live_macro
+    strategy_end = None if is_latest_mode else range_end
+    strategy_timeframe = str(strategy_config.timeframe) if strategy_config is not None else "M15"
+    closed_strategy_candles = load_chart_candles(conn, symbol, strategy_timeframe, 240, end=strategy_end)
+    strategy_candles = list(closed_strategy_candles)
+    raw_setup_candidates: list[dict[str, Any]] = []
     setup_candidates: list[dict[str, Any]] = []
     if strategy_config is not None:
         zone_groups_by_timeframe: dict[str, list[dict[str, Any]]] = {effective_structure_timeframe: zones}
@@ -710,8 +843,6 @@ def build_chart_payload(
         # Latest chart mode should evaluate setup candidates from the latest closed
         # strategy candle, not from the H1 chart range end. Otherwise M15 touches
         # after the current H1 candle opens are invisible until the next H1 close.
-        strategy_end = None if is_latest_mode else range_end
-        strategy_candles = load_chart_candles(conn, symbol, strategy_config.timeframe, 240, end=strategy_end)
         if include_live_strategy_candle and is_latest_mode:
             live_strategy_candle = load_live_candle(conn, symbol, strategy_config.timeframe)
             if live_strategy_candle is not None and (
@@ -720,7 +851,7 @@ def build_chart_payload(
                 strategy_candles = [*strategy_candles, live_strategy_candle]
         context_candles = load_chart_candles(conn, symbol, effective_structure_timeframe, 240, end=range_end)
         if strategy_candles:
-            setup_candidates = build_setup_candidates(
+            raw_setup_candidates = build_setup_candidates(
                 symbol=symbol,
                 zones=candidate_zones,
                 contexts=contexts,
@@ -740,9 +871,19 @@ def build_chart_payload(
             setup_candidates = filter_traded_setup_candidates(
                 conn,
                 symbol,
-                setup_candidates,
+                raw_setup_candidates,
                 account_label=traded_account_label,
             )
+    avg_body_period = (
+        int(getattr(strategy_config, "zone_reaction_v2_reject_avg_body_period", 20))
+        if strategy_config is not None
+        else 20
+    )
+    m15_signal = build_m15_signal_snapshot(
+        closed_strategy_candles,
+        raw_setup_candidates,
+        avg_body_period=avg_body_period,
+    )
     m15_triggers = build_m15_trigger_overlays(
         conn,
         symbol,
@@ -777,5 +918,6 @@ def build_chart_payload(
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
             "m15_triggers": m15_triggers,
+            "m15_signal": m15_signal,
         },
     }

@@ -77,6 +77,21 @@ Mỗi trade có action `Hide from chart` / `Show on chart`. Đây chỉ là tr�
 trình bày được lưu trong `trade_orders.hidden_on_chart`; trade vẫn còn nguyên
 trong history, report, thống kê P&L và không ảnh hưởng strategy/execution.
 
+## Context strip
+
+Context strip có card `M15 Trigger`, dùng cùng snapshot với strategy:
+
+- Luôn mô tả cây M15 **đã đóng gần nhất**. Nến đang chạy có thể được vẽ trên
+  chart nhưng không được hiển thị như một trigger đã xác nhận. Badge `Closed`
+  dùng giờ đóng nến; `candle_time` trong strategy metadata vẫn là giờ mở nến.
+- `Avg body (20)` là trung bình thân nến rolling mà Zone Reaction V2 sử dụng.
+- Trigger strong-body và internal-reject hiển thị body cùng `body / avg20`.
+- Trigger pinbar/confirmed-wick dùng rejection size (từ cực trị wick tới close)
+  làm độ mạnh chính và hiển thị `rejection / avg20`; raw body của nến xác nhận
+  vẫn là context phụ.
+- Khi chưa có setup candidate, card hiển thị `Watching` và metrics của nến M15
+  đã đóng gần nhất.
+
 ## Chart payload contract MVP
 
 Backend xuất một payload chart-ready để UI có thể render ngay, chưa cần gọi nhiều API rời rạc trong giai đoạn đầu.

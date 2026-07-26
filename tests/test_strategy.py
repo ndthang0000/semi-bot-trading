@@ -194,6 +194,8 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("reject", reaction.state)
         self.assertEqual("short", reaction.direction)
         self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
+        self.assertIn("wick_reject_avg_body", reaction.metadata)
+        self.assertIn("wick_reject_rejection_avg_ratio", reaction.metadata)
 
     def test_bearish_strong_reject_accepts_bearish_candle_body(self) -> None:
         candles = [
@@ -300,6 +302,8 @@ class StrategyTest(unittest.TestCase):
         self.assertIn("reaction_avg_body", reaction.metadata)
         self.assertIn("reaction_body_avg_ratio", reaction.metadata)
         self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
+        self.assertIn("wick_reject_avg_body", reaction.metadata)
+        self.assertIn("wick_reject_rejection_avg_ratio", reaction.metadata)
 
     def test_zone_reaction_v2_carries_recent_reject_after_price_leaves_zone(self) -> None:
         candles = [

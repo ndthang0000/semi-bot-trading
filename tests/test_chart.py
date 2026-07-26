@@ -11,6 +11,7 @@ from unittest.mock import patch
 from semi_bot_trading.chart import (
     MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS,
     build_chart_payload,
+    build_m15_signal_snapshot,
     build_m15_trigger_overlays,
     filter_traded_setup_candidates,
 )
@@ -36,7 +37,15 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertIn("contexts", payload["layers"])
         self.assertIn("trades", payload["layers"])
         self.assertIn("setup_candidates", payload["layers"])
+        self.assertIn("m15_signal", payload["layers"])
         self.assertEqual(payload["layers"]["setup_candidates"], [])
+        signal = payload["layers"]["m15_signal"]
+        self.assertTrue(signal["candle_closed"])
+        self.assertEqual(signal["candle_time"], "2026-01-01T00:15:00+00:00")
+        self.assertEqual(signal["candle_close_time"], "2026-01-01T00:30:00+00:00")
+        self.assertAlmostEqual(signal["avg_body"], 1.5)
+        self.assertAlmostEqual(signal["body"], 2.0)
+        self.assertAlmostEqual(signal["body_avg_ratio"], 1.3333, places=4)
         self.assertEqual(payload["layers"]["zones"][0]["timeframe"], "H1")
         self.assertEqual(payload["layers"]["contexts"]["H1"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["contexts"]["M15"]["bias"]["effective_value"], "bullish")
@@ -119,7 +128,7 @@ class ChartPayloadTest(unittest.TestCase):
                 strategy_config = SimpleNamespace(timeframe="M15")
 
                 with patch("semi_bot_trading.chart.build_setup_candidates", side_effect=fake_build_setup_candidates):
-                    build_chart_payload(
+                    closed_payload = build_chart_payload(
                         conn,
                         "XAUUSD",
                         "M15",
@@ -127,7 +136,7 @@ class ChartPayloadTest(unittest.TestCase):
                         strategy_config=strategy_config,
                         structure_timeframe="H1",
                     )
-                    build_chart_payload(
+                    live_payload = build_chart_payload(
                         conn,
                         "XAUUSD",
                         "M15",
@@ -138,6 +147,67 @@ class ChartPayloadTest(unittest.TestCase):
                     )
 
         self.assertEqual([2, 3], captured_lengths)
+        self.assertEqual(
+            closed_payload["layers"]["m15_signal"]["candle_time"],
+            live_payload["layers"]["m15_signal"]["candle_time"],
+        )
+        self.assertEqual(
+            live_payload["layers"]["m15_signal"]["candle_time"],
+            "2026-01-01T00:15:00+00:00",
+        )
+
+    def test_m15_signal_uses_pinbar_rejection_as_trigger_strength(self) -> None:
+        candles = [
+            {
+                "time": "2026-07-25T00:00:00+00:00",
+                "open": 4068.0,
+                "high": 4075.0,
+                "low": 4067.0,
+                "close": 4074.0,
+            },
+            {
+                "time": "2026-07-25T00:15:00+00:00",
+                "open": 4074.0,
+                "high": 4082.0,
+                "low": 4073.0,
+                "close": 4081.0,
+            },
+            {
+                "time": "2026-07-25T00:30:00+00:00",
+                "open": 4074.495,
+                "high": 4082.12,
+                "low": 4071.766,
+                "close": 4074.912,
+            },
+        ]
+        average = (6.0 + 7.0 + 0.417) / 3
+        rejection_size = 7.208
+        candidate = {
+            "id": "candidate-pinbar",
+            "primary_zone_id": "zone-resistance",
+            "status": "eligible",
+            "score": 1.0,
+            "zone_reaction_state": "reject",
+            "reason": ["Bearish pinbar rejection at zone."],
+            "metadata": {
+                "zone_type": "resistance",
+                "reaction_trigger_method": "pinbar",
+                "reaction_candle_time": candles[-1]["time"],
+                "reaction_avg_body": average,
+                "reaction_body": 0.417,
+                "reaction_body_avg_ratio": 0.417 / average,
+                "reaction_rejection_size": rejection_size,
+                "reaction_rejection_avg_ratio": rejection_size / average,
+            },
+        }
+
+        signal = build_m15_signal_snapshot(candles, [candidate], avg_body_period=20)
+
+        self.assertEqual(signal["trigger_method"], "pinbar")
+        self.assertEqual(signal["strength_size"], rejection_size)
+        self.assertAlmostEqual(signal["strength_avg_ratio"], rejection_size / average, places=4)
+        self.assertEqual(signal["trigger_body"], 0.417)
+        self.assertTrue(signal["trigger_is_latest_closed_candle"])
 
     def test_m15_trigger_overlay_caps_touch_only_rows_but_keeps_candidates(self) -> None:
         with TemporaryDirectory() as temp_dir:

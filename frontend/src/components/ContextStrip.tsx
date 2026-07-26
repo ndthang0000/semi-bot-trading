@@ -45,7 +45,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const priceChange = readCurrentPriceChange(payload);
 
   return (
-    <section className="grid grid-cols-[210px_220px_170px_150px_150px_minmax(0,1fr)] gap-3 border-b border-ink-700 bg-ink-950 px-4 py-3">
+    <section className="grid grid-cols-[210px_220px_170px_150px_150px_280px_minmax(220px,1fr)] gap-3 overflow-x-auto border-b border-ink-700 bg-ink-950 px-4 py-3">
       <BiasCard bias={bias} context={biasContext} priceChange={priceChange} onEdit={() => setEditing("bias")} />
       <ContextCard
         label="H1 Regime"
@@ -56,6 +56,7 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
       <MacroTrendCard context={macroContext} />
       <AtrCard atr={payload?.layers.atr} />
       <RsiCard rsi={payload?.layers.rsi} />
+      <M15SignalCard signal={payload?.layers.m15_signal} />
       <ContextCard label="Range" value={payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--"} />
 
       {editing && h1?.[editing] ? (
@@ -70,6 +71,70 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
         />
       ) : null}
     </section>
+  );
+}
+
+function M15SignalCard({ signal }: { signal: ChartPayload["layers"]["m15_signal"] | undefined }) {
+  const hasCandidate = Boolean(signal?.candidate_id);
+  const isPinbar = signal?.trigger_method === "pinbar";
+  const isWickTrigger = isPinbar || signal?.trigger_method === "confirmed_wick";
+  const average = signal?.trigger_avg_body ?? signal?.avg_body;
+  const body = signal?.trigger_body ?? signal?.body;
+  const bodyRatio = signal?.trigger_body_avg_ratio ?? signal?.body_avg_ratio;
+  const strengthRatio = isWickTrigger ? signal?.strength_avg_ratio : bodyRatio;
+  const headline = signal ? triggerHeadline(signal.trigger_method, signal.reaction_state, hasCandidate) : "--";
+  const toneClass =
+    signal?.status === "eligible"
+      ? "text-emerald-300"
+      : signal?.status === "blocked"
+        ? "text-rose-300"
+        : hasCandidate
+          ? "text-amber-200"
+          : "text-slate-300";
+  const closedTime = shortUtcTime(signal?.candle_close_time ?? signal?.candle_time);
+  const triggerTime = shortUtcTime(signal?.trigger_candle_time);
+  const triggerTimeSuffix =
+    signal?.trigger_candle_time && !signal.trigger_is_latest_closed_candle ? ` @ ${triggerTime}` : "";
+
+  return (
+    <div
+      className={CONTEXT_CARD_CLASS}
+      title={signal?.reason ?? "Metrics use the latest closed M15 candle; forming candles are excluded."}
+    >
+      <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span>M15 Trigger</span>
+        <span className="rounded border border-slate-600/50 bg-slate-800/60 px-1 py-0.5 text-[9px] uppercase tracking-wide text-slate-400">
+          Closed {closedTime}
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-center justify-between gap-2 leading-tight">
+        <div className={`min-w-0 truncate text-xs font-semibold ${toneClass}`}>
+          {headline}{triggerTimeSuffix}
+        </div>
+        <div className="shrink-0 text-xs font-semibold text-slate-100">{formatRatio(strengthRatio)}</div>
+      </div>
+      <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] leading-tight">
+        <SignalMetric label={`Avg body (${signal?.avg_body_period ?? 20})`} value={formatSignalValue(average)} />
+        <SignalMetric label="Body / avg" value={`${formatSignalValue(body)} / ${formatRatio(bodyRatio)}`} />
+        <SignalMetric
+          label={isWickTrigger ? "Rejection / avg" : "Candle"}
+          value={
+            isWickTrigger
+              ? `${formatSignalValue(signal?.strength_size)} / ${formatRatio(signal?.strength_avg_ratio)}`
+              : signal?.candle_direction ?? "--"
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function SignalMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="truncate text-slate-600" title={label}>{label}</div>
+      <div className="truncate font-semibold text-slate-300" title={value}>{value}</div>
+    </div>
   );
 }
 
@@ -477,6 +542,28 @@ function readCurrentPriceChange(payload: ChartPayload | undefined): { currentPri
 
 function formatAtrValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function formatSignalValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function formatRatio(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}x` : "--";
+}
+
+function shortUtcTime(value: string | null | undefined): string {
+  if (!value) return "--";
+  return `${value.slice(11, 16)}Z`;
+}
+
+function triggerHeadline(method: string | null | undefined, reactionState: string | null | undefined, hasCandidate: boolean): string {
+  if (!hasCandidate) return "Watching";
+  if (method === "pinbar") return "Pinbar reject";
+  if (method === "confirmed_wick") return "Confirmed wick";
+  if (method === "strong_body" && reactionState === "internal_reject") return "Internal body";
+  if (method === "strong_body") return "Strong body";
+  return reactionState ? reactionState.replace(/_/g, " ") : "Candidate";
 }
 
 function formatRsiValue(value: number | null | undefined): string {
