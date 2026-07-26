@@ -1,4 +1,4 @@
-import { BarChart2, BookOpen, LineChart } from "lucide-react";
+import { BarChart2, BookOpen, LineChart, Wind } from "lucide-react";
 import { AppPage, useNavigationStore } from "../store/navigationStore";
 
 interface NavItem {
@@ -11,12 +11,13 @@ const NAV_ITEMS: NavItem[] = [
   { page: "chart", icon: <LineChart size={18} />, label: "Chart" },
   { page: "dashboard", icon: <BarChart2 size={18} />, label: "Dashboard" },
   { page: "journal", icon: <BookOpen size={18} />, label: "Journal" },
+  { page: "calm", icon: <Wind size={18} />, label: "Calm" },
 ];
 
 export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
   const activePage = useNavigationStore((s) => s.activePage);
   const setPage = useNavigationStore((s) => s.setPage);
-  const displayedActivePage = reviewLocked ? "journal" : activePage;
+  const displayedActivePage = reviewLocked && activePage !== "calm" ? "journal" : activePage;
 
   return (
     <aside className="flex h-full w-12 flex-col items-center border-r border-ink-700 bg-ink-900 py-3">
@@ -28,7 +29,7 @@ export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
       <nav className="flex flex-1 flex-col items-center gap-1">
         {NAV_ITEMS.map(({ page, icon, label }) => {
           const isActive = displayedActivePage === page;
-          const disabled = reviewLocked && page !== "journal";
+          const disabled = reviewLocked && page !== "journal" && page !== "calm";
           return (
             <button
               key={page}

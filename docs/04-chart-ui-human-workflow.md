@@ -92,6 +92,27 @@ Context strip có card `M15 Trigger`, dùng cùng snapshot với strategy:
 - Khi chưa có setup candidate, card hiển thị `Watching` và metrics của nến M15
   đã đóng gần nhất.
 
+## Calm Reset
+
+`Calm Reset` là lớp hỗ trợ tâm lý thuần frontend, không thay đổi strategy,
+worker, risk manager hoặc execution:
+
+- UI poll các live trade đã `closed`; partial TP không kích hoạt vì order vẫn
+  chưa đóng hoàn toàn.
+- Lần fetch đầu chỉ tạo baseline để lịch sử cũ không hiện toast.
+- Các execution Exness/FTMO có cùng `candidate_id` được gom thành một event.
+- Sau event, UI hiện toast rồi modal với một trong 10 message win/loss. Message
+  dùng shuffle-bag, đọc hết bộ mới shuffle lại và không lặp ngay qua hai vòng.
+- Button `Đọc câu khác` rút message tiếp theo; `Play mini game` mở trang `Calm`
+  cùng cấp với Chart, Dashboard và Journal.
+- Rhythm Reset kéo dài tối thiểu 48 giây: hít 4 giây, giữ 2 giây, thở 6 giây;
+  user tap trong pha thở ra ít nhất ba lần.
+- Trang Calm có `Preview Win` và `Preview Loss` để review toàn bộ toast → modal
+  → mini game bằng event frontend giả; preview không ghi database hoặc thống kê.
+- Các trade/group/message đã xử lý được lưu trong local storage. Nếu local
+  storage không khả dụng, Calm Reset tự bỏ qua persistence và không làm ảnh
+  hưởng trading UI.
+
 ## Chart payload contract MVP
 
 Backend xuất một payload chart-ready để UI có thể render ngay, chưa cần gọi nhiều API rời rạc trong giai đoạn đầu.

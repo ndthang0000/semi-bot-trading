@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type AppPage = "chart" | "dashboard" | "journal";
+export type AppPage = "chart" | "dashboard" | "journal" | "calm";
 
 interface NavigationState {
   activePage: AppPage;

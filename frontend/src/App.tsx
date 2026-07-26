@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { authFetch, clearStoredRefreshToken, getStoredRefreshToken, refreshAccessToken } from "./api/auth";
 import { BlackoutBanner, useNewsData } from "./components/NewsWidget";
+import { CalmResetMonitor } from "./components/CalmResetMonitor";
 import { LoginPage } from "./components/LoginPage";
 import { Sidebar } from "./components/Sidebar";
 import { buildWeeklyReviewGate } from "./lib/weeklyReview";
 import { AccountDashboardPage } from "./pages/AccountDashboardPage";
+import { CalmPage } from "./pages/CalmPage";
 import { ChartPage } from "./pages/ChartPage";
 import { JournalPage } from "./pages/JournalPage";
 import { useAuthStore } from "./store/authStore";
@@ -61,15 +63,16 @@ function AppShell() {
   const weeklyReviewGate = buildWeeklyReviewGate(weeklyReviewTrades ?? []);
 
   useEffect(() => {
-    if (weeklyReviewGate.active && activePage !== "journal") {
+    if (weeklyReviewGate.active && activePage !== "journal" && activePage !== "calm") {
       setPage("journal");
     }
   }, [activePage, setPage, weeklyReviewGate.active]);
 
-  const renderedPage = weeklyReviewGate.active ? "journal" : activePage;
+  const renderedPage = weeklyReviewGate.active && activePage !== "calm" ? "journal" : activePage;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
+      <CalmResetMonitor />
       {newsData?.active_blackout && <BlackoutBanner event={newsData.active_blackout} />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar reviewLocked={weeklyReviewGate.active} />
@@ -77,6 +80,7 @@ function AppShell() {
           {renderedPage === "chart" && <ChartPage newsData={newsData} />}
           {renderedPage === "dashboard" && <AccountDashboardPage />}
           {renderedPage === "journal" && <JournalPage weeklyReviewGate={weeklyReviewGate} />}
+          {renderedPage === "calm" && <CalmPage />}
         </div>
       </div>
     </div>
