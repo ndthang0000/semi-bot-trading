@@ -105,8 +105,14 @@ worker, risk manager hoặc execution:
   dùng shuffle-bag, đọc hết bộ mới shuffle lại và không lặp ngay qua hai vòng.
 - Button `Đọc câu khác` rút message tiếp theo; `Play mini game` mở trang `Calm`
   cùng cấp với Chart, Dashboard và Journal.
-- Rhythm Reset kéo dài tối thiểu 48 giây: hít 4 giây, giữ 2 giây, thở 6 giây;
-  user tap trong pha thở ra ít nhất ba lần.
+- Khi bắt đầu, UI random một trong ba game không điểm số/game-over:
+  - `Rhythm Reset`: tối thiểu 48 giây, hít 4 giây, giữ 2 giây, thở 6 giây và
+    tap trong pha thở ra ít nhất ba lần.
+  - `Mindful Maze`: maze SVG 8×8 sinh ngẫu nhiên, điều khiển bằng keyboard hoặc
+    button và luôn có đường từ start tới goal.
+  - `Pixel Calm`: tô pixel-art 6×6 theo bốn màu; chọn sai không bị phạt.
+- User được `Đổi game` đúng một lần trong mỗi Calm Reset; đổi game reset tiến
+  trình và không thể chọn lại game vừa bỏ.
 - Trang Calm có `Preview Win` và `Preview Loss` để review toàn bộ toast → modal
   → mini game bằng event frontend giả; preview không ghi database hoặc thống kê.
 - Các trade/group/message đã xử lý được lưu trong local storage. Nếu local
