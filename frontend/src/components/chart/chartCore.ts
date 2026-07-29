@@ -89,6 +89,12 @@ export function chartPlotWidth(chart: IChartApi, containerWidth: number): number
 }
 
 export function zoneVisualClasses(zone: PriceZone): { box: string; label: string } {
+  if (zone.status === "draft") {
+    return {
+      box: "border-dashed border-amber-300/75 bg-amber-300/[0.06] hover:bg-amber-300/[0.12]",
+      label: "bg-amber-950/90 text-amber-100",
+    };
+  }
   if (zone.type === "order_block") {
     return zone.direction === "bullish"
       ? {

@@ -86,6 +86,9 @@ zone_loss_cooldown_candles = 12
 Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 
 - Default theo zone type: `support`/`resistance` = `["reject"]`, `fvg` = `["reject", "internal_reject"]`.
+- Support/Resistance do human tao bat dau voi `status=draft`. Trade modes van
+  duoc luu/chinh trong Draft nhung inert; Zone Reaction V2 va SR Breakout V1 chi
+  duoc evaluate sau khi questionnaire confirm doi zone thanh `active`.
 - Khi tao manual zone, frontend gui default nay va backend validate/lưu explicit vao `metadata.trade_modes`; backend cung dung cung default cho zone cu chua co field de UI va strategy khong lech nhau.
 - Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR) van ap dung.
 - Trong live mode, human manual zone chi duoc generate setup tu candle co open time bang hoac sau thoi diem zone duoc tao (`created_at`). Cac lan human keo/chinh zone sau do (`last_human_override_at`) khong reset activation, vi trader co the tinh chinh zone cho phu hop thi truong khi gia dang chay. `visual_start` chi de ve chart, khong duoc dung de backdate setup tren candle da mo truoc khi human ve zone.

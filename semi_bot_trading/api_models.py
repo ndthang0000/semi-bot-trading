@@ -49,6 +49,39 @@ class ZoneCreateRequest(BaseModel):
     trade_modes: list[str] | None = None
 
 
+ZoneTrend = Literal["bullish", "bearish", "neutral"]
+ZoneSwingLocation = Literal["inside_zone", "near_zone", "none"]
+ZoneThesisReason = Literal[
+    "value_entry_outside_swing",
+    "follow_short_term_trend",
+    "follow_medium_term_trend",
+    "breakout_retest",
+    "structure_flip",
+    "range_boundary",
+    "repeated_reactions",
+    "long_accumulation",
+]
+ZoneEmotionState = Literal[
+    "calm",
+    "fomo",
+    "revenge",
+    "proving_right",
+    "fear_missing_price",
+    "uncertain",
+]
+
+
+class ZoneActivationRequest(BaseModel):
+    short_term_trend: ZoneTrend
+    medium_term_trend: ZoneTrend
+    swing_location: ZoneSwingLocation
+    thesis_reasons: list[ZoneThesisReason] = Field(min_length=1, max_length=3)
+    emotion_state: ZoneEmotionState
+    fomo_score: int = Field(ge=1, le=10)
+    revenge_score: int = Field(ge=1, le=10)
+    comment: str = Field(default="", max_length=2_000)
+
+
 class ContextOverrideRequest(BaseModel):
     value: str | None = None
     secondary_value: str | None = None

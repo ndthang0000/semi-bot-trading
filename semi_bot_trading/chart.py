@@ -392,11 +392,15 @@ def load_chart_zones(
         "status != 'deleted'",
         "start_time <= ?",
         "detected_at <= ?",
-        "(end_time IS NULL OR end_time >= ?)",
+        "(status = 'draft' OR end_time IS NULL OR end_time >= ?)",
     ]
     params: list[Any] = [symbol, timeframe, end, end, start]
     if active_only:
-        clauses.append("(status = 'active' OR (end_time IS NOT NULL AND end_time > ?))")
+        # Drafts are deliberately excluded here because live workers request
+        # active-only chart payloads for strategy evaluation.
+        clauses.append(
+            "(status = 'active' OR (status NOT IN ('draft', 'disabled') AND end_time IS NOT NULL AND end_time > ?))"
+        )
         clauses.append("(status != 'active' OR valid_until > ?)")
         params.append(end)
         params.append(end)
@@ -429,7 +433,12 @@ def load_chart_zones(
         deterministic_expiry = metadata.get("expired_rule") == "smc_zone_max_active_days" or (
             metadata.get("max_active_days") is not None and row["valid_until"] == row["end_time"]
         )
-        if row["end_time"] is not None and row["end_time"] > end and not deterministic_expiry:
+        if (
+            row["status"] != "draft"
+            and row["end_time"] is not None
+            and row["end_time"] > end
+            and not deterministic_expiry
+        ):
             status = "active"
             invalidated_at = None
             if is_human_zone:

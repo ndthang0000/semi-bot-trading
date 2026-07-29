@@ -713,6 +713,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["source"], "human")
         self.assertEqual(payload["detector"], "human_manual_v1")
         self.assertEqual(payload["weight"], 0.72)
+        self.assertEqual(payload["status"], "active")
         self.assertIsNotNone(payload["valid_until"])
         self.assertEqual(payload["metadata"]["human_created"], True)
         self.assertEqual(payload["metadata"]["trade_modes"], ["reject", "internal_reject"])
@@ -743,13 +744,127 @@ class ApiTest(unittest.TestCase):
                     "confidence": 1.0,
                 },
             )
+            chart = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=2")
+            active_chart = client.get("/api/chart?symbol=XAUUSD&timeframe=M15&limit=2&active_zones_only=true")
 
             with connect(db_path) as conn:
                 row = conn.execute("SELECT metadata_json FROM price_zones").fetchone()
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "draft")
+        self.assertIsNone(response.json()["valid_until"])
+        self.assertEqual(response.json()["metadata"]["activation_review_version"], 1)
         self.assertEqual(response.json()["metadata"]["trade_modes"], ["reject"])
         self.assertEqual(json.loads(row["metadata_json"])["trade_modes"], ["reject"])
+        self.assertEqual(chart.json()["layers"]["zones"][0]["status"], "draft")
+        self.assertEqual(chart.json()["layers"]["zones"][0]["visual_end"], "2026-01-01T01:00:00+00:00")
+        self.assertEqual(active_chart.json()["layers"]["zones"], [])
+
+    def test_draft_sr_zone_requires_questionnaire_before_activation(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            created = client.post(
+                "/api/zones",
+                json={
+                    "symbol": "XAUUSD",
+                    "timeframe": "H1",
+                    "zone_type": "support",
+                    "direction": "bullish",
+                    "price_low": 1990.0,
+                    "price_high": 1995.0,
+                    "visual_start": "2026-01-01T00:00:00+00:00",
+                    "visual_end": "2026-01-01T01:00:00+00:00",
+                    "weight": 0.8,
+                    "confidence": 1.0,
+                    "status": "active",
+                },
+            )
+            zone_id = created.json()["id"]
+            bypass = client.patch(
+                f"/api/zones/{zone_id}",
+                json={
+                    "price_low": 1990.0,
+                    "price_high": 1995.0,
+                    "visual_start": "2026-01-01T00:00:00+00:00",
+                    "visual_end": "2026-01-01T01:00:00+00:00",
+                    "weight": 0.8,
+                    "confidence": 1.0,
+                    "status": "active",
+                },
+            )
+            incomplete = client.post(
+                f"/api/zones/{zone_id}/confirm",
+                json={
+                    "short_term_trend": "bullish",
+                },
+            )
+
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["status"], "draft")
+        self.assertEqual(bypass.status_code, 409)
+        self.assertEqual(incomplete.status_code, 422)
+
+    def test_confirm_draft_sr_zone_persists_review_and_activates(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            created = client.post(
+                "/api/zones",
+                json={
+                    "symbol": "XAUUSD",
+                    "timeframe": "H1",
+                    "zone_type": "resistance",
+                    "direction": "bearish",
+                    "price_low": 2001.0,
+                    "price_high": 2005.0,
+                    "visual_start": "2026-01-01T00:00:00+00:00",
+                    "visual_end": "2026-01-01T01:00:00+00:00",
+                    "weight": 0.8,
+                    "confidence": 1.0,
+                },
+            )
+            zone_id = created.json()["id"]
+            confirmed = client.post(
+                f"/api/zones/{zone_id}/confirm",
+                json={
+                    "short_term_trend": "bearish",
+                    "medium_term_trend": "neutral",
+                    "swing_location": "inside_zone",
+                    "thesis_reasons": ["value_entry_outside_swing", "structure_flip"],
+                    "emotion_state": "calm",
+                    "fomo_score": 2,
+                    "revenge_score": 1,
+                    "comment": "Wait for price; do not chase.",
+                },
+            )
+            with connect(db_path) as conn:
+                row = conn.execute("SELECT status, valid_until, metadata_json FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
+                audit = conn.execute(
+                    "SELECT override_type FROM overrides WHERE target_entity_id = ? AND override_type = 'activate_draft_zone'",
+                    (zone_id,),
+                ).fetchone()
+
+        self.assertEqual(confirmed.status_code, 200)
+        payload = confirmed.json()
+        self.assertEqual(payload["status"], "active")
+        self.assertIsNotNone(payload["valid_until"])
+        review = payload["metadata"]["activation_review"]
+        self.assertEqual(review["swing_type"], "swing_high")
+        self.assertEqual(review["thesis_reasons"], ["value_entry_outside_swing", "structure_flip"])
+        self.assertEqual(review["fomo_score"], 2)
+        self.assertEqual(row["status"], "active")
+        self.assertIsNotNone(row["valid_until"])
+        self.assertEqual(json.loads(row["metadata_json"])["activation_review"]["emotion_state"], "calm")
+        self.assertEqual(audit["override_type"], "activate_draft_zone")
 
     def test_delete_zone_marks_deleted_and_hides_from_chart(self) -> None:
         with TemporaryDirectory() as temp_dir:

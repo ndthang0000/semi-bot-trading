@@ -415,7 +415,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         timeframe: "H1",
         direction: spec.direction,
         detector: "human_manual_v1",
-        status: "active",
+        status: spec.zoneType === "support" || spec.zoneType === "resistance" ? "draft" : "active",
         source: "human",
         price_low: roundPrice(low),
         price_high: roundPrice(safeHigh),
@@ -469,7 +469,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         expires_at: preview.visual_end,
         weight: preview.weight,
         confidence: preview.confidence,
-        status: "active",
+        status: preview.type === "support" || preview.type === "resistance" ? "draft" : "active",
         client_kind: draw.kind,
         reason: `manual ${manualZoneSpec(draw.kind).label} drawn on chart`,
         trade_modes: defaultTradeModesForZone(preview),
@@ -577,7 +577,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
           expires_at: zone.visual_end,
           weight: zone.weight,
           confidence: zone.confidence,
-          status: zone.status === "disabled" ? "disabled" : "active",
+          status: zone.status === "disabled" ? "disabled" : zone.status === "draft" ? "draft" : "active",
           reason: "chart drag resize/move",
           trade_modes: defaultTradeModesForZone(zone),
         });
@@ -1108,6 +1108,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
                     zoneClasses.label
                   }`}
                 >
+                  {box.zone.status === "draft" ? "DRAFT · " : ""}
                   {box.zone.timeframe} {zoneDisplayName(box.zone)} · {box.zone.weight.toFixed(2)} · {formatZoneDate(box.zone.visual_start)}
                 </span>
               ) : null}

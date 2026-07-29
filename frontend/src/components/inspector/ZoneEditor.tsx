@@ -1,11 +1,13 @@
 import { Check, Copy, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { deleteManualZone, updateZoneOverride } from "../../api/chart";
+import { confirmDraftZone, deleteManualZone, updateZoneOverride } from "../../api/chart";
 import { compactTime, price } from "../../lib/time";
 import { useChartStore } from "../../store/chartStore";
-import type { PriceZone, ZoneTradeMode } from "../../types";
+import type { PriceZone, ZoneEmotionState, ZoneThesisReason, ZoneTradeMode } from "../../types";
 
 type ToastKind = "success" | "error";
+type TrendAnswer = "" | "bullish" | "bearish" | "neutral";
+type SwingLocation = "" | "inside_zone" | "near_zone" | "none";
 
 export function ZoneEditor({
   zone,
@@ -21,12 +23,21 @@ export function ZoneEditor({
   const [priceHigh, setPriceHigh] = useState(String(zone.price_high));
   const [weight, setWeight] = useState(String(zone.weight));
   const [confidence, setConfidence] = useState(String(zone.confidence));
-  const [status, setStatus] = useState<"active" | "disabled">(zone.status === "disabled" ? "disabled" : "active");
+  const [status, setStatus] = useState<"active" | "draft" | "disabled">(editableZoneStatus(zone));
   const [tradeModes, setTradeModes] = useState<ZoneTradeMode[]>(defaultTradeModes(zone));
   const [reason, setReason] = useState("");
+  const [shortTermTrend, setShortTermTrend] = useState<TrendAnswer>("");
+  const [mediumTermTrend, setMediumTermTrend] = useState<TrendAnswer>("");
+  const [swingLocation, setSwingLocation] = useState<SwingLocation>("");
+  const [thesisReasons, setThesisReasons] = useState<ZoneThesisReason[]>([]);
+  const [emotionState, setEmotionState] = useState<"" | ZoneEmotionState>("");
+  const [fomoScore, setFomoScore] = useState("");
+  const [revengeScore, setRevengeScore] = useState("");
+  const [activationComment, setActivationComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [copiedZoneId, setCopiedZoneId] = useState<string | null>(null);
+  const isDraftSr = status === "draft" && (zone.type === "support" || zone.type === "resistance");
   const zoneSize = useMemo(() => {
     const low = Number(priceLow);
     const high = Number(priceHigh);
@@ -42,7 +53,7 @@ export function ZoneEditor({
       high !== zone.price_high ||
       parsedWeight !== zone.weight ||
       parsedConfidence !== zone.confidence ||
-      status !== (zone.status === "disabled" ? "disabled" : "active") ||
+      status !== editableZoneStatus(zone) ||
       !sameTradeModes(tradeModes, defaultTradeModes(zone)) ||
       reason.trim().length > 0
     );
@@ -57,11 +68,73 @@ export function ZoneEditor({
     setPriceHigh(String(zone.price_high));
     setWeight(String(zone.weight));
     setConfidence(String(zone.confidence));
-    setStatus(zone.status === "disabled" ? "disabled" : "active");
+    setStatus(editableZoneStatus(zone));
     setTradeModes(defaultTradeModes(zone));
     setReason("");
+    setShortTermTrend("");
+    setMediumTermTrend("");
+    setSwingLocation("");
+    setThesisReasons([]);
+    setEmotionState("");
+    setFomoScore("");
+    setRevengeScore("");
+    setActivationComment("");
     setError(null);
   };
+
+  const activationProgress = useMemo(() => {
+    return [
+      shortTermTrend !== "",
+      mediumTermTrend !== "",
+      swingLocation !== "",
+      thesisReasons.length >= 1 && thesisReasons.length <= 3,
+      emotionState !== "",
+      fomoScore !== "" && revengeScore !== "",
+    ].filter(Boolean).length;
+  }, [emotionState, fomoScore, mediumTermTrend, revengeScore, shortTermTrend, swingLocation, thesisReasons]);
+
+  const confirmZone = useCallback(async () => {
+    if (!isDraftSr || activationProgress !== 6 || isDirty) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const updated = await confirmDraftZone(zone.id, {
+        short_term_trend: shortTermTrend as Exclude<TrendAnswer, "">,
+        medium_term_trend: mediumTermTrend as Exclude<TrendAnswer, "">,
+        swing_location: swingLocation as Exclude<SwingLocation, "">,
+        thesis_reasons: thesisReasons,
+        emotion_state: emotionState as ZoneEmotionState,
+        fomo_score: Number(fomoScore),
+        revenge_score: Number(revengeScore),
+        comment: activationComment.trim(),
+      });
+      setSelected({ kind: "zone", entity: updated });
+      onZoneUpdated();
+      showToast("success", "Zone is active. The bot may now evaluate it.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not activate draft zone.";
+      setError(message);
+      showToast("error", message);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    activationComment,
+    activationProgress,
+    emotionState,
+    fomoScore,
+    isDirty,
+    isDraftSr,
+    mediumTermTrend,
+    onZoneUpdated,
+    revengeScore,
+    setSelected,
+    shortTermTrend,
+    showToast,
+    swingLocation,
+    thesisReasons,
+    zone.id,
+  ]);
 
   const save = useCallback(async () => {
     const low = Number(priceLow);
@@ -184,17 +257,27 @@ export function ZoneEditor({
         <NumberField label="Confidence" value={confidence} onChange={setConfidence} step="0.01" min="0" max="1" />
       </div>
 
-      <label className="grid gap-1 text-xs text-slate-500">
-        Status
-        <select
-          className="h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none"
-          value={status}
-          onChange={(event) => setStatus(event.target.value === "disabled" ? "disabled" : "active")}
-        >
-          <option value="active">active</option>
-          <option value="disabled">disabled</option>
-        </select>
-      </label>
+      {isDraftSr ? (
+        <div className="flex items-center justify-between rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-200">Draft zone</div>
+            <div className="mt-1 text-xs text-amber-100/70">Bot trading is locked until confirmation.</div>
+          </div>
+          <span className="rounded border border-amber-300/40 px-2 py-1 text-xs font-semibold text-amber-100">DRAFT</span>
+        </div>
+      ) : (
+        <label className="grid gap-1 text-xs text-slate-500">
+          Status
+          <select
+            className="h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none"
+            value={status}
+            onChange={(event) => setStatus(event.target.value === "disabled" ? "disabled" : "active")}
+          >
+            <option value="active">active</option>
+            <option value="disabled">disabled</option>
+          </select>
+        </label>
+      )}
 
       <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/50 p-3">
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trade modes</div>
@@ -216,6 +299,113 @@ export function ZoneEditor({
           ))}
         </div>
       </div>
+
+      {isDraftSr ? (
+        <div className="grid gap-4 rounded-lg border border-amber-400/30 bg-ink-950/70 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-200">Activation review</div>
+              <div className="mt-1 text-xs text-slate-500">Answer every section before this SR zone can trade.</div>
+            </div>
+            <span className="shrink-0 text-xs font-semibold text-amber-100">{activationProgress}/6</span>
+          </div>
+
+          <ReviewSelect
+            label="Trend ngắn hạn (48h)"
+            value={shortTermTrend}
+            options={TREND_OPTIONS}
+            onChange={(value) => setShortTermTrend(value as TrendAnswer)}
+          />
+          <ReviewSelect
+            label="Trend trung hạn (1–2 tuần)"
+            value={mediumTermTrend}
+            options={TREND_OPTIONS}
+            onChange={(value) => setMediumTermTrend(value as TrendAnswer)}
+          />
+          <ReviewSelect
+            label={zone.type === "support" ? "Swing Low tại vùng Support" : "Swing High tại vùng Resistance"}
+            value={swingLocation}
+            options={SWING_OPTIONS}
+            onChange={(value) => setSwingLocation(value as SwingLocation)}
+          />
+
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">Thesis — chọn 1 đến 3 lý do</span>
+              <span className="text-xs text-slate-500">{thesisReasons.length}/3</span>
+            </div>
+            {thesisGroups(zone).map((group) => (
+              <div key={group.label} className="grid gap-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">{group.label}</div>
+                {group.options.map((option) => {
+                  const checked = thesisReasons.includes(option.value);
+                  const disabled = !checked && thesisReasons.length >= 3;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex items-start gap-2 rounded border px-2.5 py-2 text-xs ${
+                        checked
+                          ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-100"
+                          : "border-ink-700 bg-ink-850 text-slate-300"
+                      } ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer"}`}
+                    >
+                      <input
+                        checked={checked}
+                        className="mt-0.5 accent-cyan-400"
+                        disabled={disabled}
+                        type="checkbox"
+                        onChange={(event) => {
+                          setThesisReasons((current) =>
+                            event.target.checked
+                              ? [...current, option.value].slice(0, 3)
+                              : current.filter((reasonValue) => reasonValue !== option.value),
+                          );
+                        }}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          <ReviewSelect
+            label="Trạng thái cảm xúc hiện tại"
+            value={emotionState}
+            options={EMOTION_OPTIONS}
+            onChange={(value) => setEmotionState(value as "" | ZoneEmotionState)}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <ReviewSelect label="FOMO (1–10)" value={fomoScore} options={SCORE_OPTIONS} onChange={setFomoScore} />
+            <ReviewSelect label="Revenge (1–10)" value={revengeScore} options={SCORE_OPTIONS} onChange={setRevengeScore} />
+          </div>
+          <label className="grid gap-1 text-xs text-slate-500">
+            Comment (optional)
+            <textarea
+              className="min-h-20 resize-y rounded-md border border-ink-700 bg-ink-850 px-2 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+              maxLength={2000}
+              value={activationComment}
+              onChange={(event) => setActivationComment(event.target.value)}
+            />
+          </label>
+
+          {isDirty ? (
+            <div className="rounded border border-amber-400/30 bg-amber-400/10 px-2.5 py-2 text-xs text-amber-100">
+              Save geometry, trade modes, or other edits before confirming this zone.
+            </div>
+          ) : null}
+          <button
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-emerald-400/60 bg-emerald-400/15 text-sm font-semibold text-emerald-100 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={isSaving || isDirty || activationProgress !== 6}
+            onClick={confirmZone}
+          >
+            <Check size={15} />
+            {isSaving ? "Confirming" : "Confirm Active"}
+          </button>
+        </div>
+      ) : null}
 
       <label className="grid gap-1 text-xs text-slate-500">
         Reason
@@ -292,6 +482,102 @@ function NumberField({
   );
 }
 
+function ReviewSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-xs text-slate-500">
+      {label}
+      <select
+        className="h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">-- Chọn --</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+const TREND_OPTIONS = [
+  { value: "bullish", label: "Bullish" },
+  { value: "bearish", label: "Bearish" },
+  { value: "neutral", label: "Neutral" },
+];
+
+const SWING_OPTIONS = [
+  { value: "inside_zone", label: "Swing nằm trong zone" },
+  { value: "near_zone", label: "Swing nằm gần zone" },
+  { value: "none", label: "Không có Swing phù hợp" },
+];
+
+const EMOTION_OPTIONS = [
+  { value: "calm", label: "Bình tĩnh" },
+  { value: "fomo", label: "FOMO" },
+  { value: "revenge", label: "Revenge" },
+  { value: "proving_right", label: "Muốn chứng minh mình đúng" },
+  { value: "fear_missing_price", label: "Sợ bỏ lỡ mức giá đẹp" },
+  { value: "uncertain", label: "Không chắc chắn" },
+];
+
+const SCORE_OPTIONS = Array.from({ length: 10 }, (_, index) => ({
+  value: String(index + 1),
+  label: String(index + 1),
+}));
+
+function thesisGroups(zone: PriceZone): Array<{ label: string; options: Array<{ value: ZoneThesisReason; label: string }> }> {
+  const isSupport = zone.type === "support";
+  return [
+    {
+      label: "Value entry ngoài swing",
+      options: [
+        {
+          value: "value_entry_outside_swing",
+          label: isSupport
+            ? "Dưới Swing Low để chờ mua ở mức giá tốt hơn."
+            : "Trên Swing High để chờ bán ở mức giá tốt hơn.",
+        },
+      ],
+    },
+    {
+      label: "Follow trend",
+      options: [
+        { value: "follow_short_term_trend", label: "Pullback về Swing để follow trend ngắn hạn." },
+        { value: "follow_medium_term_trend", label: "Pullback về Swing để follow trend trung hạn." },
+        { value: "breakout_retest", label: "Retest cấu trúc vừa breakout để follow trend." },
+        {
+          value: "structure_flip",
+          label: isSupport
+            ? "Structure flip: resistance cũ trở thành support."
+            : "Structure flip: support cũ trở thành resistance.",
+        },
+      ],
+    },
+    {
+      label: "Range",
+      options: [
+        {
+          value: "range_boundary",
+          label: isSupport ? "Biên dưới của vùng sideway/range." : "Biên trên của vùng sideway/range.",
+        },
+        { value: "repeated_reactions", label: "Giá đã nhiều lần phản ứng tại vùng này." },
+        { value: "long_accumulation", label: "Vùng tích lũy lâu trước một chuyển động mạnh." },
+      ],
+    },
+  ];
+}
+
 const TRADE_MODE_OPTIONS: Array<{ value: ZoneTradeMode; label: string }> = [
   { value: "reject", label: "Reject" },
   { value: "internal_reject", label: "Internal" },
@@ -313,6 +599,11 @@ function sameTradeModes(first: ZoneTradeMode[], second: ZoneTradeMode[]): boolea
   if (first.length !== second.length) return false;
   const normalized = new Set(first);
   return second.every((mode) => normalized.has(mode));
+}
+
+function editableZoneStatus(zone: PriceZone): "active" | "draft" | "disabled" {
+  if (zone.status === "draft") return "draft";
+  return zone.status === "disabled" ? "disabled" : "active";
 }
 
 function zoneDisplayName(zone: PriceZone): string {

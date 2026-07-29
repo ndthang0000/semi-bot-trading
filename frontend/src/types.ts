@@ -96,6 +96,39 @@ export type PriceZone = {
 
 export type ZoneTradeMode = "reject" | "internal_reject" | "breakout";
 
+export type ZoneActivationReview = {
+  version?: number;
+  short_term_trend: "bullish" | "bearish" | "neutral";
+  medium_term_trend: "bullish" | "bearish" | "neutral";
+  swing_location: "inside_zone" | "near_zone" | "none";
+  swing_type?: "swing_low" | "swing_high";
+  thesis_reasons: ZoneThesisReason[];
+  emotion_state: ZoneEmotionState;
+  fomo_score: number;
+  revenge_score: number;
+  comment: string;
+  confirmed_at?: string;
+  confirmed_by?: string;
+};
+
+export type ZoneThesisReason =
+  | "value_entry_outside_swing"
+  | "follow_short_term_trend"
+  | "follow_medium_term_trend"
+  | "breakout_retest"
+  | "structure_flip"
+  | "range_boundary"
+  | "repeated_reactions"
+  | "long_accumulation";
+
+export type ZoneEmotionState =
+  | "calm"
+  | "fomo"
+  | "revenge"
+  | "proving_right"
+  | "fear_missing_price"
+  | "uncertain";
+
 export type MarketContext = {
   bot_value: string;
   primary_value: string;

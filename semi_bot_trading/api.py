@@ -22,6 +22,7 @@ from .api_models import (
     TradeReviewRequest,
     TradeVisibilityRequest,
     WeeklyJournalRequest,
+    ZoneActivationRequest,
     ZoneCreateRequest,
     ZoneOverrideRequest,
 )
@@ -864,8 +865,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
     def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         if request.price_low >= request.price_high:
             raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
-        if request.status not in {"active", "disabled"}:
-            raise HTTPException(status_code=422, detail="status must be active or disabled")
+        if request.status not in {"active", "draft", "disabled"}:
+            raise HTTPException(status_code=422, detail="status must be active, draft, or disabled")
         if request.trade_modes is not None:
             unknown_modes = sorted(set(request.trade_modes) - {"reject", "internal_reject", "breakout"})
             if unknown_modes:
@@ -884,6 +885,13 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
+            if row["status"] == "draft" and request.status == "active":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Draft SR zones must be activated through the confirmation questionnaire",
+                )
+            if row["status"] != "draft" and request.status == "draft":
+                raise HTTPException(status_code=422, detail="Only newly-created human SR zones may use draft status")
 
             fields_set = request.model_fields_set if hasattr(request, "model_fields_set") else request.__fields_set__
             start_time = request.visual_start if "visual_start" in fields_set and request.visual_start else row["start_time"]
@@ -899,7 +907,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 if mode in {"reject", "internal_reject", "breakout"}
             )
             requested_status = request.status
-            current_status = "disabled" if row["status"] == "disabled" else "active"
+            current_status = row["status"] if row["status"] in {"active", "draft", "disabled"} else "active"
             confidence = request.confidence if request.confidence is not None else float(row["effective_confidence"])
             reason_text = (request.reason or "").strip()
             no_material_change = (
@@ -916,7 +924,11 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             if no_material_change:
                 return zone_row_to_chart(row)
 
-            expires_at = resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], expiry_input)
+            expires_at = (
+                None
+                if request.status == "draft"
+                else resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], expiry_input)
+            )
             before = zone_row_to_chart(row)
             override_id = str(uuid.uuid4())
             end_time = expires_at if request.status == "active" else requested_end_time
@@ -1016,12 +1028,94 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             conn.commit()
             return zone_row_to_chart(updated)
 
+    @app.post("/api/zones/{zone_id}/confirm")
+    def confirm_zone(
+        zone_id: str,
+        request: ZoneActivationRequest = Body(...),
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
+            if row["detector"] != "human_manual_v1" or row["zone_type"] not in {"support", "resistance"}:
+                raise HTTPException(status_code=422, detail="Only human-created Support/Resistance zones require confirmation")
+            if row["status"] != "draft":
+                raise HTTPException(status_code=409, detail=f"Zone is not draft: {row['status']}")
+
+            review = request.model_dump()
+            review["thesis_reasons"] = list(dict.fromkeys(review["thesis_reasons"]))
+            if len(review["thesis_reasons"]) != len(request.thesis_reasons):
+                raise HTTPException(status_code=422, detail="thesis_reasons must not contain duplicates")
+
+            expires_at = resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], None)
+            before = zone_row_to_chart(row)
+            override_id = str(uuid.uuid4())
+            metadata = json_loads(row["metadata_json"], {})
+            metadata.update(
+                {
+                    "activation_review": {
+                        "version": 1,
+                        "swing_type": "swing_low" if row["zone_type"] == "support" else "swing_high",
+                        **review,
+                        "confirmed_at": now,
+                        "confirmed_by": username,
+                    },
+                    "activated_at": now,
+                    "human_adjusted": True,
+                    "last_human_override_id": override_id,
+                    "last_human_override_at": now,
+                    "last_human_override_reason": "Draft questionnaire confirmed",
+                }
+            )
+            after = {
+                "status": "active",
+                "end_time": expires_at,
+                "valid_until": expires_at,
+                "activation_review": metadata["activation_review"],
+            }
+            conn.execute(
+                """
+                INSERT INTO overrides (
+                    id, target_entity_type, target_entity_id, override_type, patch_json,
+                    reason, created_by, created_at, expires_at, status
+                )
+                VALUES (?, 'price_zone', ?, 'activate_draft_zone', ?, ?, ?, ?, ?, 'active')
+                """,
+                (
+                    override_id,
+                    zone_id,
+                    json.dumps({"before": before, "after": after}, sort_keys=True),
+                    "Draft questionnaire confirmed",
+                    username,
+                    now,
+                    expires_at,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE price_zones
+                SET status = 'active',
+                    end_time = ?,
+                    valid_until = ?,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (expires_at, expires_at, json.dumps(metadata, sort_keys=True), zone_id),
+            )
+            updated = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
+            conn.commit()
+            return zone_row_to_chart(updated)
+
     @app.post("/api/zones")
     def create_zone(request: ZoneCreateRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         if request.price_low >= request.price_high:
             raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
-        if request.status not in {"active", "disabled"}:
-            raise HTTPException(status_code=422, detail="status must be active or disabled")
+        if request.status not in {"active", "draft", "disabled"}:
+            raise HTTPException(status_code=422, detail="status must be active, draft, or disabled")
         try:
             validate_zone_type(request.zone_type, request.direction)
         except ValueErrorForApi as exc:
@@ -1041,13 +1135,18 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         if timeframe != config.bias.timeframe.upper():
             raise HTTPException(status_code=422, detail=f"Manual price zones must use {config.bias.timeframe} timeframe")
         now = utc_now_iso()
+        effective_status = "draft" if request.zone_type in {"support", "resistance"} else request.status
         expiry_input = request.expires_at
-        if request.status == "active" and expiry_input is None:
+        if effective_status == "active" and expiry_input is None:
             expiry_input = request.visual_end
-        expires_at = resolve_price_zone_expiry(now, request.zone_type, timeframe, expiry_input)
+        expires_at = (
+            None
+            if effective_status == "draft"
+            else resolve_price_zone_expiry(now, request.zone_type, timeframe, expiry_input)
+        )
         start_time = request.visual_start
-        end_time = expires_at if request.status == "active" else request.visual_end
-        if request.status == "disabled":
+        end_time = expires_at if effective_status == "active" else request.visual_end
+        if effective_status == "disabled":
             end_time = end_time or latest_candle_time_for_create(symbol, timeframe, config.database) or now
         try:
             start_dt = datetime.fromisoformat(start_time)
@@ -1068,7 +1167,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             "last_human_override_at": now,
             "last_human_override_reason": request.reason,
         }
-        valid_until = end_time if request.status == "disabled" else expires_at
+        if effective_status == "draft":
+            metadata["draft_created_at"] = now
+            metadata["activation_review_version"] = 1
+        valid_until = end_time if effective_status == "disabled" else expires_at
         with connect(config.database) as conn:
             init_db(conn)
             conn.execute(
@@ -1101,7 +1203,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     request.weight,
                     request.confidence,
                     request.weight,
-                    request.status,
+                    effective_status,
                     json.dumps(metadata, sort_keys=True),
                 ),
             )
@@ -1127,7 +1229,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                                 "end_time": end_time,
                                 "effective_weight": request.weight,
                                 "effective_confidence": request.confidence,
-                                "status": request.status,
+                                "status": effective_status,
                                 "source": "human",
                                 "valid_until": valid_until,
                                 "trade_modes": trade_modes,

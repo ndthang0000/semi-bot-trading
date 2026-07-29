@@ -84,7 +84,7 @@ price_zone:
   bot_weight: float
   effective_confidence: float
   effective_weight: float
-  status: active | mitigated | invalidated | disabled | expired
+  status: draft | active | mitigated | invalidated | disabled | expired
   source: bot | human | mixed
   metadata: json
 ```
@@ -96,6 +96,10 @@ price_zone:
 Decision:
 
 - Mọi zone bot/human tạo ra đều lưu database.
+- Support/Resistance do human tạo bắt đầu ở `draft`. Draft vẫn hiển thị để
+  chỉnh sửa nhưng không được strategy/worker sử dụng. Chỉ endpoint xác nhận
+  questionnaire mới được chuyển `draft -> active`; PATCH status thông thường
+  không được bypass bước này.
 - Không xóa zone cũ; zone cũ chuyển status và có `end_time`.
 - Chiều dài ngang của zone trên UI là tín hiệu quan trọng: nó cho thấy vùng còn valid tới đâu trong thời gian.
 - Vùng bắt đầu khi pattern/structure tạo thành.

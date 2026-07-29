@@ -13,6 +13,7 @@ import type {
   StrategyReview,
   OperatorReview,
   ZoneTradeMode,
+  ZoneActivationReview,
   WeeklyJournal,
   WeeklyJournalsResponse,
 } from "../types";
@@ -253,7 +254,7 @@ export type ZoneOverrideInput = {
   visual_end?: string | null;
   weight: number;
   confidence?: number;
-  status: "active" | "disabled";
+  status: "active" | "draft" | "disabled";
   expires_at?: string | null;
   reason?: string;
   trade_modes?: ZoneTradeMode[];
@@ -270,7 +271,7 @@ export type ZoneCreateInput = {
   visual_end?: string | null;
   weight: number;
   confidence: number;
-  status: "active" | "disabled";
+  status: "active" | "draft" | "disabled";
   client_kind?: string;
   expires_at?: string | null;
   reason?: string;
@@ -303,6 +304,21 @@ export async function updateZoneOverride(zoneId: string, input: ZoneOverrideInpu
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Zone update failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function confirmDraftZone(zoneId: string, input: Omit<ZoneActivationReview, "version" | "swing_type" | "confirmed_at" | "confirmed_by">): Promise<PriceZone> {
+  const response = await authFetch(`/api/zones/${encodeURIComponent(zoneId)}/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Zone confirmation failed with ${response.status}`);
   }
   return response.json();
 }

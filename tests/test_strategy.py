@@ -11,6 +11,8 @@ from semi_bot_trading.strategy import (
     compute_sr_breakout_v1_levels,
     compute_zone_reaction_v2_levels,
     evaluate_zone_reaction_v2,
+    zone_eligible_for_sr_breakout_v1,
+    zone_eligible_for_zone_reaction_v2,
 )
 
 
@@ -158,6 +160,20 @@ CONFIG = StrategyConfig(
 
 
 class StrategyTest(unittest.TestCase):
+    def test_draft_sr_zone_is_ineligible_for_reaction_and_breakout(self) -> None:
+        draft = zone("support", "bullish", 99, 101)
+        draft["status"] = "draft"
+        draft["source"] = "human"
+        draft["detector"] = "human_manual_v1"
+        draft["metadata"] = {"trade_modes": ["reject", "breakout"]}
+        candles = [
+            candle("00:00", 102, 103, 100, 101),
+            candle("00:15", 101, 103, 99, 102),
+        ]
+
+        self.assertFalse(zone_eligible_for_zone_reaction_v2(draft, candles, CONFIG))
+        self.assertFalse(zone_eligible_for_sr_breakout_v1(draft, candles, CONFIG))
+
     def test_bearish_strong_reject_requires_bearish_candle_body(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),

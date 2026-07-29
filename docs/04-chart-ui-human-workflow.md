@@ -216,6 +216,39 @@ Frontend React/Vite chạy ở `http://127.0.0.1:5173`, dùng TradingView Lightw
 7. Save override.
 8. UI cập nhật effective zone realtime.
 
+## Human SR Draft Activation
+
+Support/Resistance do human vẽ trên chart luôn được backend lưu với
+`status=draft`, kể cả client gửi nhầm `active`. Draft dùng viền amber nét đứt,
+vẫn cho phép chỉnh geometry/trade modes nhưng bot không được tạo setup hoặc
+order từ zone này.
+
+Để chuyển sang `active`, user phải hoàn tất Activation Review:
+
+- Trend ngắn hạn 48h: bullish, bearish hoặc neutral.
+- Trend trung hạn 1-2 tuần: bullish, bearish hoặc neutral.
+- Support xác nhận vị trí Swing Low; Resistance xác nhận vị trí Swing High:
+  trong zone, gần zone hoặc không có.
+- Chọn từ 1 tới 3 thesis:
+  - Value entry ngoài swing.
+  - Pullback follow trend ngắn hạn/trung hạn.
+  - Retest cấu trúc vừa breakout.
+  - Structure flip.
+  - Biên range.
+  - Giá phản ứng nhiều lần.
+  - Vùng tích lũy lâu trước chuyển động mạnh.
+- Trạng thái cảm xúc cùng FOMO/Revenge score 1-10.
+- Comment optional.
+
+Button `Confirm Active` chỉ sáng khi sáu nhóm dữ liệu đã đủ và zone không có
+geometry/trade-mode edit chưa Save. Frontend gọi endpoint confirm riêng; backend
+validate lại toàn bộ, lưu snapshot trong `metadata.activation_review`, ghi
+override audit rồi mới đổi status sang `active`. Expiry logic bắt đầu lại tại
+thời điểm confirm, nên thời gian zone nằm Draft không làm hao trading lifetime.
+
+Dropdown/PATCH zone thông thường không thể chuyển Draft thành Active. Khi bật
+filter `Active zones only`, Draft bị ẩn; tắt filter để xem và hoàn tất các Draft.
+
 ## Workflow overwrite bias/regime
 
 Ví dụ bot xác định H1 bullish nhưng human muốn set bearish trong 4h:
