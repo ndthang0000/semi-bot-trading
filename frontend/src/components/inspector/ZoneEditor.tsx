@@ -31,8 +31,6 @@ export function ZoneEditor({
   const [swingLocation, setSwingLocation] = useState<SwingLocation>("");
   const [thesisReasons, setThesisReasons] = useState<ZoneThesisReason[]>([]);
   const [emotionState, setEmotionState] = useState<"" | ZoneEmotionState>("");
-  const [fomoScore, setFomoScore] = useState("");
-  const [revengeScore, setRevengeScore] = useState("");
   const [activationComment, setActivationComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -81,8 +79,6 @@ export function ZoneEditor({
     setSwingLocation("");
     setThesisReasons([]);
     setEmotionState("");
-    setFomoScore("");
-    setRevengeScore("");
     setActivationComment("");
     setError(null);
   };
@@ -94,12 +90,11 @@ export function ZoneEditor({
       swingLocation !== "",
       thesisReasons.length >= 1 && thesisReasons.length <= 3,
       emotionState !== "",
-      fomoScore !== "" && revengeScore !== "",
     ].filter(Boolean).length;
-  }, [emotionState, fomoScore, mediumTermTrend, revengeScore, shortTermTrend, swingLocation, thesisReasons]);
+  }, [emotionState, mediumTermTrend, shortTermTrend, swingLocation, thesisReasons]);
 
   const confirmZone = useCallback(async () => {
-    if (!isDraftSr || !draftEndReady || activationProgress !== 6 || isDirty) return;
+    if (!isDraftSr || !draftEndReady || activationProgress !== 5 || isDirty) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -109,8 +104,6 @@ export function ZoneEditor({
         swing_location: swingLocation as Exclude<SwingLocation, "">,
         thesis_reasons: thesisReasons,
         emotion_state: emotionState as ZoneEmotionState,
-        fomo_score: Number(fomoScore),
-        revenge_score: Number(revengeScore),
         comment: activationComment.trim(),
       });
       setSelected({ kind: "zone", entity: updated });
@@ -127,13 +120,11 @@ export function ZoneEditor({
     activationComment,
     activationProgress,
     emotionState,
-    fomoScore,
     draftEndReady,
     isDirty,
     isDraftSr,
     mediumTermTrend,
     onZoneUpdated,
-    revengeScore,
     setSelected,
     shortTermTrend,
     showToast,
@@ -313,7 +304,7 @@ export function ZoneEditor({
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-200">Activation review</div>
               <div className="mt-1 text-xs text-slate-500">Answer every section before this SR zone can trade.</div>
             </div>
-            <span className="shrink-0 text-xs font-semibold text-amber-100">{activationProgress}/6</span>
+            <span className="shrink-0 text-xs font-semibold text-amber-100">{activationProgress}/5</span>
           </div>
 
           <ReviewSelect
@@ -382,10 +373,6 @@ export function ZoneEditor({
             options={EMOTION_OPTIONS}
             onChange={(value) => setEmotionState(value as "" | ZoneEmotionState)}
           />
-          <div className="grid grid-cols-2 gap-2">
-            <ReviewSelect label="FOMO (1–10)" value={fomoScore} options={SCORE_OPTIONS} onChange={setFomoScore} />
-            <ReviewSelect label="Revenge (1–10)" value={revengeScore} options={SCORE_OPTIONS} onChange={setRevengeScore} />
-          </div>
           <label className="grid gap-1 text-xs text-slate-500">
             Comment (optional)
             <textarea
@@ -409,7 +396,7 @@ export function ZoneEditor({
           <button
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-emerald-400/60 bg-emerald-400/15 text-sm font-semibold text-emerald-100 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
-            disabled={isSaving || isDirty || !draftEndReady || activationProgress !== 6}
+            disabled={isSaving || isDirty || !draftEndReady || activationProgress !== 5}
             onClick={confirmZone}
           >
             <Check size={15} />
@@ -541,11 +528,6 @@ const EMOTION_OPTIONS = [
   { value: "fear_missing_price", label: "Sợ bỏ lỡ mức giá đẹp" },
   { value: "uncertain", label: "Không chắc chắn" },
 ];
-
-const SCORE_OPTIONS = Array.from({ length: 10 }, (_, index) => ({
-  value: String(index + 1),
-  label: String(index + 1),
-}));
 
 function thesisGroups(zone: PriceZone): Array<{ label: string; options: Array<{ value: ZoneThesisReason; label: string }> }> {
   const isSupport = zone.type === "support";

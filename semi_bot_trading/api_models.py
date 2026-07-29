@@ -77,8 +77,6 @@ class ZoneActivationRequest(BaseModel):
     swing_location: ZoneSwingLocation
     thesis_reasons: list[ZoneThesisReason] = Field(min_length=1, max_length=3)
     emotion_state: ZoneEmotionState
-    fomo_score: int = Field(ge=1, le=10)
-    revenge_score: int = Field(ge=1, le=10)
     comment: str = Field(default="", max_length=2_000)
 
 

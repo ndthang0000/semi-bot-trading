@@ -104,8 +104,6 @@ export type ZoneActivationReview = {
   swing_type?: "swing_low" | "swing_high";
   thesis_reasons: ZoneThesisReason[];
   emotion_state: ZoneEmotionState;
-  fomo_score: number;
-  revenge_score: number;
   comment: string;
   confirmed_at?: string;
   confirmed_by?: string;

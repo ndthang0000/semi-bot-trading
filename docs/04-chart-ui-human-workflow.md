@@ -237,10 +237,10 @@ order từ zone này.
   - Biên range.
   - Giá phản ứng nhiều lần.
   - Vùng tích lũy lâu trước chuyển động mạnh.
-- Trạng thái cảm xúc cùng FOMO/Revenge score 1-10.
+- Trạng thái cảm xúc hiện tại.
 - Comment optional.
 
-Button `Confirm Active` chỉ sáng khi sáu nhóm dữ liệu đã đủ và zone không có
+Button `Confirm Active` chỉ sáng khi năm nhóm dữ liệu đã đủ và zone không có
 geometry/trade-mode edit chưa Save. Frontend gọi endpoint confirm riêng; backend
 validate lại toàn bộ, lưu snapshot trong `metadata.activation_review`, ghi
 override audit rồi mới đổi status sang `active`. Mép phải user đã vẽ được giữ

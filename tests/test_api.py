@@ -841,8 +841,6 @@ class ApiTest(unittest.TestCase):
                     "swing_location": "inside_zone",
                     "thesis_reasons": ["value_entry_outside_swing", "structure_flip"],
                     "emotion_state": "calm",
-                    "fomo_score": 2,
-                    "revenge_score": 1,
                     "comment": "Wait for price; do not chase.",
                 },
             )
@@ -861,7 +859,8 @@ class ApiTest(unittest.TestCase):
         review = payload["metadata"]["activation_review"]
         self.assertEqual(review["swing_type"], "swing_high")
         self.assertEqual(review["thesis_reasons"], ["value_entry_outside_swing", "structure_flip"])
-        self.assertEqual(review["fomo_score"], 2)
+        self.assertNotIn("fomo_score", review)
+        self.assertNotIn("revenge_score", review)
         self.assertEqual(row["status"], "active")
         self.assertIsNotNone(row["valid_until"])
         self.assertEqual(json.loads(row["metadata_json"])["activation_review"]["emotion_state"], "calm")
@@ -896,8 +895,6 @@ class ApiTest(unittest.TestCase):
                     "swing_location": "near_zone",
                     "thesis_reasons": ["follow_short_term_trend"],
                     "emotion_state": "calm",
-                    "fomo_score": 1,
-                    "revenge_score": 1,
                     "comment": "",
                 },
             )
