@@ -43,3 +43,65 @@ select option:checked {
   background: #1f6f8b;
   color: #f8fbff;
 }
+
+.weekly-rich-editor .ProseMirror p {
+  margin: 0.6rem 0;
+}
+
+.weekly-rich-editor .ProseMirror h2 {
+  margin: 1.4rem 0 0.6rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #f1f5f9;
+}
+
+.weekly-rich-editor .ProseMirror h3 {
+  margin: 1.2rem 0 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.weekly-rich-editor .ProseMirror ul,
+.weekly-rich-editor .ProseMirror ol {
+  margin: 0.7rem 0;
+  padding-left: 1.6rem;
+}
+
+.weekly-rich-editor .ProseMirror ul {
+  list-style: disc;
+}
+
+.weekly-rich-editor .ProseMirror ol {
+  list-style: decimal;
+}
+
+.weekly-rich-editor .ProseMirror li {
+  margin: 0.25rem 0;
+}
+
+.weekly-rich-editor .ProseMirror blockquote {
+  margin: 1rem 0;
+  border-left: 3px solid #22d3ee;
+  background: rgb(34 211 238 / 0.06);
+  padding: 0.5rem 1rem;
+  color: #cbd5e1;
+}
+
+.weekly-rich-editor .ProseMirror hr {
+  margin: 1.4rem 0;
+  border: 0;
+  border-top: 1px solid #263244;
+}
+
+.weekly-rich-editor .ProseMirror code {
+  border-radius: 0.25rem;
+  background: #182231;
+  padding: 0.1rem 0.3rem;
+  color: #a5f3fc;
+}
+
+.weekly-rich-editor .ProseMirror-selectednode {
+  outline: 1px solid #22d3ee;
+}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -83,3 +83,12 @@ class TradeReviewAttachmentRequest(BaseModel):
     chart_timeframe: str | None = None
     chart_start: str | None = None
     chart_end: str | None = None
+
+
+class WeeklyJournalRequest(BaseModel):
+    content: str = Field(default="", max_length=50_000)
+    content_format: Literal["plain_text", "rich_text"] = "plain_text"
+    discipline_score: int = Field(ge=1, le=10)
+    fomo_score: int = Field(ge=1, le=10)
+    revenge_score: int = Field(ge=1, le=10)
+    achieved_r: float = Field(default=0, ge=-1_000, le=1_000)

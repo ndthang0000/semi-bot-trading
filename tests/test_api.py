@@ -37,6 +37,131 @@ def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
 
 
 class ApiTest(unittest.TestCase):
+    def test_init_db_preserves_legacy_weekly_journal_content(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE weekly_journals (
+                        id TEXT PRIMARY KEY,
+                        week_start TEXT NOT NULL UNIQUE,
+                        week_end TEXT NOT NULL,
+                        content TEXT NOT NULL DEFAULT '',
+                        discipline_score INTEGER NOT NULL,
+                        fomo_score INTEGER NOT NULL,
+                        revenge_score INTEGER NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    INSERT INTO weekly_journals (
+                        id, week_start, week_end, content,
+                        discipline_score, fomo_score, revenge_score,
+                        created_at, updated_at
+                    )
+                    VALUES (
+                        'legacy-week', '2026-07-20', '2026-07-26',
+                        'Noi dung nhat ky cu khong duoc mat.',
+                        8, 4, 2, '2026-07-26T00:00:00+00:00', '2026-07-26T00:00:00+00:00'
+                    );
+                    """
+                )
+                conn.commit()
+                init_db(conn)
+                row = conn.execute(
+                    "SELECT content, content_format, achieved_r FROM weekly_journals WHERE id = 'legacy-week'"
+                ).fetchone()
+
+        self.assertEqual(row["content"], "Noi dung nhat ky cu khong duoc mat.")
+        self.assertEqual(row["content_format"], "plain_text")
+        self.assertEqual(row["achieved_r"], 0)
+
+    def test_weekly_journal_can_create_update_and_list_old_weeks(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+
+            old_week = client.put(
+                "/api/weekly-journals/2026-06-01",
+                json={
+                    "content": "Tuan cu: toi da giu dung ke hoach.",
+                    "content_format": "rich_text",
+                    "discipline_score": 7,
+                    "fomo_score": 4,
+                    "revenge_score": 2,
+                    "achieved_r": 1.75,
+                },
+            )
+            newer_week = client.put(
+                "/api/weekly-journals/2026-07-20",
+                json={
+                    "content": "Tuan nay.",
+                    "discipline_score": 6,
+                    "fomo_score": 5,
+                    "revenge_score": 3,
+                    "achieved_r": -0.5,
+                },
+            )
+            updated_week = client.put(
+                "/api/weekly-journals/2026-06-01",
+                json={
+                    "content": "Noi dung da sua.",
+                    "discipline_score": 8,
+                    "fomo_score": 3,
+                    "revenge_score": 1,
+                    "achieved_r": 2.35,
+                },
+            )
+            listing = client.get("/api/weekly-journals")
+            fetched = client.get("/api/weekly-journals/2026-06-01")
+
+            with connect(db_path) as conn:
+                count = conn.execute("SELECT COUNT(*) AS count FROM weekly_journals").fetchone()["count"]
+
+        self.assertEqual(old_week.status_code, 200)
+        self.assertEqual(old_week.json()["content_format"], "rich_text")
+        self.assertEqual(old_week.json()["week_end"], "2026-06-07")
+        self.assertEqual(newer_week.status_code, 200)
+        self.assertEqual(updated_week.status_code, 200)
+        self.assertEqual(updated_week.json()["id"], old_week.json()["id"])
+        self.assertEqual(updated_week.json()["discipline_score"], 8)
+        self.assertEqual(updated_week.json()["achieved_r"], 2.35)
+        self.assertEqual(fetched.json()["content"], "Noi dung da sua.")
+        self.assertEqual(listing.json()["total"], 2)
+        self.assertEqual(
+            [journal["week_start"] for journal in listing.json()["journals"]],
+            ["2026-07-20", "2026-06-01"],
+        )
+        self.assertEqual(count, 2)
+
+    def test_weekly_journal_rejects_non_monday_and_invalid_scores(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = {
+                "content": "",
+                "discipline_score": 7,
+                "fomo_score": 4,
+                "revenge_score": 2,
+                "achieved_r": 0,
+            }
+
+            non_monday = client.put("/api/weekly-journals/2026-07-21", json=payload)
+            invalid_score = client.put(
+                "/api/weekly-journals/2026-07-20",
+                json={**payload, "fomo_score": 11},
+            )
+
+        self.assertEqual(non_monday.status_code, 422)
+        self.assertEqual(non_monday.json()["detail"], "week_start must be a Monday")
+        self.assertEqual(invalid_score.status_code, 422)
+
     def test_init_db_backfills_old_null_valid_until_zone_as_expired(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

@@ -13,6 +13,8 @@ import type {
   StrategyReview,
   OperatorReview,
   ZoneTradeMode,
+  WeeklyJournal,
+  WeeklyJournalsResponse,
 } from "../types";
 import { authFetch } from "./auth";
 
@@ -206,6 +208,40 @@ export async function fetchJournalPatterns(backtest = false): Promise<JournalPat
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Journal patterns failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchWeeklyJournals(limit = 104): Promise<WeeklyJournalsResponse> {
+  const response = await authFetch(`/api/weekly-journals?limit=${limit}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Weekly journals failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export type WeeklyJournalInput = {
+  content: string;
+  content_format: "plain_text" | "rich_text";
+  discipline_score: number;
+  fomo_score: number;
+  revenge_score: number;
+  achieved_r: number;
+};
+
+export async function updateWeeklyJournal(
+  weekStart: string,
+  input: WeeklyJournalInput,
+): Promise<WeeklyJournal> {
+  const response = await authFetch(`/api/weekly-journals/${encodeURIComponent(weekStart)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Weekly journal save failed with ${response.status}`);
   }
   return response.json();
 }

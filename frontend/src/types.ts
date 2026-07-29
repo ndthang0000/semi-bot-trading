@@ -151,6 +151,25 @@ export type TradeReview = {
   operator_review: OperatorReview;
 };
 
+export type WeeklyJournal = {
+  id: string;
+  week_start: string;
+  week_end: string;
+  content: string;
+  content_format: "plain_text" | "rich_text";
+  discipline_score: number;
+  fomo_score: number;
+  revenge_score: number;
+  achieved_r: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WeeklyJournalsResponse = {
+  journals: WeeklyJournal[];
+  total: number;
+};
+
 export type StrategyReview = {
   setup_grade?: string;
   setup_validity?: string;

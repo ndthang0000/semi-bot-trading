@@ -119,6 +119,33 @@ worker, risk manager hoặc execution:
   storage không khả dụng, Calm Reset tự bỏ qua persistence và không làm ảnh
   hưởng trading UI.
 
+## Weekly Journal
+
+`Weekly Journal` là trang reflection dạng text, nằm cùng cấp với Chart,
+Dashboard, Trade Journal và Calm. Tính năng này không thay đổi strategy,
+worker, risk manager hoặc execution.
+
+- Mỗi tuần có tối đa một journal, định danh bằng ngày thứ Hai `week_start`.
+- Tuần được tính từ thứ Hai tới Chủ nhật theo múi giờ
+  `Asia/Ho_Chi_Minh`.
+- User có thể chọn một ngày bất kỳ trong tuần hiện tại hoặc quá khứ; UI tự quy
+  ngày đó về thứ Hai để tạo mới hoặc mở lại journal đã lưu.
+- Nội dung dùng Tiptap rich-text editor với heading, bold, italic, underline,
+  strike, bullet/numbered list, quote, divider và undo/redo.
+- Journal cũ được đánh dấu `content_format='plain_text'` và giữ nguyên raw
+  content trong database. Frontend chỉ chuyển nó thành rich text trong editor;
+  database chỉ đổi sang `rich_text` khi user chủ động Save journal đó.
+- Mỗi journal có ba score từ 1 tới 10:
+  - `discipline_score`: càng cao càng tốt.
+  - `fomo_score`: càng thấp càng tốt.
+  - `revenge_score`: càng thấp càng tốt.
+- `achieved_r` là tổng R có dấu do user ghi nhận cho tuần đó. R dùng graph cột
+  riêng quanh mốc `0R`, không dùng chung thang 1-10 với ba score cảm xúc.
+- Graph hiển thị riêng ba đường score theo tuần, không gộp thành một điểm tổng
+  và không suy diễn cảm xúc tự động từ nội dung text.
+- Weekly Journal vẫn được truy cập khi weekly trade-review gate đang bật, giống
+  Calm, nhưng không làm hoàn thành hoặc bypass review gate.
+
 ## Chart payload contract MVP
 
 Backend xuất một payload chart-ready để UI có thể render ngay, chưa cần gọi nhiều API rời rạc trong giai đoạn đầu.

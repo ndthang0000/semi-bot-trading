@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { authFetch, clearStoredRefreshToken, getStoredRefreshToken, refreshAccessToken } from "./api/auth";
 import { BlackoutBanner, useNewsData } from "./components/NewsWidget";
 import { CalmResetMonitor } from "./components/CalmResetMonitor";
@@ -13,6 +13,10 @@ import { JournalPage } from "./pages/JournalPage";
 import { useAuthStore } from "./store/authStore";
 import { useNavigationStore } from "./store/navigationStore";
 import type { TradeHistoryResponse } from "./types";
+
+const WeeklyJournalPage = lazy(() =>
+  import("./pages/WeeklyJournalPage").then((module) => ({ default: module.WeeklyJournalPage })),
+);
 
 export function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -63,12 +67,13 @@ function AppShell() {
   const weeklyReviewGate = buildWeeklyReviewGate(weeklyReviewTrades ?? []);
 
   useEffect(() => {
-    if (weeklyReviewGate.active && activePage !== "journal" && activePage !== "calm") {
+    if (weeklyReviewGate.active && activePage !== "journal" && activePage !== "calm" && activePage !== "weekly-journal") {
       setPage("journal");
     }
   }, [activePage, setPage, weeklyReviewGate.active]);
 
-  const renderedPage = weeklyReviewGate.active && activePage !== "calm" ? "journal" : activePage;
+  const reflectionPage = activePage === "calm" || activePage === "weekly-journal";
+  const renderedPage = weeklyReviewGate.active && !reflectionPage ? "journal" : activePage;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -80,6 +85,11 @@ function AppShell() {
           {renderedPage === "chart" && <ChartPage newsData={newsData} />}
           {renderedPage === "dashboard" && <AccountDashboardPage />}
           {renderedPage === "journal" && <JournalPage weeklyReviewGate={weeklyReviewGate} />}
+          {renderedPage === "weekly-journal" && (
+            <Suspense fallback={<div className="grid h-full place-items-center bg-ink-950 text-sm text-slate-500">Loading journal editor…</div>}>
+              <WeeklyJournalPage />
+            </Suspense>
+          )}
           {renderedPage === "calm" && <CalmPage />}
         </div>
       </div>

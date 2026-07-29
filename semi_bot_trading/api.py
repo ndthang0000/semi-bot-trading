@@ -5,7 +5,7 @@ import binascii
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ from .api_models import (
     TradeReviewAttachmentRequest,
     TradeReviewRequest,
     TradeVisibilityRequest,
+    WeeklyJournalRequest,
     ZoneCreateRequest,
     ZoneOverrideRequest,
 )
@@ -767,6 +768,98 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             ).fetchall()
         return build_journal_patterns(rows)
 
+    @app.get("/api/weekly-journals")
+    def list_weekly_journals(
+        limit: int = Query(default=104, ge=1, le=260),
+        offset: int = Query(default=0, ge=0),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            total = int(conn.execute("SELECT COUNT(*) AS count FROM weekly_journals").fetchone()["count"])
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM weekly_journals
+                ORDER BY week_start DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return {
+            "journals": [weekly_journal_row_to_api(row) for row in rows],
+            "total": total,
+        }
+
+    @app.get("/api/weekly-journals/{week_start}")
+    def get_weekly_journal(week_start: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+        normalized_start = parse_week_start(week_start)
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute(
+                "SELECT * FROM weekly_journals WHERE week_start = ?",
+                (normalized_start.isoformat(),),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Weekly journal not found: {week_start}")
+        return weekly_journal_row_to_api(row)
+
+    @app.put("/api/weekly-journals/{week_start}")
+    def upsert_weekly_journal(
+        week_start: str,
+        request: WeeklyJournalRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        normalized_start = parse_week_start(week_start)
+        week_start_value = normalized_start.isoformat()
+        week_end_value = (normalized_start + timedelta(days=6)).isoformat()
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            existing = conn.execute(
+                "SELECT id FROM weekly_journals WHERE week_start = ?",
+                (week_start_value,),
+            ).fetchone()
+            journal_id = existing["id"] if existing is not None else f"weekly-journal-{uuid.uuid4()}"
+            conn.execute(
+                """
+                INSERT INTO weekly_journals (
+                    id, week_start, week_end, content, content_format,
+                    discipline_score, fomo_score, revenge_score, achieved_r,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(week_start) DO UPDATE SET
+                    week_end = excluded.week_end,
+                    content = excluded.content,
+                    content_format = excluded.content_format,
+                    discipline_score = excluded.discipline_score,
+                    fomo_score = excluded.fomo_score,
+                    revenge_score = excluded.revenge_score,
+                    achieved_r = excluded.achieved_r,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    journal_id,
+                    week_start_value,
+                    week_end_value,
+                    request.content,
+                    request.content_format,
+                    request.discipline_score,
+                    request.fomo_score,
+                    request.revenge_score,
+                    request.achieved_r,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM weekly_journals WHERE week_start = ?",
+                (week_start_value,),
+            ).fetchone()
+        return weekly_journal_row_to_api(row)
+
     @app.patch("/api/zones/{zone_id}")
     def update_zone(zone_id: str, request: ZoneOverrideRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
         if request.price_low >= request.price_high:
@@ -1371,6 +1464,32 @@ def attachment_row_to_api(row: Any) -> dict[str, Any]:
         "chart_end": row["chart_end"],
         "created_at": row["created_at"],
         "file_url": f"/api/trades/{row['trade_order_id']}/attachments/{row['id']}/file",
+    }
+
+
+def parse_week_start(value: str) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="week_start must use YYYY-MM-DD format") from None
+    if parsed.weekday() != 0:
+        raise HTTPException(status_code=422, detail="week_start must be a Monday")
+    return parsed
+
+
+def weekly_journal_row_to_api(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "week_start": row["week_start"],
+        "week_end": row["week_end"],
+        "content": row["content"] or "",
+        "content_format": row["content_format"] or "plain_text",
+        "discipline_score": int(row["discipline_score"]),
+        "fomo_score": int(row["fomo_score"]),
+        "revenge_score": int(row["revenge_score"]),
+        "achieved_r": float(row["achieved_r"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
     }
 
 
