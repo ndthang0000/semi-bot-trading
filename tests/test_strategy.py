@@ -1467,6 +1467,20 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("internal_reject", candidates[0]["zone_reaction_state"])
 
+    def test_mitigated_fvg_eligibility_does_not_use_visual_end(self) -> None:
+        candles = [
+            candle("00:00", 130, 132, 128, 131),
+            candle("00:15", 131, 133, 129, 132),
+        ]
+        fvg = zone("fvg", "bearish", 100, 120)
+        fvg["status"] = "mitigated"
+        fvg["valid_until"] = None
+        fvg["invalidated_at"] = None
+        fvg["visual_end"] = "2026-01-01T00:15:00+00:00"
+        fvg["metadata"] = {"fill_ratio": 0.9, "fill_state": "filled"}
+
+        self.assertFalse(zone_eligible_for_zone_reaction_v2(fvg, candles, CONFIG))
+
     def test_zone_reaction_v2_internal_reject_waits_without_structure(self) -> None:
         candles = [candle("00:15", 116, 118, 108, 110)]
 

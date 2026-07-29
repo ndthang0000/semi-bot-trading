@@ -896,6 +896,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             fields_set = request.model_fields_set if hasattr(request, "model_fields_set") else request.__fields_set__
             start_time = request.visual_start if "visual_start" in fields_set and request.visual_start else row["start_time"]
             requested_end_time = request.visual_end if "visual_end" in fields_set else row["end_time"]
+            if row["status"] == "draft" and request.status == "draft" and requested_end_time is None:
+                raise HTTPException(status_code=422, detail="Draft zone requires a visual_end")
             expiry_input = request.expires_at
             if request.status == "active" and expiry_input is None and "visual_end" in fields_set:
                 expiry_input = requested_end_time
@@ -1050,7 +1052,24 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             if len(review["thesis_reasons"]) != len(request.thesis_reasons):
                 raise HTTPException(status_code=422, detail="thesis_reasons must not contain duplicates")
 
-            expires_at = resolve_price_zone_expiry(now, row["zone_type"], row["timeframe"], None)
+            # The right edge drawn by the human is the planned SR lifetime.
+            # Confirmation activates that exact plan instead of silently
+            # replacing it with a new default duration.
+            expires_at = row["end_time"]
+            if not expires_at:
+                raise HTTPException(status_code=409, detail="Draft zone requires a visual_end before activation")
+            try:
+                expiry_dt = datetime.fromisoformat(expires_at)
+                now_dt = datetime.fromisoformat(now)
+                if expiry_dt.tzinfo is None:
+                    expiry_dt = expiry_dt.replace(tzinfo=now_dt.tzinfo)
+                if expiry_dt <= now_dt:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Draft zone visual_end is in the past; extend the zone before activation",
+                    )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Draft zone visual_end must be an ISO datetime") from exc
             before = zone_row_to_chart(row)
             override_id = str(uuid.uuid4())
             metadata = json_loads(row["metadata_json"], {})
@@ -1146,6 +1165,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         )
         start_time = request.visual_start
         end_time = expires_at if effective_status == "active" else request.visual_end
+        if effective_status == "draft" and end_time is None:
+            end_time = resolve_price_zone_expiry(now, request.zone_type, timeframe, None)
         if effective_status == "disabled":
             end_time = end_time or latest_candle_time_for_create(symbol, timeframe, config.database) or now
         try:

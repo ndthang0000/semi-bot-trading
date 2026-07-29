@@ -420,37 +420,16 @@ def load_chart_zones(
     zones: list[dict[str, Any]] = []
     for row in rows:
         metadata = json_loads(row["metadata_json"], {})
-        status = row["status"]
         is_bot_sr = (
             row["zone_type"] in ("support", "resistance")
             and row["source"] != "human"
             and row["detector"] != "human_manual_v1"
         )
         visual_start = row["detected_at"] if is_bot_sr and row["detected_at"] else row["start_time"]
-        visual_end = row["end_time"]
-        invalidated_at = row["invalidated_at"]
-        is_human_zone = row["source"] == "human" or metadata.get("human_created") is True
-        deterministic_expiry = metadata.get("expired_rule") == "smc_zone_max_active_days" or (
-            metadata.get("max_active_days") is not None and row["valid_until"] == row["end_time"]
-        )
-        if (
-            row["status"] != "draft"
-            and row["end_time"] is not None
-            and row["end_time"] > end
-            and not deterministic_expiry
-        ):
-            status = "active"
-            invalidated_at = None
-            if is_human_zone:
-                # Human-drawn zones keep the exact end_time the user drew, even
-                # when it is in the future beyond the latest candle.
-                visual_end = row["end_time"]
-            elif is_bot_sr:
-                # Bot SR zones are born when the detector has enough touches,
-                # and they should never render past their expiry.
-                visual_end = row["valid_until"] or row["end_time"]
-            else:
-                visual_end = None
+        projection = project_zone_lifecycle_for_chart(row, metadata, end, is_bot_sr=is_bot_sr)
+        status = projection["status"]
+        visual_end = projection["visual_end"]
+        invalidated_at = projection["invalidated_at"]
         zones.append(
             {
             "id": row["id"],
@@ -477,6 +456,48 @@ def load_chart_zones(
             }
         )
     return zones
+
+
+def project_zone_lifecycle_for_chart(
+    row: Any,
+    metadata: dict[str, Any],
+    range_end: str,
+    *,
+    is_bot_sr: bool,
+) -> dict[str, str | None]:
+    """Project persisted lifecycle fields into chart-only presentation values.
+
+    `end_time` is exposed as `visual_end`; strategy code must use status,
+    valid_until, and invalidated_at instead of this projection.
+    """
+    status = str(row["status"])
+    visual_end = row["end_time"]
+    invalidated_at = row["invalidated_at"]
+    deterministic_expiry = metadata.get("expired_rule") == "smc_zone_max_active_days" or (
+        metadata.get("max_active_days") is not None and row["valid_until"] == row["end_time"]
+    )
+    if (
+        status != "draft"
+        and row["end_time"] is not None
+        and row["end_time"] > range_end
+        and not deterministic_expiry
+    ):
+        # A historical chart window may predate the lifecycle event persisted
+        # today. At that point in time the zone was still active.
+        status = "active"
+        invalidated_at = None
+        is_human_zone = row["source"] == "human" or metadata.get("human_created") is True
+        if is_human_zone:
+            visual_end = row["end_time"]
+        elif is_bot_sr:
+            visual_end = row["valid_until"] or row["end_time"]
+        else:
+            visual_end = None
+    return {
+        "status": status,
+        "visual_end": visual_end,
+        "invalidated_at": invalidated_at,
+    }
 
 
 def merge_zones_by_id(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:

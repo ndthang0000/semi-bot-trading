@@ -279,7 +279,9 @@ def zone_eligible_for_zone_reaction_v2(
     fill_ratio = zone_fill_ratio(zone, candles[-1] if candles else None)
     if fill_ratio < config.zone_reaction_v2_internal_reject_min_fill_ratio:
         return False
-    fill_time = first_text(zone.get("valid_until"), zone.get("visual_end"), zone.get("invalidated_at"))
+    # visual_end is presentation geometry and must never decide strategy
+    # eligibility. Persisted FVG lifecycle fields are the source of truth.
+    fill_time = first_text(zone.get("invalidated_at"), zone.get("valid_until"))
     if not fill_time or not candles:
         return candle_touches_zone(candles[-1], zone) if candles else False
     lookback = max(config.zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars, 1)

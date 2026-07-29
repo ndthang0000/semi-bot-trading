@@ -842,7 +842,8 @@ def zone_detection_time(zone: dict[str, Any]) -> str:
 
 
 def zone_end_time(zone: dict[str, Any]) -> str | None:
-    value = zone.get("_backtest_end_time") or zone.get("visual_end") or zone.get("invalidated_at") or zone.get("valid_until")
+    # Backtest lifecycle must not depend on chart presentation geometry.
+    value = zone.get("_backtest_end_time") or zone.get("invalidated_at") or zone.get("valid_until")
     return str(value) if value else None
 
 

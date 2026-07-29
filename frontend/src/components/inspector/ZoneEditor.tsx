@@ -38,6 +38,11 @@ export function ZoneEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [copiedZoneId, setCopiedZoneId] = useState<string | null>(null);
   const isDraftSr = status === "draft" && (zone.type === "support" || zone.type === "resistance");
+  const draftEndReady = useMemo(() => {
+    if (!zone.visual_end) return false;
+    const endTime = Date.parse(zone.visual_end);
+    return Number.isFinite(endTime) && endTime > Date.now();
+  }, [zone.visual_end]);
   const zoneSize = useMemo(() => {
     const low = Number(priceLow);
     const high = Number(priceHigh);
@@ -94,7 +99,7 @@ export function ZoneEditor({
   }, [emotionState, fomoScore, mediumTermTrend, revengeScore, shortTermTrend, swingLocation, thesisReasons]);
 
   const confirmZone = useCallback(async () => {
-    if (!isDraftSr || activationProgress !== 6 || isDirty) return;
+    if (!isDraftSr || !draftEndReady || activationProgress !== 6 || isDirty) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -123,6 +128,7 @@ export function ZoneEditor({
     activationProgress,
     emotionState,
     fomoScore,
+    draftEndReady,
     isDirty,
     isDraftSr,
     mediumTermTrend,
@@ -395,10 +401,15 @@ export function ZoneEditor({
               Save geometry, trade modes, or other edits before confirming this zone.
             </div>
           ) : null}
+          {!draftEndReady ? (
+            <div className="rounded border border-rose-400/30 bg-rose-400/10 px-2.5 py-2 text-xs text-rose-100">
+              Extend the zone right edge into the future before confirming.
+            </div>
+          ) : null}
           <button
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-emerald-400/60 bg-emerald-400/15 text-sm font-semibold text-emerald-100 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
-            disabled={isSaving || isDirty || activationProgress !== 6}
+            disabled={isSaving || isDirty || !draftEndReady || activationProgress !== 6}
             onClick={confirmZone}
           >
             <Check size={15} />

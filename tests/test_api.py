@@ -827,7 +827,7 @@ class ApiTest(unittest.TestCase):
                     "price_low": 2001.0,
                     "price_high": 2005.0,
                     "visual_start": "2026-01-01T00:00:00+00:00",
-                    "visual_end": "2026-01-01T01:00:00+00:00",
+                    "visual_end": "2027-01-01T01:00:00+00:00",
                     "weight": 0.8,
                     "confidence": 1.0,
                 },
@@ -856,7 +856,8 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(confirmed.status_code, 200)
         payload = confirmed.json()
         self.assertEqual(payload["status"], "active")
-        self.assertIsNotNone(payload["valid_until"])
+        self.assertEqual(payload["valid_until"], "2027-01-01T01:00:00+00:00")
+        self.assertEqual(payload["visual_end"], "2027-01-01T01:00:00+00:00")
         review = payload["metadata"]["activation_review"]
         self.assertEqual(review["swing_type"], "swing_high")
         self.assertEqual(review["thesis_reasons"], ["value_entry_outside_swing", "structure_flip"])
@@ -865,6 +866,44 @@ class ApiTest(unittest.TestCase):
         self.assertIsNotNone(row["valid_until"])
         self.assertEqual(json.loads(row["metadata_json"])["activation_review"]["emotion_state"], "calm")
         self.assertEqual(audit["override_type"], "activate_draft_zone")
+
+    def test_confirm_rejects_draft_whose_visual_end_is_in_the_past(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            created = client.post(
+                "/api/zones",
+                json={
+                    "symbol": "XAUUSD",
+                    "timeframe": "H1",
+                    "zone_type": "support",
+                    "direction": "bullish",
+                    "price_low": 1990.0,
+                    "price_high": 1995.0,
+                    "visual_start": "2026-01-01T00:00:00+00:00",
+                    "visual_end": "2026-01-01T01:00:00+00:00",
+                },
+            )
+            response = client.post(
+                f"/api/zones/{created.json()['id']}/confirm",
+                json={
+                    "short_term_trend": "bullish",
+                    "medium_term_trend": "neutral",
+                    "swing_location": "near_zone",
+                    "thesis_reasons": ["follow_short_term_trend"],
+                    "emotion_state": "calm",
+                    "fomo_score": 1,
+                    "revenge_score": 1,
+                    "comment": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("visual_end is in the past", response.json()["detail"])
 
     def test_delete_zone_marks_deleted_and_hides_from_chart(self) -> None:
         with TemporaryDirectory() as temp_dir:

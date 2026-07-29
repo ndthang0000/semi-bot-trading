@@ -93,6 +93,21 @@ price_zone:
 
 `valid_from/valid_until` biểu diễn hiệu lực logic của vùng. Trong đa số trường hợp `valid_from = start_time` và `valid_until = end_time`, nhưng tách riêng hai field giúp xử lý tình huống human override, replay hoặc vùng vẫn được hiển thị lịch sử dù không còn được strategy dùng.
 
+Contract bắt buộc:
+
+- Database lưu tên `end_time`; chart API expose cùng giá trị dưới tên
+  `visual_end`.
+- `visual_end` chỉ là projection để frontend vẽ hình học. Strategy không được
+  dùng field này để quyết định eligibility.
+- Strategy dùng `status`, `valid_from`, `valid_until` và `invalidated_at`.
+- Human SR Draft giữ `valid_until = NULL`; `end_time/visual_end` là mép phải
+  user đã vẽ và là lifetime dự kiến.
+- Khi Confirm Draft, backend giữ nguyên `end_time` và copy nó sang
+  `valid_until`. Draft có mép phải trong quá khứ không thể được activate; user
+  phải kéo dài zone trước.
+- Lifecycle event có thể kết thúc zone sớm hơn kế hoạch và cập nhật
+  `end_time`, `valid_until`, `invalidated_at` theo detector tương ứng.
+
 Decision:
 
 - Mọi zone bot/human tạo ra đều lưu database.

@@ -243,8 +243,10 @@ order từ zone này.
 Button `Confirm Active` chỉ sáng khi sáu nhóm dữ liệu đã đủ và zone không có
 geometry/trade-mode edit chưa Save. Frontend gọi endpoint confirm riêng; backend
 validate lại toàn bộ, lưu snapshot trong `metadata.activation_review`, ghi
-override audit rồi mới đổi status sang `active`. Expiry logic bắt đầu lại tại
-thời điểm confirm, nên thời gian zone nằm Draft không làm hao trading lifetime.
+override audit rồi mới đổi status sang `active`. Mép phải user đã vẽ được giữ
+nguyên và copy sang `valid_until`, nên chiều dài Draft chính là lifetime dự
+kiến. Nếu mép phải đã nằm trong quá khứ, UI khóa Confirm và yêu cầu kéo dài
+zone trước.
 
 Dropdown/PATCH zone thông thường không thể chuyển Draft thành Active. Khi bật
 filter `Active zones only`, Draft bị ẩn; tắt filter để xem và hoàn tất các Draft.
