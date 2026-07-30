@@ -16,6 +16,7 @@ from .backtest import (
     build_incremental_timeline,
     candle_decision_time,
     candle_open_time,
+    candidates_for_backtest_execution,
     load_backtest_candles,
     rank_active_zones,
     simulate_trade,
@@ -153,11 +154,10 @@ def run_research_events(
             signal_time = candle_decision_time(chunk_candles[local_signal_index])
             last_close = float(chunk_candles[local_signal_index]["close"])
             candidate_zones = rank_active_zones(timeline.zones_at(signal_time), last_close)
-            candidates = [
-                candidate
-                for candidate in timeline.setup_candidates_at(signal_time, local_signal_index, candidate_zones)
-                if str(candidate.get("status")) in effective_statuses
-            ]
+            candidates = candidates_for_backtest_execution(
+                timeline.setup_candidates_at(signal_time, local_signal_index, candidate_zones),
+                effective_statuses,
+            )
             for candidate in candidates:
                 trade = simulate_trade(
                     candidate,

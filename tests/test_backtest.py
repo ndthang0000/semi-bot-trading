@@ -9,6 +9,8 @@ from semi_bot_trading.backtest import (
     BacktestTrade,
     apply_fvg_trade_count,
     apply_zone_loss_cooldown,
+    candidate_is_carried_forward,
+    candidates_for_backtest_execution,
     candidates_after_fvg_trade_count,
     candidates_after_zone_loss_cooldown,
     exit_on_candle,
@@ -115,6 +117,36 @@ class BacktestTest(unittest.TestCase):
         hit = exit_on_candle(candle("00:15", 100, 111, 94, 101), "long", stop=95, take_profit=110, half_spread=0.0, slippage=0.0)
 
         self.assertEqual(("stopped", 95.0), hit)
+
+    def test_backtest_does_not_execute_ui_only_carried_forward_candidate(self) -> None:
+        fresh = {**candidate("long"), "status": "eligible", "metadata": {"as_of": "2026-01-01T00:15:00+00:00"}}
+        carried = {
+            **candidate("long"),
+            "id": "setup-carried",
+            "status": "eligible",
+            "metadata": {
+                "as_of": "2026-01-01T00:15:00+00:00",
+                "carried_forward": True,
+                "carried_forward_current_as_of": "2026-01-01T00:30:00+00:00",
+            },
+        }
+
+        self.assertFalse(candidate_is_carried_forward(fresh))
+        self.assertTrue(candidate_is_carried_forward(carried))
+        self.assertEqual([fresh], candidates_for_backtest_execution([carried, fresh], {"eligible"}))
+        self.assertIsNone(
+            simulate_trade(
+                carried,
+                [
+                    candle("00:00", 100, 102, 98, 101),
+                    candle("00:15", 102, 111, 99, 110),
+                ],
+                signal_index=0,
+                spread=0.4,
+                slippage=0.1,
+                max_hold_candles=4,
+            )
+        )
 
     def test_zone_loss_cooldown_blocks_same_zone_for_configured_bars(self) -> None:
         cooldown: dict[str, int] = {}

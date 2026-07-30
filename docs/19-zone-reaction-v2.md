@@ -140,6 +140,11 @@ Impulse reject khong duoc chase market neu gia da dong cua qua xa zone. Voi `rej
 - TP duoc tinh lai tu limit entry theo `rr_minimum`; SL giu theo stop logic hien tai.
 - Limit expire sau `impulse_limit_expiry_bars` nen M15 tinh tu khi setup xuat hien sau close cua nen signal.
 
+Candidate co `metadata.carried_forward = true` chi giu mot setup vua xuat hien
+tren UI/live polling sau khi gia roi zone. No khong phai signal execution moi:
+backtest va research phai loai candidate nay, thay vi fill tai open cua nen hien
+tai ke tiep. Signal goc da duoc backtest tai chinh candle `metadata.as_of`.
+
 ### Macro Trend Gate
 
 Backtest 2023-2026 cho thay counter-macro trade co edge am ro rang: short tai resistance trong gold uptrend thua `-22.7R` tren 83 trades, trong khi long tai support thang `+20.8R`. MA200 H1 khong tach duoc edge, nhung momentum ~30 ngay thi co.

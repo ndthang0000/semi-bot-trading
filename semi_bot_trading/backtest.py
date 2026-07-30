@@ -207,11 +207,10 @@ def run_strategy_backtest_replay(
         )
         candidates = []
         if effective_auto_accept:
-            candidates = [
-                candidate
-                for candidate in payload["layers"].get("setup_candidates", [])
-                if candidate["status"] == "eligible"
-            ]
+            candidates = candidates_for_backtest_execution(
+                payload["layers"].get("setup_candidates", []),
+                {"eligible"},
+            )
         candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, signal_index)
         candidates = candidates_after_fvg_trade_count(candidates, fvg_trade_counts, fvg_max_trades_per_zone)
         best_by_playbook = best_candidates_by_playbook(candidates)
@@ -338,7 +337,10 @@ def run_strategy_backtest_incremental(
         emit_backtest_progress(signal_index, len(candles), len(trades))
         last_close = float(candles[signal_index]["close"])
         candidate_zones = rank_active_zones(timeline.zones_at(signal_time), last_close)
-        candidates = [candidate for candidate in timeline.setup_candidates_at(signal_time, signal_index, candidate_zones) if candidate["status"] == "eligible"]
+        candidates = candidates_for_backtest_execution(
+            timeline.setup_candidates_at(signal_time, signal_index, candidate_zones),
+            {"eligible"},
+        )
         candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, signal_index)
         candidates = candidates_after_fvg_trade_count(candidates, fvg_trade_counts, fvg_max_trades_per_zone)
         best_by_playbook = best_candidates_by_playbook(candidates)
@@ -430,11 +432,10 @@ def run_incremental_backtest_chunks(
             emit_backtest_progress(global_signal_index, len(candles), len(trades))
             last_close = float(chunk_candles[local_signal_index]["close"])
             candidate_zones = rank_active_zones(timeline.zones_at(signal_time), last_close)
-            candidates = [
-                candidate
-                for candidate in timeline.setup_candidates_at(signal_time, local_signal_index, candidate_zones)
-                if candidate["status"] == "eligible"
-            ]
+            candidates = candidates_for_backtest_execution(
+                timeline.setup_candidates_at(signal_time, local_signal_index, candidate_zones),
+                {"eligible"},
+            )
             candidates = candidates_after_zone_loss_cooldown(candidates, zone_loss_cooldown_until, global_signal_index)
             candidates = candidates_after_fvg_trade_count(candidates, fvg_trade_counts, fvg_max_trades_per_zone)
             for candidate in best_candidates_by_playbook(candidates):
@@ -868,6 +869,11 @@ def simulate_trade(
     slippage: float,
     max_hold_candles: int,
 ) -> BacktestTrade | None:
+    # Carry-forward candidates keep a recent signal visible for UI/live polling
+    # after price leaves the zone. They are not new execution events and must
+    # never be filled from the current backtest candle.
+    if candidate_is_carried_forward(candidate):
+        return None
     entry_index = signal_index + 1
     if entry_index >= len(candles):
         return None
@@ -1193,6 +1199,24 @@ def best_candidates_by_playbook(candidates: list[dict[str, Any]]) -> list[dict[s
         if current is None or float(candidate.get("score", 0)) > float(current.get("score", 0)):
             best[playbook] = candidate
     return sorted(best.values(), key=lambda candidate: float(candidate.get("score", 0)), reverse=True)
+
+
+def candidate_is_carried_forward(candidate: dict[str, Any]) -> bool:
+    metadata = candidate.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("carried_forward") is True
+
+
+def candidates_for_backtest_execution(
+    candidates: list[dict[str, Any]],
+    allowed_statuses: set[str],
+) -> list[dict[str, Any]]:
+    """Return point-in-time execution events, excluding UI-only carry-forward rows."""
+    return [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("status")) in allowed_statuses
+        and not candidate_is_carried_forward(candidate)
+    ]
 
 
 def load_backtest_candles(conn: Connection, symbol: str, timeframe: str, limit: int) -> list[dict[str, Any]]:
