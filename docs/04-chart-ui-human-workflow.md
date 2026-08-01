@@ -125,6 +125,11 @@ worker, risk manager hoặc execution:
 Dashboard, Trade Journal và Calm. Tính năng này không thay đổi strategy,
 worker, risk manager hoặc execution.
 
+- Weekly trade-review gate chỉ bắt đầu tính các lệnh đóng trong tuần hiện tại
+  từ `12:00` thứ Bảy theo múi giờ `Asia/Ho_Chi_Minh`; trước mốc này UI không
+  khóa Chart/Dashboard để yêu cầu review. Các lệnh chưa review từ tuần trước
+  vẫn đến hạn ngay khi bước sang tuần mới.
+
 - Mỗi tuần có tối đa một journal, định danh bằng ngày thứ Hai `week_start`.
 - Tuần được tính từ thứ Hai tới Chủ nhật theo múi giờ
   `Asia/Ho_Chi_Minh`.

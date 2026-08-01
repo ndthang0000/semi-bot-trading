@@ -54,13 +54,24 @@ describe("buildWeeklyReviewGate", () => {
     expect(result.active).toBe(false);
   });
 
-  it("requires current-week closed trades from Saturday onward", () => {
+  it("does not require current-week reviews before Saturday noon in Vietnam time", () => {
     const result = buildWeeklyReviewGate(
       [trade("t1", "2026-07-10T10:00:00+00:00")],
-      new Date("2026-07-11T01:00:00+00:00"),
+      new Date("2026-07-11T04:59:59+00:00"),
+    );
+
+    expect(result.active).toBe(false);
+    expect(result.currentWeekDue).toBe(false);
+  });
+
+  it("requires current-week closed trades from Saturday noon in Vietnam time", () => {
+    const result = buildWeeklyReviewGate(
+      [trade("t1", "2026-07-10T10:00:00+00:00")],
+      new Date("2026-07-11T05:00:00+00:00"),
     );
 
     expect(result.active).toBe(true);
+    expect(result.currentWeekDue).toBe(true);
     expect(result.dueTradeIds.has("t1")).toBe(true);
   });
 
