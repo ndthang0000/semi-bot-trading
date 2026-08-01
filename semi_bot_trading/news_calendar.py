@@ -7,6 +7,8 @@ Tiers
 Tier 1 — Tin Đỏ Tối Cao  : blackout ±30 min  (NFP, FOMC rate, CPI, GDP)
 Tier 2 — Tin Đỏ Thường   : blackout ±15 min  (PCE, PPI, Retail Sales, ISM, …)
 Tier 3 / None             : ignored (spread guard handles these)
+
+The Fair Economy XML timestamps are UTC.
 """
 
 from __future__ import annotations
@@ -145,9 +147,9 @@ def _fetch_xml(url: str, timeout: float = 15.0) -> str:
 def _parse_ff_datetime(date_str: str, time_str: str) -> datetime | None:
     """Parse ForexFactory date (06-25-2026) and time (12:30pm) to UTC datetime.
 
-    FF times are US Eastern (ET). We apply a fixed -4h offset (EDT) which
-    covers the March–November daylight period. Outside that window the bot
-    may be ±1 h off — acceptable for a ±15/30 min blackout window.
+    The nfs.faireconomy.media XML feed publishes UTC clock values. For example,
+    a BEA 08:30 EDT release is represented as 12:30pm in the feed. Treating the
+    value as Eastern would shift summer releases four hours late.
     """
     date_str = date_str.strip()
     time_str = time_str.strip().lower()
@@ -157,11 +159,7 @@ def _parse_ff_datetime(date_str: str, time_str: str) -> datetime | None:
         dt_naive = datetime.strptime(f"{date_str} {time_str}", "%m-%d-%Y %I:%M%p")
     except ValueError:
         return None
-    # EDT = UTC-4 (covers ~Mar–Nov); EST = UTC-5 (Dec–Feb).
-    # Use the actual offset based on month to reduce error.
-    month = dt_naive.month
-    utc_offset = -4 if 3 <= month <= 11 else -5
-    return (dt_naive - timedelta(hours=utc_offset)).replace(tzinfo=UTC)
+    return dt_naive.replace(tzinfo=UTC)
 
 
 def _event_id(title: str, country: str, scheduled_at: datetime) -> str:
@@ -224,6 +222,19 @@ def _upsert_events(conn: Connection, events: list[NewsEvent]) -> int:
     fetched_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
     count = 0
     for ev in events:
+        # Parser/timezone fixes must correct the existing event instead of
+        # leaving a stale same-day duplicate under the old time-derived ID.
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM news_events
+            WHERE title = ? AND country = ? AND substr(scheduled_at, 1, 10) = ?
+            ORDER BY fetched_at DESC
+            LIMIT 1
+            """,
+            (ev.title, ev.country, ev.scheduled_at.date().isoformat()),
+        ).fetchone()
+        event_id = str(existing["id"]) if existing is not None else ev.id
         conn.execute(
             """
             INSERT INTO news_events
@@ -232,12 +243,18 @@ def _upsert_events(conn: Connection, events: list[NewsEvent]) -> int:
                  forecast, previous, url, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                impact     = excluded.impact,
+                tier       = excluded.tier,
+                scheduled_at = excluded.scheduled_at,
+                blackout_before_min = excluded.blackout_before_min,
+                blackout_after_min = excluded.blackout_after_min,
                 forecast   = excluded.forecast,
                 previous   = excluded.previous,
+                url        = excluded.url,
                 fetched_at = excluded.fetched_at
             """,
             (
-                ev.id, ev.title, ev.country, ev.impact, ev.tier,
+                event_id, ev.title, ev.country, ev.impact, ev.tier,
                 ev.scheduled_at.replace(microsecond=0).isoformat(),
                 ev.blackout_before_min, ev.blackout_after_min,
                 ev.forecast, ev.previous, ev.url, fetched_iso,

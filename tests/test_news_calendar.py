@@ -10,10 +10,51 @@ from semi_bot_trading.chart import load_chart_contexts
 from semi_bot_trading.config import load_config
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.live_worker import _expire_news_regimes, _upsert_news_regime
-from semi_bot_trading.news_calendar import active_news_blackout, upcoming_news_events
+from semi_bot_trading.news_calendar import (
+    _parse_ff_datetime,
+    _parse_ff_xml,
+    _upsert_events,
+    active_news_blackout,
+    upcoming_news_events,
+)
 
 
 class NewsCalendarTest(unittest.TestCase):
+    def test_fair_economy_xml_clock_is_already_utc(self) -> None:
+        parsed = _parse_ff_datetime("07-30-2026", "12:30pm")
+
+        self.assertEqual(datetime(2026, 7, 30, 12, 30, tzinfo=UTC), parsed)
+
+    def test_fetch_reconciles_stale_same_day_timezone_row(self) -> None:
+        xml = """
+        <weeklyevents>
+          <event>
+            <title>Advance GDP q/q</title><country>USD</country><date>07-30-2026</date>
+            <time>12:30pm</time><impact>High</impact><forecast>2.1%</forecast>
+            <previous>2.0%</previous><url>https://example.test/gdp</url>
+          </event>
+        </weeklyevents>
+        """
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.execute(
+                    """
+                    INSERT INTO news_events (
+                        id, title, country, impact, tier, scheduled_at,
+                        blackout_before_min, blackout_after_min, forecast, previous, url, fetched_at
+                    ) VALUES ('stale-id', 'Advance GDP q/q', 'USD', 'High', 1,
+                              '2026-07-30T16:30:00+00:00', 30, 30, NULL, NULL,
+                              'https://example.test/gdp', '2026-07-29T00:00:00+00:00')
+                    """
+                )
+                events = _parse_ff_xml(xml, datetime(2026, 7, 29, tzinfo=UTC))
+                _upsert_events(conn, events)
+                rows = conn.execute("SELECT id, scheduled_at FROM news_events").fetchall()
+
+        self.assertEqual([("stale-id", "2026-07-30T12:30:00+00:00")], [(row["id"], row["scheduled_at"]) for row in rows])
+
     def test_upcoming_news_keeps_active_blackout_after_release_time(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

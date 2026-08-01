@@ -215,6 +215,15 @@ WEEKEND_FLATTEN_TIME=15:30
 
 Dung timezone New York de tu dong dung khi DST doi gio; tranh hard-code gio Viet Nam.
 
+## News Time Normalization
+
+Feed XML `nfs.faireconomy.media` cung cap clock time theo UTC. Parser luu truc
+tiep UTC; khong cong them offset Eastern. Vi du BEA 08:30 EDT duoc feed bieu
+dien la `12:30pm` va database phai luu `12:30 UTC`.
+
+Khong co post-news cooldown rieng. Live execution chi dung blackout co ban theo
+tier: Tier 1 truoc/sau 30 phut va Tier 2 truoc/sau 15 phut.
+
 ## Partial TP / Break-even
 
 Live worker quan ly lenh dang mo bang rule mac dinh:
