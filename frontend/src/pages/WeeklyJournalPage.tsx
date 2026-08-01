@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, ChevronLeft, ChevronRight, Save } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Save, SmilePlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { fetchWeeklyJournals, updateWeeklyJournal } from "../api/chart";
 import { RichTextEditor } from "../components/weeklyJournal/RichTextEditor";
 import {
   addDaysToDateKey,
-  currentVietnamDateKey,
   currentVietnamWeekStart,
   formatWeekRange,
+  latestJournalWeekStart,
   plainTextToRichText,
   richTextToPlainText,
   weekStartForDateKey,
@@ -19,12 +19,17 @@ const SCORE_SERIES = [
   { key: "fomo_score", label: "FOMO", color: "#facc15" },
   { key: "revenge_score", label: "Revenge", color: "#f87171" },
 ] as const;
+const JOURNAL_ICONS = ["📝", "🎯", "🌟", "😊", "💪", "🧠", "🧘", "🚀", "📈", "🌱", "🔥", "🌈"];
+const DEFAULT_JOURNAL_ICON = "📝";
+const MAX_JOURNAL_CONTENT_LENGTH = 2_000_000;
 
 export function WeeklyJournalPage() {
   const queryClient = useQueryClient();
   const currentWeek = currentVietnamWeekStart();
+  const latestWeek = latestJournalWeekStart();
   const [selectedWeek, setSelectedWeek] = useState(currentWeek);
   const [content, setContent] = useState("");
+  const [icon, setIcon] = useState(DEFAULT_JOURNAL_ICON);
   const [discipline, setDiscipline] = useState(5);
   const [fomo, setFomo] = useState(5);
   const [revenge, setRevenge] = useState(5);
@@ -46,6 +51,7 @@ export function WeeklyJournalPage() {
 
   useEffect(() => {
     setContent(selectedContent);
+    setIcon(selectedJournal?.icon ?? DEFAULT_JOURNAL_ICON);
     setDiscipline(selectedJournal?.discipline_score ?? 5);
     setFomo(selectedJournal?.fomo_score ?? 5);
     setRevenge(selectedJournal?.revenge_score ?? 5);
@@ -54,6 +60,7 @@ export function WeeklyJournalPage() {
   }, [selectedJournal?.updated_at, selectedWeek]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = content !== selectedContent
+    || icon !== (selectedJournal?.icon ?? DEFAULT_JOURNAL_ICON)
     || discipline !== (selectedJournal?.discipline_score ?? 5)
     || fomo !== (selectedJournal?.fomo_score ?? 5)
     || revenge !== (selectedJournal?.revenge_score ?? 5)
@@ -62,12 +69,13 @@ export function WeeklyJournalPage() {
   const achievedRValid = achievedR.trim() !== "" && Number.isFinite(achievedRValue)
     && achievedRValue >= -1_000 && achievedRValue <= 1_000;
   const visibleContentLength = richTextToPlainText(content).length;
-  const contentWithinLimit = content.length <= 50_000;
+  const contentWithinLimit = content.length <= MAX_JOURNAL_CONTENT_LENGTH;
 
   const saveMutation = useMutation({
     mutationFn: () => updateWeeklyJournal(selectedWeek, {
       content,
       content_format: "rich_text",
+      icon,
       discipline_score: discipline,
       fomo_score: fomo,
       revenge_score: revenge,
@@ -116,7 +124,7 @@ export function WeeklyJournalPage() {
               <input
                 type="date"
                 value={selectedWeek}
-                max={currentVietnamDateKey()}
+                max={addDaysToDateKey(latestWeek, 6)}
                 onChange={(event) => {
                   if (event.target.value) selectWeek(weekStartForDateKey(event.target.value));
                 }}
@@ -126,7 +134,7 @@ export function WeeklyJournalPage() {
             <button
               type="button"
               onClick={() => selectWeek(addDaysToDateKey(selectedWeek, 7))}
-              disabled={selectedWeek >= currentWeek}
+              disabled={selectedWeek >= latestWeek}
               className="rounded-lg border border-ink-700 p-2 text-slate-400 hover:border-slate-500 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"
               aria-label="Tuần sau"
             >
@@ -181,9 +189,9 @@ export function WeeklyJournalPage() {
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">
                   {selectedJournal ? "Chỉnh sửa nhật ký" : "Tạo nhật ký"}
                 </div>
-                <h2 className="mt-1 text-xl font-semibold">{formatWeekRange(selectedWeek)}</h2>
+                <h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><span aria-hidden="true">{icon}</span>{formatWeekRange(selectedWeek)}</h2>
                 <div className="mt-1 text-xs text-slate-500">
-                  {selectedWeek === currentWeek ? "Tuần hiện tại" : "Tuần trong quá khứ"} · Asia/Ho_Chi_Minh
+                  {selectedWeek === currentWeek ? "Tuần hiện tại" : selectedWeek > currentWeek ? "Chuẩn bị cho tuần kế tiếp" : "Tuần trong quá khứ"} · Asia/Ho_Chi_Minh
                 </div>
               </div>
               <div className="text-right text-xs text-slate-500">
@@ -216,6 +224,30 @@ export function WeeklyJournalPage() {
               <RField value={achievedR} valid={achievedRValid} onChange={setAchievedR} />
             </div>
 
+            <div className="mt-4 rounded-xl border border-ink-700 bg-ink-950 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300">
+                <SmilePlus size={16} className="text-cyan-300" />
+                Biểu tượng cho tuần
+              </div>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Chọn biểu tượng nhật ký">
+                {JOURNAL_ICONS.map((candidate) => (
+                  <button
+                    key={candidate}
+                    type="button"
+                    role="radio"
+                    aria-checked={icon === candidate}
+                    onClick={() => setIcon(candidate)}
+                    className={[
+                      "grid h-10 w-10 place-items-center rounded-lg border text-xl transition-transform hover:scale-105",
+                      icon === candidate ? "border-cyan-400 bg-cyan-500/15" : "border-ink-700 bg-ink-900 hover:border-slate-500",
+                    ].join(" ")}
+                  >
+                    {candidate}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="mt-5">
               <div className="mb-2 text-sm font-medium text-slate-300">Điều gì đã xảy ra trong tuần này?</div>
               <RichTextEditor value={content} onChange={setContent} />
@@ -224,7 +256,7 @@ export function WeeklyJournalPage() {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <div className={`text-xs ${contentWithinLimit ? "text-slate-600" : "text-red-400"}`}>
                 {visibleContentLength.toLocaleString()} ký tự nội dung
-                {!contentWithinLimit ? " · Nội dung định dạng vượt giới hạn lưu 50.000 ký tự" : ""}
+                {!contentWithinLimit ? " · Nội dung và ảnh vượt giới hạn lưu 2MB" : ""}
               </div>
               <div className="flex items-center gap-3">
                 {saveError && <span className="max-w-sm text-xs text-red-400">{saveError}</span>}
@@ -486,7 +518,7 @@ function JournalHistoryCard({
           : "border-ink-700 bg-ink-950 hover:border-slate-600",
       ].join(" ")}
     >
-      <div className="text-xs font-semibold text-slate-200">{formatWeekRange(journal.week_start)}</div>
+      <div className="flex items-center gap-2 text-xs font-semibold text-slate-200"><span className="text-base" aria-hidden="true">{journal.icon || DEFAULT_JOURNAL_ICON}</span>{formatWeekRange(journal.week_start)}</div>
       <div className="mt-2 flex gap-2 text-[11px]">
         <span className="text-green-300">K {journal.discipline_score}</span>
         <span className="text-amber-300">F {journal.fomo_score}</span>

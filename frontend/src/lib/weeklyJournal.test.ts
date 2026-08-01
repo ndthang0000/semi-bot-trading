@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDaysToDateKey,
   currentVietnamWeekStart,
+  latestJournalWeekStart,
   plainTextToRichText,
   richTextToPlainText,
   weekStartForDateKey,
@@ -21,6 +22,10 @@ describe("weekly journal date helpers", () => {
 
   it("uses the Vietnam calendar day when finding the current week", () => {
     expect(currentVietnamWeekStart(new Date("2026-07-26T18:30:00Z"))).toBe("2026-07-27");
+  });
+
+  it("allows preparing exactly the following journal week", () => {
+    expect(latestJournalWeekStart(new Date("2026-08-01T03:00:00Z"))).toBe("2026-08-03");
   });
 
   it("upgrades legacy plain text without interpreting it as HTML", () => {

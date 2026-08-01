@@ -188,6 +188,7 @@ export type WeeklyJournal = {
   week_end: string;
   content: string;
   content_format: "plain_text" | "rich_text";
+  icon: string;
   discipline_score: number;
   fomo_score: number;
   revenge_score: number;

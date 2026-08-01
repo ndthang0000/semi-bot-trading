@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS weekly_journals (
     week_end TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
     content_format TEXT NOT NULL DEFAULT 'plain_text',
+    icon TEXT NOT NULL DEFAULT '📝',
     discipline_score INTEGER NOT NULL CHECK (discipline_score BETWEEN 1 AND 10),
     fomo_score INTEGER NOT NULL CHECK (fomo_score BETWEEN 1 AND 10),
     revenge_score INTEGER NOT NULL CHECK (revenge_score BETWEEN 1 AND 10),
@@ -421,6 +422,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "trade_reviews", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "weekly_journals", "achieved_r", "REAL NOT NULL DEFAULT 0")
     ensure_column(conn, "weekly_journals", "content_format", "TEXT NOT NULL DEFAULT 'plain_text'")
+    ensure_column(conn, "weekly_journals", "icon", "TEXT NOT NULL DEFAULT '📝'")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)

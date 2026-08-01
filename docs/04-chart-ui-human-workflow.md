@@ -133,10 +133,11 @@ worker, risk manager hoặc execution.
 - Mỗi tuần có tối đa một journal, định danh bằng ngày thứ Hai `week_start`.
 - Tuần được tính từ thứ Hai tới Chủ nhật theo múi giờ
   `Asia/Ho_Chi_Minh`.
-- User có thể chọn một ngày bất kỳ trong tuần hiện tại hoặc quá khứ; UI tự quy
-  ngày đó về thứ Hai để tạo mới hoặc mở lại journal đã lưu.
+- User có thể chọn một ngày bất kỳ trong quá khứ, tuần hiện tại hoặc tuần kế
+  tiếp; UI tự quy ngày đó về thứ Hai để tạo mới hoặc mở lại journal đã lưu.
 - Nội dung dùng Tiptap rich-text editor với heading, bold, italic, underline,
-  strike, bullet/numbered list, quote, divider và undo/redo.
+  strike, bullet/numbered list, quote, divider, ảnh nén nhúng và undo/redo.
+- Mỗi journal có thể chọn một emoji icon để phân biệt nhanh trong lịch sử.
 - Journal cũ được đánh dấu `content_format='plain_text'` và giữ nguyên raw
   content trong database. Frontend chỉ chuyển nó thành rich text trong editor;
   database chỉ đổi sang `rich_text` khi user chủ động Save journal đó.

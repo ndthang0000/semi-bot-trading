@@ -45,4 +45,19 @@ describe("RichTextEditor", () => {
     expect(container.querySelector(".ProseMirror")).not.toBeNull();
     expect(container.textContent).toContain("Tuần khác.");
   });
+
+  it("renders an embedded journal image after content is loaded", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const source = "data:image/webp;base64,UklGRg==";
+
+    await act(async () => {
+      root?.render(<RichTextEditor value={`<p>Kế hoạch</p><img src="${source}" alt="chart.webp">`} onChange={() => undefined} />);
+    });
+
+    const image = container.querySelector<HTMLImageElement>(".ProseMirror img");
+    expect(image?.getAttribute("src")).toBe(source);
+    expect(image?.getAttribute("alt")).toBe("chart.webp");
+  });
 });

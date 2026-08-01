@@ -69,11 +69,12 @@ class ApiTest(unittest.TestCase):
                 conn.commit()
                 init_db(conn)
                 row = conn.execute(
-                    "SELECT content, content_format, achieved_r FROM weekly_journals WHERE id = 'legacy-week'"
+                    "SELECT content, content_format, icon, achieved_r FROM weekly_journals WHERE id = 'legacy-week'"
                 ).fetchone()
 
         self.assertEqual(row["content"], "Noi dung nhat ky cu khong duoc mat.")
         self.assertEqual(row["content_format"], "plain_text")
+        self.assertEqual(row["icon"], "📝")
         self.assertEqual(row["achieved_r"], 0)
 
     def test_weekly_journal_can_create_update_and_list_old_weeks(self) -> None:
@@ -89,6 +90,7 @@ class ApiTest(unittest.TestCase):
                 json={
                     "content": "Tuan cu: toi da giu dung ke hoach.",
                     "content_format": "rich_text",
+                    "icon": "🎯",
                     "discipline_score": 7,
                     "fomo_score": 4,
                     "revenge_score": 2,
@@ -123,6 +125,7 @@ class ApiTest(unittest.TestCase):
 
         self.assertEqual(old_week.status_code, 200)
         self.assertEqual(old_week.json()["content_format"], "rich_text")
+        self.assertEqual(old_week.json()["icon"], "🎯")
         self.assertEqual(old_week.json()["week_end"], "2026-06-07")
         self.assertEqual(newer_week.status_code, 200)
         self.assertEqual(updated_week.status_code, 200)

@@ -117,8 +117,9 @@ class TradeReviewAttachmentRequest(BaseModel):
 
 
 class WeeklyJournalRequest(BaseModel):
-    content: str = Field(default="", max_length=50_000)
+    content: str = Field(default="", max_length=2_000_000)
     content_format: Literal["plain_text", "rich_text"] = "plain_text"
+    icon: str = Field(default="📝", min_length=1, max_length=32)
     discipline_score: int = Field(ge=1, le=10)
     fomo_score: int = Field(ge=1, le=10)
     revenge_score: int = Field(ge=1, le=10)

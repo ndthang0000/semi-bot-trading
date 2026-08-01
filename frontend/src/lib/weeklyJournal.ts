@@ -42,6 +42,10 @@ export function currentVietnamWeekStart(now = new Date()): string {
   return weekStartForDateKey(currentVietnamDateKey(now));
 }
 
+export function latestJournalWeekStart(now = new Date()): string {
+  return addDaysToDateKey(currentVietnamWeekStart(now), 7);
+}
+
 export function formatWeekRange(weekStart: string): string {
   const formatter = new Intl.DateTimeFormat("vi-VN", {
     day: "2-digit",

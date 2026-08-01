@@ -225,6 +225,7 @@ export async function fetchWeeklyJournals(limit = 104): Promise<WeeklyJournalsRe
 export type WeeklyJournalInput = {
   content: string;
   content_format: "plain_text" | "rich_text";
+  icon: string;
   discipline_score: number;
   fomo_score: number;
   revenge_score: number;

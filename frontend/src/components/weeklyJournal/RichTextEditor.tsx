@@ -1,9 +1,11 @@
+import TiptapImage from "@tiptap/extension-image";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   Bold,
   Heading2,
   Heading3,
+  ImagePlus,
   Italic,
   List,
   ListOrdered,
@@ -15,7 +17,11 @@ import {
   Underline,
   Undo2,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+
+const MAX_IMAGE_SOURCE_BYTES = 10 * 1024 * 1024;
+const MAX_EMBEDDED_IMAGE_LENGTH = 1_200_000;
+const MAX_IMAGE_SIDE = 1_600;
 
 export function RichTextEditor({
   value,
@@ -24,8 +30,17 @@ export function RichTextEditor({
   value: string;
   onChange: (html: string) => void;
 }) {
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [
+      StarterKit,
+      TiptapImage.configure({
+        allowBase64: true,
+        HTMLAttributes: { class: "journal-inline-image" },
+      }),
+    ],
     content: value,
     editorProps: {
       attributes: {
@@ -43,6 +58,21 @@ export function RichTextEditor({
     if (!editor || editor.isDestroyed || editor.getHTML() === value) return;
     editor.commands.setContent(value, { emitUpdate: false });
   }, [editor, value]);
+
+  async function insertImage(file: File | undefined) {
+    if (!file || !readyEditor) return;
+    setImageBusy(true);
+    setImageError(null);
+    try {
+      const src = await compressJournalImage(file);
+      readyEditor.chain().focus().setImage({ src, alt: file.name, title: file.name }).run();
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : "Không thể chèn ảnh.");
+    } finally {
+      setImageBusy(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  }
 
   return (
     <div className="weekly-rich-editor overflow-hidden rounded-xl border border-ink-700 bg-ink-950 focus-within:border-cyan-500/60">
@@ -79,6 +109,17 @@ export function RichTextEditor({
         <ToolbarButton label="Divider" onClick={() => readyEditor?.chain().focus().setHorizontalRule().run()}>
           <Minus size={16} />
         </ToolbarButton>
+        <ToolbarButton label={imageBusy ? "Đang xử lý ảnh" : "Chèn ảnh"} disabled={imageBusy || !readyEditor} onClick={() => imageInputRef.current?.click()}>
+          <ImagePlus size={16} />
+        </ToolbarButton>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(event) => void insertImage(event.target.files?.[0])}
+          aria-label="Chọn ảnh chèn vào nhật ký"
+        />
         <ToolbarDivider />
         <ToolbarButton label="Clear formatting" onClick={() => readyEditor?.chain().focus().clearNodes().unsetAllMarks().run()}>
           <RemoveFormatting size={16} />
@@ -90,9 +131,52 @@ export function RichTextEditor({
           <Redo2 size={16} />
         </ToolbarButton>
       </div>
+      {imageError && <div className="border-b border-red-500/20 bg-red-500/5 px-4 py-2 text-xs text-red-300">{imageError}</div>}
       <EditorContent editor={readyEditor} />
     </div>
   );
+}
+
+async function compressJournalImage(file: File): Promise<string> {
+  if (!new Set(["image/png", "image/jpeg", "image/webp"]).has(file.type)) {
+    throw new Error("Chỉ hỗ trợ ảnh PNG, JPEG hoặc WebP.");
+  }
+  if (file.size > MAX_IMAGE_SOURCE_BYTES) {
+    throw new Error("Ảnh gốc vượt quá 10MB.");
+  }
+  const source = await readFileAsDataUrl(file);
+  const image = await loadImage(source);
+  const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Trình duyệt không thể xử lý ảnh này.");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  for (const quality of [0.84, 0.72, 0.6]) {
+    const output = canvas.toDataURL("image/webp", quality);
+    if (output.length <= MAX_EMBEDDED_IMAGE_LENGTH) return output;
+  }
+  throw new Error("Ảnh vẫn quá lớn sau khi nén. Hãy chọn ảnh nhỏ hơn.");
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Không thể đọc file ảnh."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("File ảnh không hợp lệ."));
+    image.src = src;
+  });
 }
 
 function ToolbarButton({

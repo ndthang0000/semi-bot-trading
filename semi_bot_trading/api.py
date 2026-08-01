@@ -825,15 +825,16 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             conn.execute(
                 """
                 INSERT INTO weekly_journals (
-                    id, week_start, week_end, content, content_format,
+                    id, week_start, week_end, content, content_format, icon,
                     discipline_score, fomo_score, revenge_score, achieved_r,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(week_start) DO UPDATE SET
                     week_end = excluded.week_end,
                     content = excluded.content,
                     content_format = excluded.content_format,
+                    icon = excluded.icon,
                     discipline_score = excluded.discipline_score,
                     fomo_score = excluded.fomo_score,
                     revenge_score = excluded.revenge_score,
@@ -846,6 +847,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     week_end_value,
                     request.content,
                     request.content_format,
+                    request.icon.strip() or "📝",
                     request.discipline_score,
                     request.fomo_score,
                     request.revenge_score,
@@ -1607,6 +1609,7 @@ def weekly_journal_row_to_api(row: Any) -> dict[str, Any]:
         "week_end": row["week_end"],
         "content": row["content"] or "",
         "content_format": row["content_format"] or "plain_text",
+        "icon": row["icon"] or "📝",
         "discipline_score": int(row["discipline_score"]),
         "fomo_score": int(row["fomo_score"]),
         "revenge_score": int(row["revenge_score"]),
