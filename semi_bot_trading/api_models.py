@@ -49,6 +49,18 @@ class ZoneCreateRequest(BaseModel):
     trade_modes: list[str] | None = None
 
 
+class ZoneImportDuplicateAudit(BaseModel):
+    safe_to_import: bool
+    skipped: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ZoneImportRequest(BaseModel):
+    as_of: str
+    duplicate_audit: ZoneImportDuplicateAudit
+    api_endpoint: Literal["POST /api/zones/import"]
+    api_payloads: list[ZoneCreateRequest] = Field(min_length=1, max_length=50)
+
+
 ZoneTrend = Literal["bullish", "bearish", "neutral"]
 ZoneSwingLocation = Literal["inside_zone", "near_zone", "none"]
 ZoneThesisReason = Literal[

@@ -763,6 +763,90 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(chart.json()["layers"]["zones"][0]["visual_end"], "2026-01-01T01:00:00+00:00")
         self.assertEqual(active_chart.json()["layers"]["zones"], [])
 
+    def test_import_zones_creates_all_payloads_as_one_request(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+
+            response = client.post(
+                "/api/zones/import",
+                json=zone_import_envelope(
+                    [
+                        zone_import_payload("support", "bullish", 1980.0, 1985.0),
+                        zone_import_payload("resistance", "bearish", 2010.0, 2015.0),
+                    ]
+                ),
+            )
+            with connect(db_path) as conn:
+                zone_count = conn.execute("SELECT COUNT(*) AS count FROM price_zones").fetchone()["count"]
+                override_count = conn.execute("SELECT COUNT(*) AS count FROM overrides").fetchone()["count"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created_count"], 2)
+        self.assertEqual(response.json()["draft_count"], 2)
+        self.assertEqual([zone["status"] for zone in response.json()["zones"]], ["draft", "draft"])
+        self.assertEqual(zone_count, 2)
+        self.assertEqual(override_count, 2)
+
+    def test_import_zones_rejects_database_duplicate_without_creating_anything(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            existing = client.post(
+                "/api/zones",
+                json=zone_import_payload("support", "bullish", 1990.0, 1995.0),
+            )
+
+            response = client.post(
+                "/api/zones/import",
+                json=zone_import_envelope(
+                    [
+                        zone_import_payload("resistance", "bearish", 2010.0, 2015.0),
+                        zone_import_payload("support", "bullish", 1991.0, 1994.0),
+                    ]
+                ),
+            )
+            with connect(db_path) as conn:
+                rows = conn.execute("SELECT id FROM price_zones ORDER BY id").fetchall()
+
+        self.assertEqual(existing.status_code, 200)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("duplicate zones", response.json()["detail"]["message"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], existing.json()["id"])
+
+    def test_import_zones_validation_is_atomic(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+
+            response = client.post(
+                "/api/zones/import",
+                json=zone_import_envelope(
+                    [
+                        zone_import_payload("support", "bullish", 1980.0, 1985.0),
+                        zone_import_payload("resistance", "bearish", 2015.0, 2010.0),
+                    ]
+                ),
+            )
+            with connect(db_path) as conn:
+                zone_count = conn.execute("SELECT COUNT(*) AS count FROM price_zones").fetchone()["count"]
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(zone_count, 0)
+
     def test_draft_sr_zone_requires_questionnaire_before_activation(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1007,6 +1091,40 @@ H1 = {{ window = 5 }}
 M15 = {{ window = 3 }}
 """
     )
+
+
+def zone_import_payload(
+    zone_type: str,
+    direction: str,
+    price_low: float,
+    price_high: float,
+) -> dict[str, object]:
+    return {
+        "symbol": "XAUUSD",
+        "timeframe": "H1",
+        "zone_type": zone_type,
+        "direction": direction,
+        "price_low": price_low,
+        "price_high": price_high,
+        "visual_start": "2026-07-31T20:00:00+00:00",
+        "visual_end": "2027-01-08T20:00:00+00:00",
+        "expires_at": "2027-01-08T20:00:00+00:00",
+        "weight": 0.8,
+        "confidence": 0.8,
+        "status": "draft",
+        "client_kind": zone_type,
+        "reason": "Weekly plan import test",
+        "trade_modes": ["reject"],
+    }
+
+
+def zone_import_envelope(payloads: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "as_of": "2026-08-01T00:00:00+00:00",
+        "duplicate_audit": {"safe_to_import": True, "skipped": []},
+        "api_endpoint": "POST /api/zones/import",
+        "api_payloads": payloads,
+    }
 
 
 def write_test_env(env_path: Path) -> str:

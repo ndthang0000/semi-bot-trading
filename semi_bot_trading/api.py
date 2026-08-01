@@ -24,6 +24,7 @@ from .api_models import (
     WeeklyJournalRequest,
     ZoneActivationRequest,
     ZoneCreateRequest,
+    ZoneImportRequest,
     ZoneOverrideRequest,
 )
 from .api_utils import (
@@ -66,6 +67,50 @@ MAX_REVIEW_ATTACHMENT_BYTES = 5 * 1024 * 1024
 REVIEW_ATTACHMENT_KINDS = {"entry", "exit", "review", "manual"}
 
 _http_bearer = HTTPBearer(auto_error=False)
+
+
+def require_timezone_aware_iso(value: str, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be an ISO-8601 datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise HTTPException(status_code=422, detail=f"{field_name} must include a timezone")
+    return parsed
+
+
+def zone_is_duplicate_eligible(row: Any, latest_m15_time: str | None, watch_bars: int) -> bool:
+    if row["status"] in {"active", "draft"}:
+        return True
+    if row["status"] != "mitigated" or row["zone_type"] != "fvg" or latest_m15_time is None:
+        return False
+    fill_time = row["invalidated_at"] or row["valid_until"]
+    if fill_time is None:
+        return False
+    try:
+        latest = datetime.fromisoformat(latest_m15_time)
+        filled = datetime.fromisoformat(fill_time)
+    except ValueError:
+        return False
+    return filled >= latest - timedelta(minutes=15 * max(watch_bars, 1))
+
+
+def zones_are_duplicates(candidate: Any, existing: Any) -> bool:
+    if candidate["symbol"] != existing["symbol"] or candidate["timeframe"] != existing["timeframe"]:
+        return False
+    if candidate["zone_type"] != existing["zone_type"] or candidate["direction"] != existing["direction"]:
+        return False
+    candidate_low = float(candidate["price_low"])
+    candidate_high = float(candidate["price_high"])
+    existing_low = float(existing["price_low"])
+    existing_high = float(existing["price_high"])
+    candidate_width = max(candidate_high - candidate_low, 1e-9)
+    existing_width = max(existing_high - existing_low, 1e-9)
+    overlap = max(0.0, min(candidate_high, existing_high) - max(candidate_low, existing_low))
+    overlap_smaller = overlap / min(candidate_width, existing_width)
+    center_distance = abs((candidate_low + candidate_high) / 2 - (existing_low + existing_high) / 2)
+    exact = abs(candidate_low - existing_low) <= 0.01 and abs(candidate_high - existing_high) <= 0.01
+    return exact or overlap_smaller >= 0.70 or center_distance <= max(candidate_width, existing_width) * 0.65
 
 
 def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | str | None = None):
@@ -1131,8 +1176,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             conn.commit()
             return zone_row_to_chart(updated)
 
-    @app.post("/api/zones")
-    def create_zone(request: ZoneCreateRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
+    def prepare_zone_create(request: ZoneCreateRequest, conn: Any, now: str) -> dict[str, Any]:
         if request.price_low >= request.price_high:
             raise HTTPException(status_code=422, detail="price_low must be lower than price_high")
         if request.status not in {"active", "draft", "disabled"}:
@@ -1155,7 +1199,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         timeframe = request.timeframe.upper()
         if timeframe != config.bias.timeframe.upper():
             raise HTTPException(status_code=422, detail=f"Manual price zones must use {config.bias.timeframe} timeframe")
-        now = utc_now_iso()
         effective_status = "draft" if request.zone_type in {"support", "resistance"} else request.status
         expiry_input = request.expires_at
         if effective_status == "active" and expiry_input is None:
@@ -1170,7 +1213,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         if effective_status == "draft" and end_time is None:
             end_time = resolve_price_zone_expiry(now, request.zone_type, timeframe, None)
         if effective_status == "disabled":
-            end_time = end_time or latest_candle_time_for_create(symbol, timeframe, config.database) or now
+            end_time = end_time or latest_candle_time(conn, symbol, timeframe) or now
         try:
             start_dt = datetime.fromisoformat(start_time)
             end_dt = datetime.fromisoformat(end_time) if end_time else None
@@ -1194,80 +1237,187 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             metadata["draft_created_at"] = now
             metadata["activation_review_version"] = 1
         valid_until = end_time if effective_status == "disabled" else expires_at
+        return {
+            "request": request,
+            "zone_id": zone_id,
+            "override_id": override_id,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "start_time": start_time,
+            "end_time": end_time,
+            "expires_at": expires_at,
+            "valid_until": valid_until,
+            "effective_status": effective_status,
+            "trade_modes": trade_modes,
+            "metadata": metadata,
+            "now": now,
+        }
+
+    def insert_prepared_zone(conn: Any, prepared: dict[str, Any]) -> Any:
+        request: ZoneCreateRequest = prepared["request"]
+        conn.execute(
+            """
+            INSERT INTO price_zones (
+                id, symbol, timeframe, detector, zone_type, direction, price_low, price_high,
+                start_time, end_time, valid_from, valid_until, invalidated_at,
+                invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
+                effective_confidence, effective_weight, status, source, metadata_json
+            )
+            VALUES (?, ?, ?, 'human_manual_v1', ?, ?, ?, ?,
+                    ?, ?, ?, ?, NULL,
+                    NULL, ?, ?, ?,
+                    ?, ?, ?, 'human', ?)
+            """,
+            (
+                prepared["zone_id"],
+                prepared["symbol"],
+                prepared["timeframe"],
+                request.zone_type,
+                request.direction,
+                request.price_low,
+                request.price_high,
+                prepared["start_time"],
+                prepared["end_time"],
+                prepared["start_time"],
+                prepared["valid_until"],
+                prepared["start_time"],
+                request.confidence,
+                request.weight,
+                request.confidence,
+                request.weight,
+                prepared["effective_status"],
+                json.dumps(prepared["metadata"], sort_keys=True),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO overrides (
+                id, target_entity_type, target_entity_id, override_type, patch_json,
+                reason, created_by, created_at, expires_at, status
+            )
+            VALUES (?, 'price_zone', ?, 'create_manual_zone', ?, ?, 'human', ?, ?, 'active')
+            """,
+            (
+                prepared["override_id"],
+                prepared["zone_id"],
+                json.dumps(
+                    {
+                        "after": {
+                            "zone_type": request.zone_type,
+                            "direction": request.direction,
+                            "price_low": request.price_low,
+                            "price_high": request.price_high,
+                            "start_time": prepared["start_time"],
+                            "end_time": prepared["end_time"],
+                            "effective_weight": request.weight,
+                            "effective_confidence": request.confidence,
+                            "status": prepared["effective_status"],
+                            "source": "human",
+                            "valid_until": prepared["valid_until"],
+                            "trade_modes": prepared["trade_modes"],
+                        },
+                    },
+                    sort_keys=True,
+                ),
+                request.reason,
+                prepared["now"],
+                prepared["expires_at"],
+            ),
+        )
+        return conn.execute("SELECT * FROM price_zones WHERE id = ?", (prepared["zone_id"],)).fetchone()
+
+    def duplicate_conflicts(conn: Any, prepared_zones: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        conflicts: list[dict[str, Any]] = []
+        planned: list[dict[str, Any]] = []
+        for index, prepared in enumerate(prepared_zones):
+            request: ZoneCreateRequest = prepared["request"]
+            existing_rows = conn.execute(
+                """
+                SELECT id, symbol, timeframe, zone_type, direction, price_low, price_high,
+                       status, source, invalidated_at, valid_until
+                FROM price_zones
+                WHERE symbol = ? AND timeframe = ? AND status IN ('active', 'draft', 'mitigated')
+                ORDER BY detected_at DESC
+                """,
+                (prepared["symbol"], prepared["timeframe"]),
+            ).fetchall()
+            latest_m15 = latest_candle_time(conn, prepared["symbol"], "M15")
+            candidates = [
+                row
+                for row in existing_rows
+                if zone_is_duplicate_eligible(
+                    row,
+                    latest_m15,
+                    config.strategy.zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars,
+                )
+            ]
+            candidate = {
+                "id": f"import[{index}]",
+                "symbol": prepared["symbol"],
+                "timeframe": prepared["timeframe"],
+                "zone_type": request.zone_type,
+                "direction": request.direction,
+                "price_low": request.price_low,
+                "price_high": request.price_high,
+            }
+            for existing in [*candidates, *planned]:
+                if not zones_are_duplicates(candidate, existing):
+                    continue
+                conflicts.append(
+                    {
+                        "index": index,
+                        "existing_zone_id": existing["id"],
+                        "existing_status": existing["status"],
+                        "existing_price_low": float(existing["price_low"]),
+                        "existing_price_high": float(existing["price_high"]),
+                    }
+                )
+            planned.append({**candidate, "status": "planned", "source": "import"})
+        return conflicts
+
+    @app.post("/api/zones")
+    def create_zone(request: ZoneCreateRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
+        now = utc_now_iso()
         with connect(config.database) as conn:
             init_db(conn)
-            conn.execute(
-                """
-                INSERT INTO price_zones (
-                    id, symbol, timeframe, detector, zone_type, direction, price_low, price_high,
-                    start_time, end_time, valid_from, valid_until, invalidated_at,
-                    invalidated_by_structure_point_id, detected_at, bot_confidence, bot_weight,
-                    effective_confidence, effective_weight, status, source, metadata_json
-                )
-                VALUES (?, ?, ?, 'human_manual_v1', ?, ?, ?, ?,
-                        ?, ?, ?, ?, NULL,
-                        NULL, ?, ?, ?,
-                        ?, ?, ?, 'human', ?)
-                """,
-                (
-                    zone_id,
-                    symbol,
-                    timeframe,
-                    request.zone_type,
-                    request.direction,
-                    request.price_low,
-                    request.price_high,
-                    start_time,
-                    end_time,
-                    start_time,
-                    valid_until,
-                    start_time,
-                    request.confidence,
-                    request.weight,
-                    request.confidence,
-                    request.weight,
-                    effective_status,
-                    json.dumps(metadata, sort_keys=True),
-                ),
-            )
-            conn.execute(
-                """
-                INSERT INTO overrides (
-                    id, target_entity_type, target_entity_id, override_type, patch_json,
-                    reason, created_by, created_at, expires_at, status
-                )
-                VALUES (?, 'price_zone', ?, 'create_manual_zone', ?, ?, 'human', ?, ?, 'active')
-                """,
-                (
-                    override_id,
-                    zone_id,
-                    json.dumps(
-                        {
-                            "after": {
-                                "zone_type": request.zone_type,
-                                "direction": request.direction,
-                                "price_low": request.price_low,
-                                "price_high": request.price_high,
-                                "start_time": start_time,
-                                "end_time": end_time,
-                                "effective_weight": request.weight,
-                                "effective_confidence": request.confidence,
-                                "status": effective_status,
-                                "source": "human",
-                                "valid_until": valid_until,
-                                "trade_modes": trade_modes,
-                            },
-                        },
-                        sort_keys=True,
-                    ),
-                    request.reason,
-                    now,
-                    expires_at,
-                ),
-            )
-            row = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
+            prepared = prepare_zone_create(request, conn, now)
+            row = insert_prepared_zone(conn, prepared)
             conn.commit()
             return zone_row_to_chart(row)
+
+    @app.post("/api/zones/import")
+    def import_zones(request: ZoneImportRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
+        if not request.duplicate_audit.safe_to_import:
+            raise HTTPException(status_code=422, detail="duplicate_audit.safe_to_import must be true")
+        require_timezone_aware_iso(request.as_of, "as_of")
+        for index, payload in enumerate(request.api_payloads):
+            require_timezone_aware_iso(payload.visual_start, f"api_payloads[{index}].visual_start")
+            if payload.visual_end is not None:
+                require_timezone_aware_iso(payload.visual_end, f"api_payloads[{index}].visual_end")
+            if payload.expires_at is not None:
+                require_timezone_aware_iso(payload.expires_at, f"api_payloads[{index}].expires_at")
+
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            prepared_zones = [prepare_zone_create(payload, conn, now) for payload in request.api_payloads]
+            conflicts = duplicate_conflicts(conn, prepared_zones)
+            if conflicts:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Zone import contains duplicate zones; nothing was imported",
+                        "conflicts": conflicts,
+                    },
+                )
+            rows = [insert_prepared_zone(conn, prepared) for prepared in prepared_zones]
+            conn.commit()
+        zones = [zone_row_to_chart(row) for row in rows]
+        return {
+            "created_count": len(zones),
+            "draft_count": sum(1 for zone in zones if zone["status"] == "draft"),
+            "zones": zones,
+        }
 
     @app.delete("/api/zones/{zone_id}")
     def delete_zone(zone_id: str, reason: str | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
@@ -1756,12 +1906,6 @@ def expire_context_overrides(conn: Any, now_iso: str) -> None:
         )
     if rows:
         conn.commit()
-
-
-def latest_candle_time_for_create(symbol: str, timeframe: str, database: Path | str) -> str | None:
-    with connect(database) as conn:
-        init_db(conn)
-        return latest_candle_time(conn, symbol, timeframe)
 
 
 def context_row_to_chart(row: Any) -> dict[str, Any]:

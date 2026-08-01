@@ -279,6 +279,22 @@ export type ZoneCreateInput = {
   trade_modes: ZoneTradeMode[];
 };
 
+export type ZoneImportEnvelope = {
+  as_of: string;
+  duplicate_audit: {
+    safe_to_import: boolean;
+    skipped: Array<Record<string, unknown>>;
+  };
+  api_endpoint: "POST /api/zones/import";
+  api_payloads: ZoneCreateInput[];
+};
+
+export type ZoneImportResult = {
+  created_count: number;
+  draft_count: number;
+  zones: PriceZone[];
+};
+
 export async function createManualZone(input: ZoneCreateInput): Promise<PriceZone> {
   const response = await authFetch("/api/zones", {
     method: "POST",
@@ -290,6 +306,29 @@ export async function createManualZone(input: ZoneCreateInput): Promise<PriceZon
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Zone create failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function importZones(input: ZoneImportEnvelope): Promise<ZoneImportResult> {
+  const response = await authFetch("/api/zones/import", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const detail = body?.detail;
+    if (typeof detail === "string") {
+      throw new Error(detail);
+    }
+    if (detail && typeof detail.message === "string") {
+      const count = Array.isArray(detail.conflicts) ? detail.conflicts.length : 0;
+      throw new Error(count > 0 ? `${detail.message} (${count} conflict${count === 1 ? "" : "s"})` : detail.message);
+    }
+    throw new Error(`Zone import failed with ${response.status}`);
   }
   return response.json();
 }

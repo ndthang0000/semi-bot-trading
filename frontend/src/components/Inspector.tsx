@@ -8,6 +8,8 @@ import { useChartStore } from "../store/chartStore";
 import type { ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, TradeOrder, ZoneTypeVisibility } from "../types";
 import { TradeDetails } from "./inspector/TradeDetails";
 import { ZoneEditor } from "./inspector/ZoneEditor";
+import { ZoneImportModal } from "./inspector/ZoneImportModal";
+import { MysticImportIcon } from "./inspector/MysticImportIcon";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
@@ -466,8 +468,22 @@ function ZonesTab({
   focusZone: (zone: PriceZone) => void;
   showToast: (kind: ToastMessage["kind"], text: string) => void;
 }) {
+  const [isImportOpen, setIsImportOpen] = useState(false);
   return (
     <div className="min-h-0 overflow-y-auto overscroll-contain">
+      {isImportOpen ? (
+        <ZoneImportModal
+          onClose={() => setIsImportOpen(false)}
+          onImported={(result) => {
+            setIsImportOpen(false);
+            onZoneUpdated();
+            showToast(
+              "success",
+              `Imported ${result.created_count} zone${result.created_count === 1 ? "" : "s"}${result.draft_count > 0 ? ` · ${result.draft_count} draft` : ""}.`,
+            );
+          }}
+        />
+      ) : null}
       <section className="border-b border-ink-700 p-4">
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
           <MousePointer2 size={14} />
@@ -498,7 +514,16 @@ function ZonesTab({
             <span className="ml-auto normal-case tracking-normal text-slate-600">
               {visibleZones.length}/{totalZones}
             </span>
-          ) : null}
+          ) : <span className="ml-auto" />}
+          <button
+            aria-label="Import zones từ JSON"
+            className="group rounded-lg border border-blue-400/25 bg-gradient-to-br from-blue-500/15 via-sky-400/10 to-cyan-300/5 p-1.5 text-sky-300 shadow-[0_0_14px_rgba(37,99,235,0.12)] transition hover:border-cyan-300/45 hover:text-cyan-100 hover:shadow-[0_0_20px_rgba(56,189,248,0.24)]"
+            title="Import zones từ JSON"
+            type="button"
+            onClick={() => setIsImportOpen(true)}
+          >
+            <MysticImportIcon size={16} />
+          </button>
         </div>
         <div className="pr-1">
           <div className="grid gap-2">

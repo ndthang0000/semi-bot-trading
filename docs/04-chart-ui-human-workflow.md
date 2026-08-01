@@ -46,6 +46,17 @@ Thành phần:
 - Active zone: kéo ngang từ `start_time` tới candle hiện tại.
 - Closed/invalidated zone: kéo ngang từ `start_time` tới `end_time`, không kéo vô hạn sang phải.
 
+## Import weekly-plan zones
+
+Zones panel có icon import cạnh bộ đếm zone. Modal nhận nguyên JSON envelope do
+`plan-xauusd-weekly` tạo ra, với `api_endpoint` là `POST /api/zones/import` và
+danh sách zone nằm trong `api_payloads`.
+
+Backend validate toàn bộ envelope và kiểm tra lại duplicate theo database hiện
+tại. Import là atomic: chỉ cần một payload sai hoặc trùng thì không zone nào
+được tạo. Human support/resistance sau import vẫn là `draft` và phải hoàn tất
+questionnaire trước khi bot có thể sử dụng.
+
 ## Trade overlay
 
 UI phải vẽ được tất cả lệnh cũ trên chart.
