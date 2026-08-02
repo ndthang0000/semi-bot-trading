@@ -18,6 +18,17 @@ class LogoutRequest(BaseModel):
     refresh_token: str
 
 
+class AccountExecutionControlRequest(BaseModel):
+    enabled: bool
+    reason: str = Field(default="", max_length=500)
+
+
+class AccountCloseAllRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str | None = Field(default=None, max_length=100)
+    include_manual_positions: bool = False
+
+
 class ZoneOverrideRequest(BaseModel):
     price_low: float
     price_high: float

@@ -5,7 +5,7 @@ import binascii
 import json
 import os
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,8 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .api_models import (
+    AccountCloseAllRequest,
+    AccountExecutionControlRequest,
     ContextOverrideRequest,
     LoginRequest,
     LogoutRequest,
@@ -367,10 +369,21 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         with connect(config.database) as conn:
             rows = conn.execute(
                 """
-                SELECT account_label, broker, login, server,
-                       balance, equity, margin, free_margin, profit, currency, snapshot_at
-                FROM account_snapshots
-                ORDER BY account_label
+                SELECT a.account_label, a.broker, a.login, a.server,
+                       a.balance, a.equity, a.margin, a.free_margin, a.profit, a.currency, a.snapshot_at,
+                       d.trading_day, d.timezone AS daily_timezone, d.balance_at_midnight,
+                       d.daily_profit, d.daily_profit_pct, d.initial_balance, d.baseline_source,
+                       c.requested_enabled, c.effective_enabled, c.hard_enabled, c.worker_status,
+                       c.open_bot_positions, c.pending_bot_orders, c.heartbeat_at
+                FROM account_snapshots a
+                LEFT JOIN account_daily_metrics d
+                  ON d.account_label = a.account_label
+                 AND d.trading_day = (
+                    SELECT MAX(d2.trading_day) FROM account_daily_metrics d2
+                    WHERE d2.account_label = a.account_label
+                 )
+                LEFT JOIN account_execution_controls c ON c.account_label = a.account_label
+                ORDER BY a.account_label
                 """
             ).fetchall()
         return {
@@ -387,9 +400,118 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     "profit":      row["profit"],
                     "currency":    row["currency"],
                     "snapshot_at": row["snapshot_at"],
+                    "daily": {
+                        "trading_day": row["trading_day"],
+                        "timezone": row["daily_timezone"],
+                        "balance_at_midnight": row["balance_at_midnight"],
+                        "profit": row["daily_profit"],
+                        "profit_pct": row["daily_profit_pct"],
+                        "initial_balance": row["initial_balance"],
+                        "baseline_source": row["baseline_source"],
+                    },
+                    "execution": {
+                        "requested_enabled": bool(row["requested_enabled"]),
+                        "effective_enabled": bool(row["effective_enabled"]),
+                        "hard_enabled": bool(row["hard_enabled"]),
+                        "worker_status": row["worker_status"] or "offline",
+                        "open_bot_positions": row["open_bot_positions"] or 0,
+                        "pending_bot_orders": row["pending_bot_orders"] or 0,
+                        "heartbeat_at": row["heartbeat_at"],
+                    },
                 }
                 for row in rows
             ]
+        }
+
+    @app.patch("/api/accounts/{account_label}/execution")
+    def update_account_execution(
+        account_label: str,
+        request: AccountExecutionControlRequest = Body(...),
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        with connect(config.database) as conn:
+            row = conn.execute(
+                "SELECT * FROM account_execution_controls WHERE account_label = ?",
+                (account_label,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Account worker has not registered yet")
+            if request.enabled:
+                heartbeat = datetime.fromisoformat(row["heartbeat_at"]) if row["heartbeat_at"] else None
+                fresh = heartbeat is not None and now - heartbeat.astimezone(UTC) <= timedelta(seconds=90)
+                if not row["hard_enabled"]:
+                    raise HTTPException(status_code=409, detail="EXECUTION_ENABLED is false in the worker environment")
+                if not fresh:
+                    raise HTTPException(status_code=409, detail="Worker is offline or its heartbeat is stale")
+            conn.execute(
+                """
+                UPDATE account_execution_controls
+                SET requested_enabled = ?, effective_enabled = ?, requested_by = ?, last_error = NULL,
+                    requested_at = ?, updated_at = ?
+                WHERE account_label = ?
+                """,
+                (int(request.enabled), int(request.enabled and bool(row["hard_enabled"])), username, now_iso, now_iso, account_label),
+            )
+            conn.commit()
+        return {"label": account_label, "requested_enabled": request.enabled, "status": "pending_worker_ack"}
+
+    @app.post("/api/accounts/{account_label}/close-all", status_code=202)
+    def close_all_bot_trades(
+        account_label: str,
+        request: AccountCloseAllRequest = Body(default=AccountCloseAllRequest()),
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        command_id = f"account-command-{uuid.uuid4()}"
+        idempotency_key = request.idempotency_key or command_id
+        now = datetime.now(UTC).isoformat()
+        with connect(config.database) as conn:
+            account = conn.execute("SELECT 1 FROM account_snapshots WHERE account_label = ?", (account_label,)).fetchone()
+            if account is None:
+                raise HTTPException(status_code=404, detail="Account not found")
+            existing = conn.execute(
+                "SELECT id, status FROM account_execution_commands WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing:
+                return {"command_id": existing["id"], "status": existing["status"]}
+            conn.execute(
+                "UPDATE account_execution_controls SET requested_enabled = 0, effective_enabled = 0, requested_by = ?, requested_at = ?, updated_at = ? WHERE account_label = ?",
+                (username, now, now, account_label),
+            )
+            conn.execute(
+                """
+                INSERT INTO account_execution_commands
+                    (id, account_label, command_type, status, requested_by, requested_at, payload_json, idempotency_key)
+                VALUES (?, ?, 'close_all_positions', 'pending', ?, ?, ?, ?)
+                """,
+                (
+                    command_id,
+                    account_label,
+                    username,
+                    now,
+                    json.dumps({"include_manual_positions": request.include_manual_positions}),
+                    idempotency_key,
+                ),
+            )
+            conn.commit()
+        return {
+            "command_id": command_id,
+            "status": "pending",
+            "bot_paused": True,
+            "include_manual_positions": request.include_manual_positions,
+        }
+
+    @app.get("/api/account-commands/{command_id}")
+    def get_account_command(command_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            row = conn.execute("SELECT * FROM account_execution_commands WHERE id = ?", (command_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Command not found")
+        return {
+            "command_id": row["id"], "account_label": row["account_label"], "status": row["status"],
+            "result": json.loads(row["result_json"] or "{}"), "error": row["error"],
         }
 
     @app.get("/api/news")

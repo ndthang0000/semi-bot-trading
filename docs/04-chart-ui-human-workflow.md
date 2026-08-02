@@ -30,6 +30,12 @@ Thành phần:
 - Right inspector cho entity đang chọn.
 - Status bar: data connection, analyzer state, last candle close, alert state.
 
+Trên mobile, mini sidebar hoạt động như một overlay drawer để không chiếm chiều
+ngang của chart/dashboard. User có thể mở lại bằng floating button và đóng bằng
+button ở cuối sidebar; chọn một trang cũng tự đóng sidebar. Account Dashboard
+dùng spacing mobile, chart có chiều cao ổn định và calendar 7 cột chuyển sang
+cell compact để không bóp méo text/card trên màn hình hẹp.
+
 ## Overlay style gợi ý
 
 - Support: xanh lá nhẹ.

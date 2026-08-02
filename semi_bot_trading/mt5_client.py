@@ -273,14 +273,38 @@ class MT5BrokerClient:
             return 0
         return len(positions)
 
-    def cancel_pending_orders(self, broker_symbol: str, *, comment: str = "weekend flatten") -> list[dict[str, Any]]:
-        """Cancel all pending orders for a symbol and return MT5 responses."""
+    def bot_order_counts(self, broker_symbol: str, *, magic: int) -> tuple[int, int]:
+        """Return (open positions, pending orders) owned by this bot."""
+        positions = self.mt5.positions_get(symbol=broker_symbol) or []
+        orders = self.mt5.orders_get(symbol=broker_symbol) or []
+        return (
+            sum(1 for position in positions if int(getattr(position, "magic", 0) or 0) == magic),
+            sum(1 for order in orders if int(getattr(order, "magic", 0) or 0) == magic),
+        )
+
+    def balance_change_since(self, start_utc: datetime) -> float:
+        """Return all balance-changing deal components since an aware UTC time."""
+        deals = self.mt5.history_deals_get(start_utc, datetime.now(UTC))
+        if deals is None:
+            raise RuntimeError(f"MT5 history_deals_get failed: {self.mt5.last_error()}")
+        return sum(
+            float(getattr(deal, "profit", 0.0) or 0.0)
+            + float(getattr(deal, "commission", 0.0) or 0.0)
+            + float(getattr(deal, "swap", 0.0) or 0.0)
+            + float(getattr(deal, "fee", 0.0) or 0.0)
+            for deal in deals
+        )
+
+    def cancel_pending_orders(self, broker_symbol: str, *, magic: int, comment: str = "weekend flatten") -> list[dict[str, Any]]:
+        """Cancel pending bot orders only; manual orders are never touched."""
         self.ensure_symbol(broker_symbol)
         orders = self.mt5.orders_get(symbol=broker_symbol)
         if not orders:
             return []
         results: list[dict[str, Any]] = []
         for order in orders:
+            if int(getattr(order, "magic", 0) or 0) != magic:
+                continue
             payload = {
                 "action": self.mt5.TRADE_ACTION_REMOVE,
                 "order": int(order.ticket),
@@ -297,8 +321,8 @@ class MT5BrokerClient:
             results.append(data)
         return results
 
-    def close_open_positions(self, broker_symbol: str, *, magic: int, comment: str = "weekend flatten") -> list[dict[str, Any]]:
-        """Close all open positions for a symbol at market and return MT5 responses."""
+    def close_open_positions(self, broker_symbol: str, *, magic: int | None, comment: str = "weekend flatten") -> list[dict[str, Any]]:
+        """Close positions at market; magic=None explicitly includes manual positions."""
         self.ensure_symbol(broker_symbol)
         positions = self.mt5.positions_get(symbol=broker_symbol)
         if not positions:
@@ -306,6 +330,8 @@ class MT5BrokerClient:
         results: list[dict[str, Any]] = []
         filling_mode = self.order_filling_mode(broker_symbol)
         for position in positions:
+            if magic is not None and int(getattr(position, "magic", 0) or 0) != magic:
+                continue
             side = "sell" if int(position.type) == self.mt5.POSITION_TYPE_BUY else "buy"
             order_type = self.mt5.ORDER_TYPE_SELL if side == "sell" else self.mt5.ORDER_TYPE_BUY
             price = self.current_price_for_side(broker_symbol, side)
@@ -317,7 +343,7 @@ class MT5BrokerClient:
                 "position": int(position.ticket),
                 "price": price,
                 "deviation": 30,
-                "magic": magic,
+                "magic": magic or 0,
                 "comment": comment[:31],
                 "type_time": self.mt5.ORDER_TIME_GTC,
                 "type_filling": filling_mode,

@@ -79,7 +79,7 @@ function AppShell() {
     <div className="flex h-dvh flex-col overflow-hidden">
       <CalmResetMonitor />
       {newsData?.active_blackout && <BlackoutBanner event={newsData.active_blackout} />}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="relative flex flex-1 min-h-0 overflow-hidden">
         <Sidebar reviewLocked={weeklyReviewGate.active} />
         <div className="flex-1 min-w-0">
           {renderedPage === "chart" && <ChartPage newsData={newsData} />}

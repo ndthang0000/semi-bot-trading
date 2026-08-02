@@ -30,6 +30,8 @@ from semi_bot_trading.config import load_config
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.live_worker import (
     ExecutionPricingPlan,
+    _ftmo_day_window,
+    _resolved_initial_balance,
     _seconds_until_next_poll,
     build_execution_pricing_plan,
     candidates_after_live_fvg_trade_count,
@@ -1036,7 +1038,7 @@ class TestWeekendFlatten(unittest.TestCase):
         )
 
         self.assertTrue(did_flatten)
-        client.cancel_pending_orders.assert_called_once_with("XAUUSDm", comment="Friday flatten")
+        client.cancel_pending_orders.assert_called_once_with("XAUUSDm", magic=env.mt5_magic, comment="Friday flatten")
         client.close_open_positions.assert_called_once_with("XAUUSDm", magic=env.mt5_magic, comment="Friday flatten")
         row = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'order-pending'").fetchone()
         self.assertEqual("cancelled", row["status"])
@@ -1301,6 +1303,30 @@ class TestSecondsUntilNextPoll(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────────────
 # trading_session
 # ─────────────────────────────────────────────────────────────────────────────
+
+class TestFtmoDailyWindow(unittest.TestCase):
+    def test_summer_midnight_uses_cest(self):
+        day, start = _ftmo_day_window(datetime(2026, 7, 20, 12, tzinfo=UTC), "Europe/Prague")
+        self.assertEqual("2026-07-20", day)
+        self.assertEqual(datetime(2026, 7, 19, 22, tzinfo=UTC), start)
+
+    def test_winter_midnight_uses_cet(self):
+        day, start = _ftmo_day_window(datetime(2026, 1, 20, 12, tzinfo=UTC), "Europe/Prague")
+        self.assertEqual("2026-01-20", day)
+        self.assertEqual(datetime(2026, 1, 19, 23, tzinfo=UTC), start)
+
+    def test_infers_ftmo_initial_balance_from_account_label(self):
+        env = _make_env(account_profile="ftmo_challenge", account_label="FTMO 100K 2-Step")
+        self.assertEqual(100_000.0, _resolved_initial_balance(env))
+
+    def test_explicit_initial_balance_has_priority(self):
+        env = _make_env(
+            account_profile="ftmo_challenge",
+            account_label="FTMO 100K 2-Step",
+            account_initial_balance=200_000.0,
+        )
+        self.assertEqual(200_000.0, _resolved_initial_balance(env))
+
 
 class TestTradingSession(unittest.TestCase):
 

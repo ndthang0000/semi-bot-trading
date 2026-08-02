@@ -37,6 +37,70 @@ def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
 
 
 class ApiTest(unittest.TestCase):
+    def test_account_daily_profit_controls_and_close_all_command(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            now = datetime.now(UTC).isoformat()
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.execute(
+                    "INSERT INTO account_snapshots (account_label, balance, equity, currency, snapshot_at) VALUES ('FTMO 100K', 99000, 99500, 'USD', ?)",
+                    (now,),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO account_execution_controls
+                        (account_label, requested_enabled, effective_enabled, hard_enabled, worker_status, heartbeat_at, updated_at)
+                    VALUES ('FTMO 100K', 1, 1, 1, 'online', ?, ?)
+                    """,
+                    (now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO account_daily_metrics VALUES
+                        ('FTMO 100K', '2026-08-02', 'Europe/Prague', '2026-08-01T22:00:00+00:00',
+                         99000, 99000, 99500, 500, 0.5, 100000, 'mt5_deal_history', ?)
+                    """,
+                    (now,),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+            try:
+                listing = client.get("/api/accounts")
+                disabled = client.patch("/api/accounts/FTMO%20100K/execution", json={"enabled": False})
+                enabled = client.patch("/api/accounts/FTMO%20100K/execution", json={"enabled": True})
+                close_all = client.post(
+                    "/api/accounts/FTMO%20100K/close-all",
+                    json={"idempotency_key": "close-ftmo-once", "include_manual_positions": True},
+                )
+                duplicate = client.post(
+                    "/api/accounts/FTMO%20100K/close-all",
+                    json={"idempotency_key": "close-ftmo-once"},
+                )
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+            with connect(db_path) as conn:
+                command = conn.execute(
+                    "SELECT command_type, payload_json FROM account_execution_commands WHERE id = ?",
+                    (close_all.json()["command_id"],),
+                ).fetchone()
+
+        account = listing.json()["accounts"][0]
+        self.assertEqual(200, listing.status_code)
+        self.assertEqual(500, account["daily"]["profit"])
+        self.assertEqual(0.5, account["daily"]["profit_pct"])
+        self.assertTrue(account["execution"]["effective_enabled"])
+        self.assertEqual(200, disabled.status_code)
+        self.assertEqual(200, enabled.status_code)
+        self.assertEqual(202, close_all.status_code)
+        self.assertTrue(close_all.json()["include_manual_positions"])
+        self.assertEqual(close_all.json()["command_id"], duplicate.json()["command_id"])
+        self.assertEqual("close_all_positions", command["command_type"])
+        self.assertTrue(json.loads(command["payload_json"])["include_manual_positions"])
+
     def test_init_db_preserves_legacy_weekly_journal_content(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

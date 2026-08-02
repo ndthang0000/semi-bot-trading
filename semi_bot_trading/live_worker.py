@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from contextlib import closing
@@ -174,6 +175,75 @@ def validate_live_account_startup(env: RuntimeEnv, client: MT5BrokerClient, brok
     )
 
 
+def _ftmo_day_window(now: datetime, timezone_name: str) -> tuple[str, datetime]:
+    zone = ZoneInfo(timezone_name)
+    local_now = now.astimezone(zone)
+    local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_now.date().isoformat(), local_midnight.astimezone(UTC)
+
+
+def _resolved_initial_balance(env: RuntimeEnv) -> float | None:
+    if env.account_initial_balance and env.account_initial_balance > 0:
+        return env.account_initial_balance
+    if env.account_profile.lower().startswith("ftmo"):
+        match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)\s*[kK](?!\w)", env.account_label)
+        if match:
+            return float(match.group(1)) * 1_000.0
+    return None
+
+
+def update_account_daily_metric(
+    conn: Connection,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    info: dict[str, Any],
+    now: datetime,
+) -> None:
+    """Persist FTMO-style daily P/L: current equity minus Prague-midnight balance."""
+    trading_day, day_start_utc = _ftmo_day_window(now, env.daily_reset_timezone)
+    balance = float(info["balance"])
+    equity = float(info["equity"])
+    baseline_source = "mt5_deal_history"
+    try:
+        balance_at_midnight = balance - float(client.balance_change_since(day_start_utc))
+    except (AttributeError, RuntimeError):
+        existing = conn.execute(
+            "SELECT balance_at_midnight FROM account_daily_metrics WHERE account_label = ? AND trading_day = ?",
+            (env.account_label, trading_day),
+        ).fetchone()
+        balance_at_midnight = float(existing["balance_at_midnight"]) if existing else balance
+        baseline_source = "first_snapshot_fallback"
+    daily_profit = equity - balance_at_midnight
+    initial_balance = _resolved_initial_balance(env)
+    pct_denominator = initial_balance if initial_balance and initial_balance > 0 else balance_at_midnight
+    daily_profit_pct = (daily_profit / pct_denominator * 100.0) if pct_denominator > 0 else None
+    conn.execute(
+        """
+        INSERT INTO account_daily_metrics (
+            account_label, trading_day, timezone, day_start_utc, balance_at_midnight,
+            current_balance, current_equity, daily_profit, daily_profit_pct,
+            initial_balance, baseline_source, snapshot_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account_label, trading_day) DO UPDATE SET
+            timezone = excluded.timezone,
+            day_start_utc = excluded.day_start_utc,
+            balance_at_midnight = excluded.balance_at_midnight,
+            current_balance = excluded.current_balance,
+            current_equity = excluded.current_equity,
+            daily_profit = excluded.daily_profit,
+            daily_profit_pct = excluded.daily_profit_pct,
+            initial_balance = excluded.initial_balance,
+            baseline_source = excluded.baseline_source,
+            snapshot_at = excluded.snapshot_at
+        """,
+        (
+            env.account_label, trading_day, env.daily_reset_timezone, day_start_utc.isoformat(),
+            balance_at_midnight, balance, equity, daily_profit, daily_profit_pct,
+            initial_balance, baseline_source, now.isoformat(),
+        ),
+    )
+
+
 def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient) -> None:
     """Upsert the latest MT5 account metrics into account_snapshots (one row per label)."""
     try:
@@ -181,7 +251,8 @@ def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient)
     except Exception:
         logger.warning("Could not fetch MT5 account info for snapshot", exc_info=True)
         return
-    now = utc_now_iso()
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
     conn.execute(
         """
         INSERT INTO account_snapshots
@@ -213,7 +284,122 @@ def snapshot_account(conn: Connection, env: RuntimeEnv, client: MT5BrokerClient)
             now,
         ),
     )
+    update_account_daily_metric(conn, env, client, info, now_dt)
     conn.commit()
+
+
+def refresh_account_execution_control(
+    conn: Connection,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> None:
+    now = utc_now_iso()
+    open_positions = 0
+    pending_orders = 0
+    if broker_symbol:
+        try:
+            open_positions, pending_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
+        except AttributeError:
+            pass
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO account_execution_controls (
+            account_label, requested_enabled, effective_enabled, hard_enabled,
+            worker_status, broker_symbol, heartbeat_at, acknowledged_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?)
+        """,
+        (env.account_label, int(env.execution_enabled), int(env.execution_enabled), int(env.execution_enabled), broker_symbol, now, now, now),
+    )
+    row = conn.execute(
+        "SELECT requested_enabled FROM account_execution_controls WHERE account_label = ?",
+        (env.account_label,),
+    ).fetchone()
+    requested = bool(row and row["requested_enabled"])
+    conn.execute(
+        """
+        UPDATE account_execution_controls
+        SET effective_enabled = ?, hard_enabled = ?, worker_status = 'online', broker_symbol = ?,
+            open_bot_positions = ?, pending_bot_orders = ?, heartbeat_at = ?,
+            acknowledged_at = ?, last_error = NULL, updated_at = ?
+        WHERE account_label = ?
+        """,
+        (
+            int(env.execution_enabled and requested), int(env.execution_enabled), broker_symbol,
+            open_positions, pending_orders, now, now, now, env.account_label,
+        ),
+    )
+    conn.commit()
+
+
+def account_execution_is_enabled(conn: Connection, env: RuntimeEnv) -> bool:
+    if not env.execution_enabled:
+        return False
+    row = conn.execute(
+        "SELECT requested_enabled, effective_enabled FROM account_execution_controls WHERE account_label = ?",
+        (env.account_label,),
+    ).fetchone()
+    # Backward compatible for direct unit calls before the worker heartbeat.
+    return True if row is None else bool(row["requested_enabled"] and row["effective_enabled"])
+
+
+def process_account_execution_commands(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> None:
+    row = conn.execute(
+        """
+        SELECT id, payload_json FROM account_execution_commands
+        WHERE account_label = ? AND command_type IN ('close_all_positions', 'close_all_bot_orders') AND status = 'pending'
+        ORDER BY requested_at LIMIT 1
+        """,
+        (env.account_label,),
+    ).fetchone()
+    if row is None:
+        return
+    command_id = str(row["id"])
+    payload = json.loads(row["payload_json"] or "{}")
+    include_manual_positions = bool(payload.get("include_manual_positions", False))
+    now = utc_now_iso()
+    conn.execute(
+        "UPDATE account_execution_commands SET status = 'processing', claimed_at = ? WHERE id = ? AND status = 'pending'",
+        (now, command_id),
+    )
+    conn.execute(
+        "UPDATE account_execution_controls SET requested_enabled = 0, effective_enabled = 0, updated_at = ? WHERE account_label = ?",
+        (now, env.account_label),
+    )
+    conn.commit()
+    try:
+        cancelled = client.cancel_pending_orders(broker_symbol, magic=env.mt5_magic, comment="Dashboard close all")
+        closed = client.close_open_positions(
+            broker_symbol,
+            magic=None if include_manual_positions else env.mt5_magic,
+            comment="Dashboard close all",
+        )
+        if closed:
+            sync_closed_positions(conn, config, env, client, broker_symbol)
+        result = {
+            "cancelled_bot_orders": len(cancelled),
+            "closed_positions": len(closed),
+            "manual_positions_included": include_manual_positions,
+            "manual_pending_orders_untouched": True,
+        }
+        conn.execute(
+            "UPDATE account_execution_commands SET status = 'succeeded', completed_at = ?, result_json = ? WHERE id = ?",
+            (utc_now_iso(), json.dumps(result, sort_keys=True), command_id),
+        )
+    except Exception as exc:
+        logger.exception("Dashboard close-all command failed for %s", env.account_label)
+        conn.execute(
+            "UPDATE account_execution_commands SET status = 'failed', completed_at = ?, error = ? WHERE id = ?",
+            (utc_now_iso(), str(exc), command_id),
+        )
+    conn.commit()
+    refresh_account_execution_control(conn, env, client, broker_symbol)
 
 
 def snapshot_spread(
@@ -255,6 +441,9 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
 
         # init_db is called once at startup in run_live_worker; skip here.
         snapshot_account(conn, env, client)
+        refresh_account_execution_control(conn, env, client, broker_symbol)
+        if broker_symbol:
+            process_account_execution_commands(conn, config, env, client, broker_symbol)
         if broker_symbol:
             snapshot_spread(conn, config, env, client, broker_symbol, now)
         if env.live_sync_candles:
@@ -680,7 +869,7 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
                 "trigger_timeframe": trigger_timeframe,
             },
             "reason": reasons,
-            "action": "Auto execution is enabled." if env.execution_enabled else "Execution is disabled; observe manually.",
+            "action": "Auto execution is enabled." if account_execution_is_enabled(conn, env) else "Execution is disabled; observe manually.",
             "chart_url": env.chart_url_base,
         }
         queue_alert(
@@ -703,7 +892,7 @@ def maybe_execute_candidates(
     candidates: list[dict[str, Any]],
     broker_symbol: str,
 ) -> None:
-    if not env.execution_enabled:
+    if not account_execution_is_enabled(conn, env):
         return
     if is_weekend_no_new_trade_window(env, datetime.now(UTC)):
         logger.warning("maybe_execute_candidates: weekend cutoff active — skipping execution")
@@ -829,7 +1018,7 @@ def maybe_weekend_flatten(
     cancelled: list[dict[str, Any]] = []
     closed: list[dict[str, Any]] = []
     try:
-        cancelled = client.cancel_pending_orders(broker_symbol, comment="Friday flatten")
+        cancelled = client.cancel_pending_orders(broker_symbol, magic=env.mt5_magic, comment="Friday flatten")
         closed = client.close_open_positions(broker_symbol, magic=env.mt5_magic, comment="Friday flatten")
         did_anything = bool(cancelled or closed)
     except Exception as exc:
@@ -1061,6 +1250,8 @@ def execute_candidate(
     lot_size: float | None = None,
     pricing_plan: ExecutionPricingPlan | None = None,
 ) -> None:
+    if not account_execution_is_enabled(conn, env):
+        return
     # lot_size from risk manager takes precedence; fall back to env fixed volume
     volume = lot_size if lot_size is not None else env.live_order_volume
 
@@ -1178,6 +1369,14 @@ def execute_candidate(
     conn.commit()
 
     try:
+        # Recheck immediately before MT5 to close the race with the dashboard switch.
+        if not account_execution_is_enabled(conn, env):
+            conn.execute(
+                "UPDATE execution_requests SET status = 'cancelled', updated_at = ? WHERE id = ?",
+                (utc_now_iso(), request_id),
+            )
+            conn.commit()
+            return
         mt5_request = MT5OrderRequest(
             broker_symbol=broker_symbol,
             side=side,

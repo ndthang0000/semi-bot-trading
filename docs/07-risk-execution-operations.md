@@ -348,6 +348,23 @@ metadata is missing or `trade_contract_size` is suspicious. Do not use cent
 balance scaling for FTMO; leave `ACCOUNT_BALANCE_SCALE` unset or set it to
 `1.0`.
 
+Set `ACCOUNT_INITIAL_BALANCE` to the original FTMO account size (for example,
+`100000`) so the Account Dashboard daily percentage uses the same denominator
+as the FTMO Maximum Daily Loss objective. Daily profit is calculated as current
+equity minus the balance reconstructed at `00:00 Europe/Prague`; this IANA zone
+automatically follows CET/CEST daylight-saving changes. `DAILY_RESET_TIMEZONE`
+defaults to `Europe/Prague`.
+For FTMO labels containing the account size (for example `FTMO 100K 2-Step`),
+the worker can infer `100000`; the explicit env value still takes priority.
+
+The Account Dashboard switch is a second, database-backed execution gate. The
+worker environment `EXECUTION_ENABLED=true` remains the hard ceiling: the UI
+can pause and resume a live-enabled worker but cannot override a disabled env.
+“Close all position” first pauses execution, cancels pending bot orders, and
+closes bot positions whose MT5 magic number matches that worker. Its confirmation
+modal has an opt-in checkbox to include manual/human positions for the symbol;
+that checkbox is off by default. Manual pending orders are always left untouched.
+
 Exness cent accounts should use `ACCOUNT_PROFILE=personal_cent` or explicitly
 set `ACCOUNT_BALANCE_SCALE=0.01` when MT5 reports USD-equivalent balance in USC
 units, for example 1000 USD displayed as 100000 USC.

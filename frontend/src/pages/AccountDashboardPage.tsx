@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { authFetch } from "../api/auth";
 
@@ -267,9 +267,9 @@ function buildDailyPnlStats(trades: TradeOrder[], monthKey: string): Map<string,
 
 function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div className="rounded-lg border border-ink-700 bg-ink-900 p-4">
+    <div className="min-w-0 rounded-lg border border-ink-700 bg-ink-900 p-3 sm:p-4">
       <div className="mb-1 text-xs text-slate-500">{label}</div>
-      <div className={`text-2xl font-bold ${color ?? "text-slate-100"}`}>{value}</div>
+      <div className={`break-words text-xl font-bold tabular-nums sm:text-2xl ${color ?? "text-slate-100"}`}>{value}</div>
       {sub && <div className="mt-0.5 text-xs text-slate-600">{sub}</div>}
     </div>
   );
@@ -304,7 +304,7 @@ function EquityCurve({ trades }: { trades: TradeOrder[] }) {
   const lineColor = lastVal >= 0 ? "#4ade80" : "#f87171";
 
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-32 w-full" preserveAspectRatio="none">
       {/* Zero line */}
       {min < 0 && max > 0 && (
         <line
@@ -444,14 +444,14 @@ function PnlBarChart({ trades }: { trades: TradeOrder[] }) {
   return (
     <div>
       {/* Header row */}
-      <div className="mb-3 flex items-start justify-between gap-2">
+      <div className="mb-3 flex flex-col items-start justify-between gap-3 sm:flex-row sm:gap-2">
         <div>
           <div className="text-xs text-slate-500">Profit / Loss (R)</div>
           <div className={`text-xl font-bold ${net >= 0 ? "text-green-400" : "text-red-400"}`}>
             {net >= 0 ? "+" : ""}{net.toFixed(2)}R
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="flex w-full flex-col items-start gap-1.5 sm:w-auto sm:items-end">
           {/* Mode toggle */}
           <div className="flex rounded-lg border border-ink-700 p-0.5">
             {(["week", "month", "year"] as PeriodMode[]).map((p) => (
@@ -479,7 +479,7 @@ function PnlBarChart({ trades }: { trades: TradeOrder[] }) {
       </div>
 
       {/* SVG bars */}
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-44 w-full" preserveAspectRatio="none">
         {/* Zero line */}
         <line x1={padX} x2={W - padX} y1={zeroY} y2={zeroY} stroke="#334155" strokeWidth="1" />
 
@@ -508,7 +508,7 @@ function PnlBarChart({ trades }: { trades: TradeOrder[] }) {
       </svg>
 
       {/* Legend */}
-      <div className="mt-1 flex gap-4 text-xs text-slate-500">
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
         <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-green-400" />Profit +{totalProfit.toFixed(2)}R</span>
         <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-red-400" />Loss {totalLoss.toFixed(2)}R</span>
       </div>
@@ -574,15 +574,15 @@ function DailyPnlCalendar({ trades }: { trades: TradeOrder[] }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+      <div className="grid grid-cols-7 gap-1 text-center text-[9px] font-semibold uppercase tracking-normal text-slate-600 sm:gap-2 sm:text-[11px] sm:tracking-wider">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
-          <div key={day} className="rounded-md bg-ink-950 py-2">{day}</div>
+          <div key={day} className="rounded-md bg-ink-950 py-1.5 sm:py-2">{day}</div>
         ))}
       </div>
 
-      <div className="mt-2 grid grid-cols-7 gap-2">
+      <div className="mt-1 grid grid-cols-7 gap-1 sm:mt-2 sm:gap-2">
         {cells.map((cell) => {
-          if (cell.type === "blank") return <div key={cell.key} className="min-h-[104px]" />;
+          if (cell.type === "blank") return <div key={cell.key} className="min-h-[68px] sm:min-h-[104px]" />;
 
           const stats = dailyStats.get(cell.key);
           const isSelected = effectiveSelectedDay === cell.key;
@@ -599,20 +599,20 @@ function DailyPnlCalendar({ trades }: { trades: TradeOrder[] }) {
               key={cell.key}
               onClick={() => setSelectedDay(cell.key)}
               className={[
-                "min-h-[104px] rounded-lg border p-3 text-left transition-colors hover:border-cyan-400/60",
+                "min-h-[68px] min-w-0 rounded-md border p-1.5 text-left transition-colors hover:border-cyan-400/60 sm:min-h-[104px] sm:rounded-lg sm:p-3",
                 "focus:outline-none focus:ring-1 focus:ring-cyan-300",
                 tone,
                 isSelected ? "border-cyan-300/80 ring-1 ring-cyan-300" : "",
               ].join(" ")}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="text-lg font-bold text-slate-100">{cell.day}</div>
-                {stats && <div className="text-[11px] text-slate-500">{stats.trades.length}T</div>}
+              <div className="flex items-start justify-between gap-1 sm:gap-2">
+                <div className="text-sm font-bold text-slate-100 sm:text-lg">{cell.day}</div>
+                {stats && <div className="hidden text-[11px] text-slate-500 sm:block">{stats.trades.length}T</div>}
               </div>
-              <div className={`mt-3 text-xl font-bold ${stats ? "" : "text-slate-700"}`}>
+              <div className={`mt-2 whitespace-nowrap text-[9px] font-bold leading-none tracking-[-0.02em] tabular-nums sm:mt-3 sm:text-[11px] lg:text-base ${stats ? "" : "text-slate-700"}`}>
                 {stats ? formatR(stats.totalR) : "--"}
               </div>
-              <div className="mt-1 text-xs text-slate-500">
+              <div className="mt-1 hidden text-xs text-slate-500 sm:block">
                 {stats ? `${stats.winRate}% win · ${stats.wins}W/${stats.losses}L` : "No trades"}
               </div>
             </button>
@@ -638,7 +638,7 @@ function DailyPnlCalendar({ trades }: { trades: TradeOrder[] }) {
           <div className="px-4 py-5 text-sm text-slate-600">No closed trades for this day.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="min-w-[560px] w-full text-xs">
               <thead>
                 <tr className="border-b border-ink-700">
                   <th className="px-4 py-2 text-left font-normal text-slate-500">Time</th>
@@ -687,8 +687,8 @@ function BreakdownTable({ title, groups }: { title: string; groups: Record<strin
   return (
     <div>
       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</div>
-      <div className="overflow-hidden rounded-lg border border-ink-700">
-        <table className="w-full text-xs">
+      <div className="overflow-x-auto rounded-lg border border-ink-700">
+        <table className="min-w-[340px] w-full text-xs">
           <thead>
             <tr className="border-b border-ink-700 bg-ink-900">
               <th className="px-3 py-2 text-left text-slate-500 font-normal">{title}</th>
@@ -731,6 +731,24 @@ interface AccountSnapshot {
   profit: number;
   currency: string;
   snapshot_at: string;
+  daily: {
+    trading_day: string | null;
+    timezone: string | null;
+    balance_at_midnight: number | null;
+    profit: number | null;
+    profit_pct: number | null;
+    initial_balance: number | null;
+    baseline_source: string | null;
+  };
+  execution: {
+    requested_enabled: boolean;
+    effective_enabled: boolean;
+    hard_enabled: boolean;
+    worker_status: string;
+    open_bot_positions: number;
+    pending_bot_orders: number;
+    heartbeat_at: string | null;
+  };
 }
 
 async function fetchAccounts(): Promise<AccountSnapshot[]> {
@@ -748,48 +766,112 @@ function staleness(snapshotAt: string): { stale: boolean; label: string } {
   return { stale: true, label: `${Math.floor(ageSec / 3600)}h ago` };
 }
 
+async function updateExecution(label: string, enabled: boolean): Promise<void> {
+  const res = await authFetch(`/api/accounts/${encodeURIComponent(label)}/execution`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? "Could not update bot execution");
+  }
+}
+
+async function closeAllPositions(label: string, includeManualPositions: boolean): Promise<void> {
+  const res = await authFetch(`/api/accounts/${encodeURIComponent(label)}/close-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reason: "Account Dashboard emergency close",
+      include_manual_positions: includeManualPositions,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? "Could not queue close-all command");
+  }
+}
+
 function AccountCard({ acc }: { acc: AccountSnapshot }) {
   const drawdownPct = acc.balance > 0 ? ((acc.balance - acc.equity) / acc.balance) * 100 : 0;
-  const marginPct = acc.equity > 0 ? (acc.margin / acc.equity) * 100 : 0;
   const { stale, label: staleLabel } = staleness(acc.snapshot_at);
   const cur = acc.currency;
+  const queryClient = useQueryClient();
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [includeManualPositions, setIncludeManualPositions] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const dailyProfit = acc.daily?.profit ?? 0;
+  const dailyProfitPct = acc.daily?.profit_pct ?? 0;
+  const dailyLossUsedPct = Math.max(0, -dailyProfitPct);
+  const toggleMutation = useMutation({
+    mutationFn: (enabled: boolean) => updateExecution(acc.label, enabled),
+    onSuccess: () => {
+      setActionError(null);
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
+  const closeMutation = useMutation({
+    mutationFn: () => closeAllPositions(acc.label, includeManualPositions),
+    onSuccess: () => {
+      setConfirmClose(false);
+      setIncludeManualPositions(false);
+      setActionError(null);
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
 
   return (
-    <div className={`rounded-lg border bg-ink-900 p-4 ${stale ? "border-yellow-600/40" : "border-ink-700"}`}>
+    <div className={`min-w-0 rounded-lg border bg-ink-900 p-3 sm:p-4 ${stale ? "border-yellow-600/40" : "border-ink-700"}`}>
       {/* Header */}
       <div className="mb-3 flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold text-slate-100">{acc.label}</div>
-          <div className="text-xs text-slate-500">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-slate-100">{acc.label}</div>
+          <div className="truncate text-xs text-slate-500">
             {acc.login} · {acc.server ?? acc.broker ?? "MT5"}
           </div>
         </div>
-        <div className={`flex items-center gap-1 text-xs ${stale ? "text-yellow-500" : "text-green-500"}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${stale ? "bg-yellow-500" : "bg-green-500"}`} />
-          {staleLabel}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className={`flex items-center gap-1 text-xs ${stale ? "text-yellow-500" : "text-green-500"}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${stale ? "bg-yellow-500" : "bg-green-500"}`} />
+            {staleLabel}
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={acc.execution.effective_enabled}
+            aria-label={`Bot execution for ${acc.label}`}
+            disabled={toggleMutation.isPending || (!acc.execution.hard_enabled && !acc.execution.requested_enabled)}
+            onClick={() => toggleMutation.mutate(!acc.execution.requested_enabled)}
+            className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${acc.execution.effective_enabled ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-300" : "border-ink-600 bg-ink-950 text-slate-500"} disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <span className={`relative h-4 w-7 rounded-full ${acc.execution.effective_enabled ? "bg-cyan-500" : "bg-ink-600"}`}>
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${acc.execution.effective_enabled ? "left-3.5" : "left-0.5"}`} />
+            </span>
+            Bot {acc.execution.effective_enabled ? "ON" : "OFF"}
+          </button>
         </div>
       </div>
 
       {/* Metrics grid */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
-        <div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs sm:grid-cols-3 sm:gap-x-4 sm:gap-y-2">
+        <div className="min-w-0">
           <div className="text-slate-500">Balance</div>
-          <div className="font-semibold text-slate-100">{acc.balance.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}</div>
+          <div className="break-words font-semibold tabular-nums text-slate-100">{acc.balance.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}</div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-slate-500">Equity</div>
-          <div className={`font-semibold ${acc.equity >= acc.balance ? "text-green-400" : "text-red-400"}`}>
+          <div className={`break-words font-semibold tabular-nums ${acc.equity >= acc.balance ? "text-green-400" : "text-red-400"}`}>
             {acc.equity.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}
           </div>
         </div>
-        <div>
-          <div className="text-slate-500">Free Margin</div>
-          <div className="font-semibold text-slate-100">{acc.free_margin.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}</div>
-        </div>
-        <div>
-          <div className="text-slate-500">Open P&L</div>
-          <div className={`font-semibold ${acc.profit >= 0 ? "text-green-400" : "text-red-400"}`}>
-            {acc.profit >= 0 ? "+" : ""}{acc.profit.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}
+        <div className="col-span-2 min-w-0 sm:col-span-1">
+          <div className="text-slate-500">Today Profit · CE(S)T</div>
+          <div className={`break-words font-semibold tabular-nums ${dailyProfit >= 0 ? "text-green-400" : "text-red-400"}`}>
+            {dailyProfit >= 0 ? "+" : ""}{dailyProfit.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}
+            <span className="ml-1.5 text-[11px] opacity-80">({dailyProfitPct >= 0 ? "+" : ""}{dailyProfitPct.toFixed(2)}%)</span>
           </div>
         </div>
       </div>
@@ -809,20 +891,68 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
             />
           </div>
         </div>
-        {/* Margin used */}
         <div>
           <div className="mb-0.5 flex justify-between text-xs">
-            <span className="text-slate-500">Margin used</span>
-            <span className="text-slate-400">{marginPct.toFixed(1)}%</span>
+            <span className="text-slate-500">FTMO daily loss used</span>
+            <span className={dailyLossUsedPct >= 4 ? "text-red-400" : "text-slate-400"}>{dailyLossUsedPct.toFixed(2)}% / 5.00%</span>
           </div>
           <div className="h-1 w-full rounded-full bg-ink-700">
             <div
-              className="h-1 rounded-full bg-blue-500 transition-all"
-              style={{ width: `${Math.min(marginPct, 100)}%` }}
+              className={`h-1 rounded-full transition-all ${dailyLossUsedPct >= 4 ? "bg-red-500" : dailyLossUsedPct >= 3 ? "bg-yellow-500" : "bg-cyan-500"}`}
+              style={{ width: `${Math.min((dailyLossUsedPct / 5) * 100, 100)}%` }}
             />
           </div>
         </div>
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-ink-700/70 pt-3">
+        <div className="text-[11px] text-slate-500">
+          Bot: {acc.execution.open_bot_positions} position · {acc.execution.pending_bot_orders} pending
+          {acc.daily?.initial_balance == null ? " · % uses midnight balance until ACCOUNT_INITIAL_BALANCE is set" : ""}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setIncludeManualPositions(false);
+            setConfirmClose(true);
+          }}
+          className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/20"
+        >
+          Close all position
+        </button>
+      </div>
+      {actionError ? <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">{actionError}</div> : null}
+
+      {confirmClose ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-xl border border-red-500/30 bg-ink-900 p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-slate-100">Close all position?</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+              Bot execution will be switched OFF first. {acc.execution.open_bot_positions} bot position(s) will be closed and {acc.execution.pending_bot_orders} pending bot order(s) will be cancelled.
+            </p>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-red-500/25 bg-red-500/5 p-3">
+              <input
+                type="checkbox"
+                checked={includeManualPositions}
+                onChange={(event) => setIncludeManualPositions(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-ink-600 accent-red-500"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-red-200">Close human positions too</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-slate-500">
+                  Include every manual/human position for this symbol. Manual pending orders remain untouched.
+                </span>
+              </span>
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => { setConfirmClose(false); setIncludeManualPositions(false); }} className="rounded-md border border-ink-600 px-3 py-2 text-sm text-slate-300">Cancel</button>
+              <button type="button" disabled={closeMutation.isPending} onClick={() => closeMutation.mutate()} className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                {closeMutation.isPending ? "Queuing..." : includeManualPositions ? "Close all positions" : "Close bot positions"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -863,7 +993,7 @@ function AccountPerformanceFilter({
           {selected === ALL_ACCOUNTS ? "All accounts" : selected}
         </div>
       </div>
-      <div className="flex max-w-full flex-wrap gap-1 rounded-lg border border-ink-700 bg-ink-900 p-1">
+      <div className="flex max-w-full flex-wrap gap-1 rounded-lg border border-ink-700 bg-ink-900 p-1 sm:justify-end">
         {options.map((value) => {
           const label = value === ALL_ACCOUNTS ? "All accounts" : value;
           const active = selected === value;
@@ -934,15 +1064,15 @@ export function AccountDashboardPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-ink-950 p-6 text-slate-100">
-      <h1 className="mb-6 text-lg font-semibold text-slate-100">Account Dashboard</h1>
+    <div className="h-full min-w-0 overflow-y-auto bg-ink-950 p-3 pb-20 text-slate-100 sm:p-6 sm:pb-6">
+      <h1 className="mb-4 text-lg font-semibold text-slate-100 sm:mb-6">Account Dashboard</h1>
 
       {/* MT5 live account balance */}
       <AccountBalanceBar accounts={accounts} isLoading={accountsLoading} />
       <AccountPerformanceFilter accounts={accounts} selected={selectedAccount} onSelect={setSelectedAccount} />
 
       {/* Stats row */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+      <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-6">
         <StatCard
           label="Total R"
           value={`${total >= 0 ? "+" : ""}${total.toFixed(2)}R`}

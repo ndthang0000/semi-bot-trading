@@ -80,5 +80,62 @@ class MT5TimestampNormalizationTest(unittest.TestCase):
         self.assertAlmostEqual(-0.25, deal["fee"])
 
 
+class MT5BotOwnershipTest(unittest.TestCase):
+    def test_counts_only_matching_magic(self) -> None:
+        mt5 = MagicMock()
+        mt5.positions_get.return_value = [SimpleNamespace(magic=7), SimpleNamespace(magic=0), SimpleNamespace(magic=7)]
+        mt5.orders_get.return_value = [SimpleNamespace(magic=0), SimpleNamespace(magic=7)]
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+
+        self.assertEqual((2, 1), client.bot_order_counts("XAUUSD", magic=7))
+
+    def test_cancel_pending_orders_leaves_manual_orders_untouched(self) -> None:
+        mt5 = MagicMock()
+        mt5.TRADE_ACTION_REMOVE = 8
+        mt5.TRADE_RETCODE_DONE = 10009
+        mt5.orders_get.return_value = [
+            SimpleNamespace(ticket=11, magic=0),
+            SimpleNamespace(ticket=22, magic=7),
+        ]
+        send_result = MagicMock()
+        send_result._asdict.return_value = {"retcode": 10009, "order": 22}
+        mt5.order_send.return_value = send_result
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.ensure_symbol = MagicMock()
+
+        results = client.cancel_pending_orders("XAUUSD", magic=7)
+
+        self.assertEqual(1, len(results))
+        self.assertEqual(22, mt5.order_send.call_args.args[0]["order"])
+
+    def test_close_positions_with_no_magic_includes_human(self) -> None:
+        mt5 = MagicMock()
+        mt5.POSITION_TYPE_BUY = 0
+        mt5.ORDER_TYPE_SELL = 1
+        mt5.ORDER_TYPE_BUY = 0
+        mt5.TRADE_ACTION_DEAL = 1
+        mt5.ORDER_TIME_GTC = 0
+        mt5.TRADE_RETCODE_DONE = 10009
+        mt5.positions_get.return_value = [
+            SimpleNamespace(ticket=11, magic=0, type=0, volume=0.1),
+            SimpleNamespace(ticket=22, magic=7, type=0, volume=0.2),
+        ]
+        send_result = MagicMock()
+        send_result._asdict.return_value = {"retcode": 10009}
+        mt5.order_send.return_value = send_result
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.ensure_symbol = MagicMock()
+        client.order_filling_mode = MagicMock(return_value=0)
+        client.current_price_for_side = MagicMock(return_value=4000.0)
+
+        results = client.close_open_positions("XAUUSD", magic=None)
+
+        self.assertEqual(2, len(results))
+        self.assertEqual([11, 22], [call.args[0]["position"] for call in mt5.order_send.call_args_list])
+
+
 if __name__ == "__main__":
     unittest.main()

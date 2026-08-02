@@ -377,6 +377,61 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
     snapshot_at   TEXT NOT NULL
 );
 
+-- Per-account operator switch. hard_enabled mirrors EXECUTION_ENABLED from the
+-- worker; requested_enabled is the reversible UI switch. Both must be true.
+CREATE TABLE IF NOT EXISTS account_execution_controls (
+    account_label       TEXT PRIMARY KEY,
+    requested_enabled   INTEGER NOT NULL DEFAULT 0,
+    effective_enabled   INTEGER NOT NULL DEFAULT 0,
+    hard_enabled        INTEGER NOT NULL DEFAULT 0,
+    worker_status       TEXT NOT NULL DEFAULT 'offline',
+    broker_symbol       TEXT,
+    open_bot_positions  INTEGER NOT NULL DEFAULT 0,
+    pending_bot_orders  INTEGER NOT NULL DEFAULT 0,
+    requested_by        TEXT,
+    requested_at        TEXT,
+    acknowledged_at     TEXT,
+    heartbeat_at        TEXT,
+    last_error          TEXT,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_execution_commands (
+    id              TEXT PRIMARY KEY,
+    account_label   TEXT NOT NULL,
+    command_type    TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    requested_by    TEXT,
+    requested_at    TEXT NOT NULL,
+    claimed_at      TEXT,
+    completed_at    TEXT,
+    result_json     TEXT NOT NULL DEFAULT '{}',
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    error           TEXT,
+    idempotency_key TEXT NOT NULL UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_commands_pending
+ON account_execution_commands(account_label, status, requested_at);
+
+-- One up-to-date FTMO-style result per Prague trading day. The baseline is the
+-- balance at CE(S)T midnight; current equity includes open P/L.
+CREATE TABLE IF NOT EXISTS account_daily_metrics (
+    account_label        TEXT NOT NULL,
+    trading_day          TEXT NOT NULL,
+    timezone             TEXT NOT NULL,
+    day_start_utc        TEXT NOT NULL,
+    balance_at_midnight  REAL NOT NULL,
+    current_balance      REAL NOT NULL,
+    current_equity       REAL NOT NULL,
+    daily_profit         REAL NOT NULL,
+    daily_profit_pct     REAL,
+    initial_balance      REAL,
+    baseline_source      TEXT NOT NULL,
+    snapshot_at          TEXT NOT NULL,
+    PRIMARY KEY (account_label, trading_day)
+);
+
 -- Bid/ask spread observations captured by the live worker.
 -- Spread is stored in price units (e.g. XAUUSD dollars), matching MAX_SPREAD_PRICE.
 CREATE TABLE IF NOT EXISTS spread_snapshots (
@@ -424,6 +479,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "weekly_journals", "content_format", "TEXT NOT NULL DEFAULT 'plain_text'")
     ensure_column(conn, "weekly_journals", "icon", "TEXT NOT NULL DEFAULT '📝'")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
+    ensure_column(conn, "account_execution_commands", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)

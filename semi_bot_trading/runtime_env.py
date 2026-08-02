@@ -56,6 +56,10 @@ class RuntimeEnv:
     # Offset of broker-server wall-clock timestamps from UTC. Some MT5
     # terminals encode deal/candle epochs using server time rather than UTC.
     mt5_server_utc_offset_hours: float = 0.0
+    # FTMO daily result resets at Prague midnight (CEST/CET). Set the original
+    # account size so daily_profit_pct maps exactly to the FTMO 5% objective.
+    account_initial_balance: float | None = None
+    daily_reset_timezone: str = "Europe/Prague"
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -117,6 +121,8 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         partial_take_profit_r=env_float("PARTIAL_TAKE_PROFIT_R", 1.25) or 1.25,
         partial_take_profit_fraction=env_float("PARTIAL_TAKE_PROFIT_FRACTION", 0.5) or 0.5,
         partial_take_profit_be_buffer=env_float("PARTIAL_TAKE_PROFIT_BE_BUFFER", 0.0) or 0.0,
+        account_initial_balance=env_float("ACCOUNT_INITIAL_BALANCE"),
+        daily_reset_timezone=env_text("DAILY_RESET_TIMEZONE", "Europe/Prague") or "Europe/Prague",
     )
 
 
