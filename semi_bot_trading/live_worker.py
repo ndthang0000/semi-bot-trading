@@ -19,7 +19,7 @@ from .config import AppConfig
 from .context import MarketContext, detect_and_store_bias, detect_and_store_macro_trend, detect_and_store_regime
 from .db import connect, init_db
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
-from .news_calendar import active_news_blackout, should_notify_news
+from .news_calendar import active_ftmo_news_window, active_news_blackout, news_calendar_is_fresh, should_notify_news
 from .price_action import detect_and_store_price_action_patterns
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
@@ -153,11 +153,22 @@ def validate_live_account_startup(env: RuntimeEnv, client: MT5BrokerClient, brok
         raise RuntimeError(f"Refusing FTMO startup with suspicious contract size for {broker_symbol}: {contract_size}")
     if env.account_profile.lower().startswith("ftmo") and env.account_balance_scale not in (None, 1.0):
         raise RuntimeError("FTMO profile must use ACCOUNT_BALANCE_SCALE=1.0 or leave it unset")
+    if env.account_profile.lower().startswith("ftmo"):
+        ftmo_phase = env.ftmo_phase.strip().lower()
+        ftmo_account_type = env.ftmo_account_type.strip().lower()
+        if ftmo_phase not in {"evaluation", "challenge", "verification", "funded"}:
+            raise RuntimeError(
+                "FTMO_PHASE must be evaluation, challenge, verification, or funded"
+            )
+        if ftmo_account_type not in {"standard", "swing"}:
+            raise RuntimeError("FTMO_ACCOUNT_TYPE must be standard or swing")
+        if ftmo_phase == "funded" and ftmo_account_type == "standard" and env.ftmo_news_buffer_minutes < 4:
+            raise RuntimeError("Funded Standard FTMO requires FTMO_NEWS_BUFFER_MINUTES >= 4")
 
     logger.info(
         "Live account validated label=%s profile=%s login=%s server=%s broker_symbol=%s "
         "balance=%.2f equity=%.2f currency=%s contract_size=%.4f volume_min=%s volume_max=%s volume_step=%s "
-        "execution_enabled=%s server_utc_offset_hours=%s",
+        "execution_enabled=%s server_utc_offset_hours=%s ftmo_phase=%s ftmo_account_type=%s",
         env.account_label,
         env.account_profile,
         env.mt5_login,
@@ -172,6 +183,8 @@ def validate_live_account_startup(env: RuntimeEnv, client: MT5BrokerClient, brok
         trade_info.get("volume_step"),
         env.execution_enabled,
         env.mt5_server_utc_offset_hours,
+        env.ftmo_phase,
+        env.ftmo_account_type,
     )
 
 
@@ -442,7 +455,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         # init_db is called once at startup in run_live_worker; skip here.
         snapshot_account(conn, env, client)
         refresh_account_execution_control(conn, env, client, broker_symbol)
-        if broker_symbol:
+        ftmo_news_guard = ftmo_news_guard_state(conn, env, now)
+        if broker_symbol and ftmo_news_guard is None:
             process_account_execution_commands(conn, config, env, client, broker_symbol)
         if broker_symbol:
             snapshot_spread(conn, config, env, client, broker_symbol, now)
@@ -450,8 +464,14 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
-            manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
-            maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
+            if ftmo_news_guard is None:
+                manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
+            elif ftmo_news_guard["phase"] == "prepare":
+                maybe_ftmo_news_flatten(conn, config, env, client, broker_symbol, ftmo_news_guard)
+            else:
+                queue_ftmo_news_guard_alert(conn, config, env, client, broker_symbol, ftmo_news_guard, now)
+            if ftmo_news_guard is None or ftmo_news_guard["phase"] == "stale":
+                maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
         if env.live_run_detectors and has_new_closed_m15:
@@ -528,6 +548,87 @@ def _maybe_queue_news_alerts(
             payload={"title": "\n".join(lines[:1]), "reason": lines[1:]},
             dedupe_key=f"news-alert:{ev['id']}",
         )
+
+
+def ftmo_news_compliance_enabled(env: RuntimeEnv) -> bool:
+    """Return whether funded-Standard FTMO news restrictions apply."""
+    return (
+        env.account_profile.strip().lower().startswith("ftmo")
+        and env.ftmo_phase.strip().lower() == "funded"
+        and env.ftmo_account_type.strip().lower() == "standard"
+    )
+
+
+def ftmo_news_guard_state(
+    conn: Connection,
+    env: RuntimeEnv,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Return stale-calendar or active restricted-event guard state."""
+    if not ftmo_news_compliance_enabled(env):
+        return None
+    now = now or datetime.now(UTC)
+    if not news_calendar_is_fresh(
+        conn,
+        now,
+        max_age_hours=env.ftmo_news_calendar_max_age_hours,
+    ):
+        return {
+            "id": "calendar-stale",
+            "title": "FTMO economic calendar stale",
+            "phase": "stale",
+        }
+    return active_ftmo_news_window(
+        conn,
+        now,
+        buffer_minutes=env.ftmo_news_buffer_minutes,
+    )
+
+
+def queue_ftmo_news_guard_alert(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    guard: dict[str, Any],
+    now: datetime,
+) -> None:
+    """Alert without sending MT5 actions during hard restriction/stale data."""
+    phase = str(guard["phase"])
+    if phase == "cooldown":
+        return
+    if phase == "stale":
+        title = "FTMO news calendar stale — automation frozen"
+        reason = [
+            f"No successful calendar refresh within {env.ftmo_news_calendar_max_age_hours} hours.",
+            "New entries, dashboard close commands, partial TP and break-even management are paused.",
+        ]
+        dedupe_key = f"ftmo-news-calendar-stale:{env.account_label}:{now.date().isoformat()}"
+    else:
+        try:
+            open_positions, pending_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
+        except Exception as exc:
+            open_positions, pending_orders = -1, -1
+            exposure_note = f"Exposure check failed: {exc}"
+        else:
+            exposure_note = f"Open bot positions: {open_positions}; pending bot orders: {pending_orders}."
+        if open_positions == 0 and pending_orders == 0:
+            return
+        title = "FTMO restricted news window — no MT5 action sent"
+        reason = [str(guard["title"]), exposure_note]
+        dedupe_key = f"ftmo-news-hard-window:{env.account_label}:{guard['id']}"
+    queue_alert(
+        conn,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="critical",
+        entity_ids=[str(guard["id"])],
+        payload={"title": title, "reason": reason, "ftmo_news_guard": guard},
+        dedupe_key=dedupe_key,
+    )
+    conn.commit()
 
 
 def _upsert_news_regime(
@@ -894,7 +995,16 @@ def maybe_execute_candidates(
 ) -> None:
     if not account_execution_is_enabled(conn, env):
         return
-    if is_weekend_no_new_trade_window(env, datetime.now(UTC)):
+    now = datetime.now(UTC)
+    ftmo_news_guard = ftmo_news_guard_state(conn, env, now)
+    if ftmo_news_guard is not None:
+        logger.warning(
+            "maybe_execute_candidates: FTMO news guard phase=%s '%s' — skipping execution",
+            ftmo_news_guard["phase"],
+            ftmo_news_guard["title"],
+        )
+        return
+    if is_weekend_no_new_trade_window(env, now):
         logger.warning("maybe_execute_candidates: weekend cutoff active — skipping execution")
         return
     # Bug #5: broker_symbol is resolved at startup; if resolution failed the
@@ -907,7 +1017,7 @@ def maybe_execute_candidates(
     # The candidate stays eligible and will retry on the next poll once the
     # blackout window expires. Spread guard below provides a secondary check
     # for unexpected volatility outside defined windows.
-    blackout = active_news_blackout(conn)
+    blackout = active_news_blackout(conn, now)
     if blackout:
         tier = blackout["tier"]
         logger.warning(
@@ -996,6 +1106,75 @@ def maybe_execute_candidates(
         lot_size=assessment.lot_size,
         pricing_plan=pricing_plan,
     )
+
+
+def maybe_ftmo_news_flatten(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    guard: dict[str, Any],
+) -> bool:
+    """Flatten bot-owned exposure before FTMO's exact restricted window."""
+    if (
+        not env.execution_enabled
+        or not env.ftmo_news_flatten_enabled
+        or not broker_symbol
+        or guard.get("phase") != "prepare"
+    ):
+        return False
+
+    cancelled: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []
+    errors: list[str] = []
+    try:
+        cancelled = client.cancel_pending_orders(
+            broker_symbol,
+            magic=env.mt5_magic,
+            comment="FTMO news flatten",
+        )
+    except Exception as exc:
+        logger.exception("FTMO news pending-order cancellation failed")
+        errors.append(f"Pending-order cancellation failed: {exc}")
+    try:
+        closed = client.close_open_positions(
+            broker_symbol,
+            magic=env.mt5_magic,
+            comment="FTMO news flatten",
+        )
+    except Exception as exc:
+        logger.exception("FTMO news position close failed")
+        errors.append(f"Position close failed: {exc}")
+
+    if cancelled:
+        _mark_live_pending_orders_cancelled(conn, config.symbol, env.account_label, utc_now_iso())
+    if closed:
+        sync_closed_positions(conn, config, env, client, broker_symbol)
+
+    did_anything = bool(cancelled or closed)
+    if did_anything or errors:
+        success_lines = [
+            f"Event: {guard['title']}",
+            f"Cancelled pending bot orders: {len(cancelled)}",
+            f"Closed bot positions: {len(closed)}",
+        ]
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="critical" if errors else "important",
+            entity_ids=[str(guard["id"])],
+            payload={
+                "title": "FTMO news flatten failed" if errors else "FTMO news flatten completed",
+                "reason": success_lines + errors,
+                "ftmo_news_guard": guard,
+            },
+            dedupe_key=f"ftmo-news-flatten:{env.account_label}:{guard['id']}:{'failed' if errors else 'done'}",
+        )
+        conn.commit()
+    return did_anything and not errors
 
 
 def maybe_weekend_flatten(

@@ -30,22 +30,27 @@ from semi_bot_trading.config import load_config
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.live_worker import (
     ExecutionPricingPlan,
+    LiveWorkerState,
     _ftmo_day_window,
     _resolved_initial_balance,
     _seconds_until_next_poll,
     build_execution_pricing_plan,
     candidates_after_live_fvg_trade_count,
     execute_candidate,
+    ftmo_news_guard_state,
     is_weekend_flatten_window,
     is_weekend_no_new_trade_window,
     live_candidate_already_executed,
     live_fvg_trade_count_for_zone,
     live_trade_count_today,
     manage_open_trade_partial_take_profit,
+    maybe_ftmo_news_flatten,
     maybe_weekend_flatten,
     maybe_execute_candidates,
+    run_live_iteration,
     sync_closed_positions,
     trading_session,
+    validate_live_account_startup,
 )
 from semi_bot_trading.mt5_client import MT5OrderRequest
 from semi_bot_trading.runtime_env import RuntimeEnv
@@ -838,6 +843,16 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         self._run([_make_candidate()], env=env)
         self.assertEqual(0, self._order_count())
 
+    def test_funded_standard_ftmo_fails_closed_when_calendar_is_stale(self):
+        env = _make_env(
+            account_profile="ftmo_challenge",
+            ftmo_phase="funded",
+            ftmo_account_type="standard",
+        )
+        client = self._run([_make_candidate()], env=env)
+        self.assertEqual(0, self._order_count())
+        client.place_market_order.assert_not_called()
+
     def test_weekend_no_new_trade_cutoff_blocks_execution(self):
         env = _make_env(weekend_flatten_enabled=True)
         cutoff_now = datetime(2026, 6, 26, 16, 0, tzinfo=UTC)  # Friday 12:00 New York during DST
@@ -962,6 +977,127 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FTMO news compliance
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+class TestFtmoNewsCompliance(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._tmp.name)
+        self._config = replace(load_config(), database=self._db_path)
+        self._env = _make_env(
+            account_profile="ftmo_challenge",
+            ftmo_phase="funded",
+            ftmo_account_type="standard",
+        )
+
+    def tearDown(self):
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def test_evaluation_and_swing_accounts_do_not_activate_compliance_guard(self):
+        now = datetime(2026, 8, 7, 12, 30, tzinfo=UTC)
+        evaluation = replace(self._env, ftmo_phase="evaluation")
+        swing = replace(self._env, ftmo_account_type="swing")
+        self.assertIsNone(ftmo_news_guard_state(self._conn, evaluation, now))
+        self.assertIsNone(ftmo_news_guard_state(self._conn, swing, now))
+
+    def test_startup_rejects_unsafe_funded_standard_news_config(self):
+        client = _fake_client()
+        client.get_account_info.return_value = {
+            "balance": 100000,
+            "equity": 100000,
+            "currency": "USD",
+        }
+        client.get_symbol_trade_info.return_value = {"trade_contract_size": 100.0}
+        unsafe = replace(self._env, ftmo_news_buffer_minutes=3)
+        with self.assertRaisesRegex(RuntimeError, "FTMO_NEWS_BUFFER_MINUTES"):
+            validate_live_account_startup(unsafe, client, "XAUUSD")
+
+    def test_prepare_phase_cancels_pending_and_closes_bot_positions(self):
+        client = _fake_client()
+        client.cancel_pending_orders.return_value = [{"order": 111, "retcode": 10009}]
+        client.close_open_positions.return_value = [{"order": 222, "deal": 333, "retcode": 10009}]
+        now = "2026-08-07T12:25:00+00:00"
+        self._conn.execute(
+            """INSERT INTO trade_ideas
+               (id, symbol, direction, playbook, status, entry_zone_id,
+                related_zone_ids_json, context_snapshot_json, suggested_entry,
+                suggested_stop_loss, suggested_take_profit_json, risk_reward, created_at)
+               VALUES ('idea-ftmo-pending', 'XAUUSD', 'long', 'test', 'approved', NULL, '[]', '{}',
+                       3000, 2980, '[3040]', 2.0, ?)""",
+            (now,),
+        )
+        self._conn.execute(
+            """INSERT INTO trade_orders
+               (id, trade_idea_id, account_label, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity,
+                opened_at, source, metadata_json, created_at)
+               VALUES ('order-ftmo-pending', 'idea-ftmo-pending', 'Test', 'XAUUSD', 'buy', 'limit', 'pending_fill',
+                       3000, 2980, '[3040]', 0.01, ?, 'live', '{}', ?)""",
+            (now, now),
+        )
+        self._conn.commit()
+        guard = {
+            "id": "nfp",
+            "title": "Non-Farm Employment Change",
+            "phase": "prepare",
+            "scheduled_at": "2026-08-07T12:30:00+00:00",
+        }
+
+        did_flatten = maybe_ftmo_news_flatten(
+            self._conn, self._config, self._env, client, "XAUUSDm", guard,
+        )
+
+        self.assertTrue(did_flatten)
+        client.cancel_pending_orders.assert_called_once_with(
+            "XAUUSDm", magic=self._env.mt5_magic, comment="FTMO news flatten",
+        )
+        client.close_open_positions.assert_called_once_with(
+            "XAUUSDm", magic=self._env.mt5_magic, comment="FTMO news flatten",
+        )
+        row = self._conn.execute(
+            "SELECT status FROM trade_orders WHERE id = 'order-ftmo-pending'"
+        ).fetchone()
+        self.assertEqual("cancelled", row["status"])
+
+    def test_hard_window_never_sends_flatten_actions(self):
+        client = _fake_client()
+        guard = {"id": "nfp", "title": "NFP", "phase": "restricted"}
+        self.assertFalse(
+            maybe_ftmo_news_flatten(self._conn, self._config, self._env, client, "XAUUSDm", guard)
+        )
+        client.cancel_pending_orders.assert_not_called()
+        client.close_open_positions.assert_not_called()
+
+    def test_live_iteration_suppresses_partial_tp_and_dashboard_commands_in_hard_window(self):
+        client = _fake_client()
+        state = LiveWorkerState(broker_symbol="XAUUSDm")
+        guard = {"id": "nfp", "title": "NFP", "phase": "restricted"}
+        with (
+            patch("semi_bot_trading.live_worker.snapshot_account"),
+            patch("semi_bot_trading.live_worker.refresh_account_execution_control"),
+            patch("semi_bot_trading.live_worker.snapshot_spread"),
+            patch("semi_bot_trading.live_worker.sync_mt5_candles"),
+            patch("semi_bot_trading.live_worker.sync_closed_positions"),
+            patch("semi_bot_trading.live_worker.ftmo_news_guard_state", return_value=guard),
+            patch("semi_bot_trading.live_worker.process_account_execution_commands") as commands,
+            patch("semi_bot_trading.live_worker.manage_open_trade_partial_take_profit") as partial_tp,
+            patch("semi_bot_trading.live_worker.maybe_ftmo_news_flatten") as news_flatten,
+            patch("semi_bot_trading.live_worker.queue_ftmo_news_guard_alert"),
+            patch("semi_bot_trading.live_worker.maybe_weekend_flatten") as weekend_flatten,
+            patch("semi_bot_trading.live_worker.send_pending_telegram_alerts"),
+        ):
+            run_live_iteration(self._config, self._env, client, state)
+
+        commands.assert_not_called()
+        partial_tp.assert_not_called()
+        news_flatten.assert_not_called()
+        weekend_flatten.assert_not_called()
+
+
 # weekend flatten guard
 # ─────────────────────────────────────────────────────────────────────────────
 

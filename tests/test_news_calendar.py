@@ -14,12 +14,55 @@ from semi_bot_trading.news_calendar import (
     _parse_ff_datetime,
     _parse_ff_xml,
     _upsert_events,
+    active_ftmo_news_window,
     active_news_blackout,
+    classify_tier,
+    is_ftmo_restricted_event,
+    news_calendar_is_fresh,
     upcoming_news_events,
 )
 
 
 class NewsCalendarTest(unittest.TestCase):
+    def test_ftmo_restricted_event_classification_is_separate_from_market_tier(self) -> None:
+        self.assertEqual(1, classify_tier("FOMC Meeting Minutes", "USD", "High"))
+        self.assertEqual(1, classify_tier("FOMC Meeting Minutes", "USD", "Medium"))
+        self.assertIsNone(classify_tier("JOLTS Job Openings", "USD", "Medium"))
+        self.assertTrue(is_ftmo_restricted_event("FOMC Meeting Minutes", "USD"))
+        self.assertTrue(is_ftmo_restricted_event("CPI y/y", "USD"))
+        self.assertFalse(is_ftmo_restricted_event("JOLTS Job Openings", "USD"))
+        self.assertFalse(is_ftmo_restricted_event("CPI y/y", "EUR"))
+
+    def test_ftmo_news_window_has_prepare_restricted_and_cooldown_phases(self) -> None:
+        scheduled_at = datetime(2026, 8, 7, 12, 30, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.execute(
+                    """
+                    INSERT INTO news_events (
+                        id, title, country, impact, tier, scheduled_at,
+                        blackout_before_min, blackout_after_min, forecast, previous, url, fetched_at
+                    ) VALUES (?, ?, 'USD', 'High', 1, ?, 30, 30, NULL, NULL, NULL, ?)
+                    """,
+                    ("nfp", "Non-Farm Employment Change", scheduled_at.isoformat(), scheduled_at.isoformat()),
+                )
+                conn.commit()
+
+                prepare = active_ftmo_news_window(conn, scheduled_at - timedelta(minutes=4), buffer_minutes=5)
+                safety_freeze = active_ftmo_news_window(conn, scheduled_at - timedelta(minutes=2, seconds=30), buffer_minutes=5)
+                restricted = active_ftmo_news_window(conn, scheduled_at, buffer_minutes=5)
+                cooldown = active_ftmo_news_window(conn, scheduled_at + timedelta(minutes=3), buffer_minutes=5)
+                outside = active_ftmo_news_window(conn, scheduled_at + timedelta(minutes=6), buffer_minutes=5)
+
+                self.assertEqual("prepare", prepare["phase"])
+                self.assertEqual("restricted", safety_freeze["phase"])
+                self.assertEqual("restricted", restricted["phase"])
+                self.assertEqual("cooldown", cooldown["phase"])
+                self.assertIsNone(outside)
+                self.assertTrue(news_calendar_is_fresh(conn, scheduled_at, max_age_hours=36))
+
     def test_fair_economy_xml_clock_is_already_utc(self) -> None:
         parsed = _parse_ff_datetime("07-30-2026", "12:30pm")
 

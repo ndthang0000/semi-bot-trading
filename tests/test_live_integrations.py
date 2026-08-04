@@ -278,6 +278,29 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertFalse(env.live_run_detectors)
         self.assertTrue(env.live_evaluate_intrabar)
 
+    def test_runtime_env_reads_ftmo_news_compliance_flags(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with TemporaryDirectory() as temp_dir:
+                env_path = Path(temp_dir) / ".env.ftmo"
+                env_path.write_text(
+                    "\n".join(
+                        [
+                            'FTMO_PHASE="funded"',
+                            'FTMO_ACCOUNT_TYPE="standard"',
+                            'FTMO_NEWS_BUFFER_MINUTES="7"',
+                            'FTMO_NEWS_CALENDAR_MAX_AGE_HOURS="24"',
+                            'FTMO_NEWS_FLATTEN_ENABLED="false"',
+                        ]
+                    )
+                )
+                env = load_runtime_env(env_path)
+
+        self.assertEqual("funded", env.ftmo_phase)
+        self.assertEqual("standard", env.ftmo_account_type)
+        self.assertEqual(7, env.ftmo_news_buffer_minutes)
+        self.assertEqual(24, env.ftmo_news_calendar_max_age_hours)
+        self.assertFalse(env.ftmo_news_flatten_enabled)
+
     def test_live_worker_evaluates_setups_even_without_new_closed_candle(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

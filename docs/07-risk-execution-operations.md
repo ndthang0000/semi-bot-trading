@@ -224,6 +224,37 @@ dien la `12:30pm` va database phai luu `12:30 UTC`.
 Khong co post-news cooldown rieng. Live execution chi dung blackout co ban theo
 tier: Tier 1 truoc/sau 30 phut va Tier 2 truoc/sau 15 phut.
 
+### FTMO news compliance
+
+FTMO compliance duoc tach khoi market-risk tier. No chi active khi worker co:
+
+```text
+ACCOUNT_PROFILE=ftmo_challenge
+FTMO_PHASE=funded
+FTMO_ACCOUNT_TYPE=standard
+FTMO_NEWS_BUFFER_MINUTES=5
+FTMO_NEWS_CALENDAR_MAX_AGE_HOURS=36
+FTMO_NEWS_FLATTEN_ENABLED=true
+```
+
+`FTMO_PHASE=evaluation` bao gom Challenge/Verification; `FTMO_ACCOUNT_TYPE=swing`
+khong ap dung news restriction. Voi funded Standard, worker dung state machine:
+
+- T-5 den truoc T-3: huy pending order cua bot va dong position cua bot theo
+  `MT5_MAGIC`. Lenh manual khong bi cham toi.
+- T-3 den T+2: hard freeze noi bo, khong gui bat ky MT5 order action nao. Mot
+  phut safety margin T-3 den T-2 bao ve khoi request cham; FTMO hard window chinh
+  thuc van la T-2 den T+2. Dashboard
+  close command, partial TP, break-even, weekend flatten va entry moi deu pause.
+- Sau T+2 den T+5: cooldown; entry moi va order management van pause.
+- Calendar qua `FTMO_NEWS_CALENDAR_MAX_AGE_HOURS` se fail closed: khong entry,
+  dashboard close, partial TP hay break-even, va gui critical alert.
+
+FTMO restricted list duoc classify rieng, khong dua vao nhan High/Medium cua
+ForexFactory. Hien tai gom Federal Funds Rate/Statement, NFP, Unemployment/Wages,
+Advance GDP q/q, FOMC Meeting Minutes va CPI y/y. General market-risk blackout
+Tier 1/2 van hoat dong doc lap va co the rong hon danh sach FTMO.
+
 ## Partial TP / Break-even
 
 Live worker quan ly lenh dang mo bang rule mac dinh:
@@ -347,6 +378,11 @@ FTMO accounts must use `ACCOUNT_PROFILE=ftmo_challenge` and should start with
 metadata is missing or `trade_contract_size` is suspicious. Do not use cent
 balance scaling for FTMO; leave `ACCOUNT_BALANCE_SCALE` unset or set it to
 `1.0`.
+
+Keep `FTMO_PHASE=evaluation` through Challenge and Verification. Change it to
+`funded` only after receiving a funded Standard FTMO Account. Confirm
+`FTMO_ACCOUNT_TYPE=standard` versus `swing`; a wrong value can either flatten
+unnecessarily or leave a Standard account without contractual protection.
 
 Set `ACCOUNT_INITIAL_BALANCE` to the original FTMO account size (for example,
 `100000`) so the Account Dashboard daily percentage uses the same denominator

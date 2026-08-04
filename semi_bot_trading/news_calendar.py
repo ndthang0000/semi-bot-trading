@@ -1,6 +1,7 @@
 """Economic calendar — ForexFactory feed parser and news blackout logic.
 
-Only USD High-impact events that materially affect XAUUSD are stored.
+USD High-impact events that materially affect XAUUSD are stored, plus FTMO
+contractual events even when the provider assigns a lower impact label.
 
 Tiers
 -----
@@ -41,6 +42,7 @@ _TIER1_PATTERNS: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in 
     r"(?<!adp\s)non.?farm\s+(payroll|employment\s+change)",
     r"\bnfp\b",
     r"fomc statement",
+    r"fomc meeting minutes",
     r"federal funds rate",
     r"fed funds rate",
     r"\bcpi\s+(m/m|y/y)\b",
@@ -68,6 +70,26 @@ _BLACKOUT_MINUTES: dict[int, tuple[int, int]] = {
     1: (30, 30),
     2: (15, 15),
 }
+
+# FTMO's contractual restricted-event list for USD instruments, including
+# XAUUSD. Keep this separate from the broader market-risk tier classification:
+# a ForexFactory impact label does not determine FTMO compliance.
+_FTMO_RESTRICTED_PATTERNS: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in [
+    r"\bfederal funds rate\b",
+    r"\bfed funds rate\b",
+    r"\bfomc statement\b",
+    r"\bfomc rate decision\b",
+    r"\bnon.?farm\s+(payroll|employment\s+change)\b",
+    r"\bnfp\b",
+    r"\bunemployment rate\b",
+    r"\baverage hourly earnings\b",
+    r"\badvance gdp q/q\b",
+    r"\bfomc meeting minutes\b",
+    r"\bcpi y/y\b",
+]]
+
+FTMO_HARD_RESTRICTION_MINUTES = 2
+FTMO_ACTION_FREEZE_BEFORE_MINUTES = 3
 
 # ---------------------------------------------------------------------------
 # ForexFactory feed URLs
@@ -117,10 +139,13 @@ class NewsEvent:
 def classify_tier(title: str, country: str, impact: str) -> int | None:
     """Return 1, 2, or None.
 
-    Only High-impact USD events are eligible. Medium/Low → None regardless of title.
+    FTMO contractual events are always retained. Other events require a High
+    provider-impact label; Medium/Low events are ignored by the market-risk tier.
     """
     if country not in AFFECTED_CURRENCIES:
         return None
+    if is_ftmo_restricted_event(title, country):
+        return 1
     if impact.lower() != "high":
         return None
     for pattern in _TIER1_PATTERNS:
@@ -130,6 +155,107 @@ def classify_tier(title: str, country: str, impact: str) -> int | None:
         if pattern.search(title):
             return 2
     return None
+
+
+def is_ftmo_restricted_event(title: str, country: str) -> bool:
+    """Return whether FTMO restricts XAUUSD around this scheduled USD event."""
+    if country not in AFFECTED_CURRENCIES:
+        return False
+    return any(pattern.search(title) for pattern in _FTMO_RESTRICTED_PATTERNS)
+
+
+def active_ftmo_news_window(
+    conn: Connection,
+    now: datetime | None = None,
+    *,
+    buffer_minutes: int = 5,
+) -> dict[str, Any] | None:
+    """Return the active FTMO preparation/restriction/cooldown window.
+
+    ``prepare`` is the safe interval in which bot orders can be flattened before
+    FTMO's exact hard restriction. ``restricted`` must not send any order action.
+    ``cooldown`` keeps automation frozen briefly after the release.
+    """
+    now = now or datetime.now(UTC)
+    buffer_minutes = max(int(buffer_minutes), FTMO_HARD_RESTRICTION_MINUTES)
+    broad_start = now - timedelta(minutes=buffer_minutes)
+    broad_end = now + timedelta(minutes=buffer_minutes)
+    rows = conn.execute(
+        """
+        SELECT id, title, country, impact, tier, scheduled_at, url
+        FROM news_events
+        WHERE scheduled_at BETWEEN ? AND ?
+        ORDER BY scheduled_at ASC
+        """,
+        (broad_start.isoformat(), broad_end.isoformat()),
+    ).fetchall()
+
+    windows: list[dict[str, Any]] = []
+    for row in rows:
+        if not is_ftmo_restricted_event(str(row["title"]), str(row["country"])):
+            continue
+        try:
+            scheduled_at = datetime.fromisoformat(str(row["scheduled_at"]))
+        except ValueError:
+            continue
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=UTC)
+        else:
+            scheduled_at = scheduled_at.astimezone(UTC)
+        prepare_from = scheduled_at - timedelta(minutes=buffer_minutes)
+        action_freeze_from = scheduled_at - timedelta(minutes=FTMO_ACTION_FREEZE_BEFORE_MINUTES)
+        restricted_from = scheduled_at - timedelta(minutes=FTMO_HARD_RESTRICTION_MINUTES)
+        restricted_until = scheduled_at + timedelta(minutes=FTMO_HARD_RESTRICTION_MINUTES)
+        cooldown_until = scheduled_at + timedelta(minutes=buffer_minutes)
+        if not prepare_from <= now <= cooldown_until:
+            continue
+        if now < action_freeze_from:
+            phase = "prepare"
+        elif now <= restricted_until:
+            phase = "restricted"
+        else:
+            phase = "cooldown"
+        windows.append({
+            "id": row["id"],
+            "title": row["title"],
+            "country": row["country"],
+            "impact": row["impact"],
+            "tier": row["tier"],
+            "scheduled_at": scheduled_at.isoformat(),
+            "prepare_from": prepare_from.isoformat(),
+            "action_freeze_from": action_freeze_from.isoformat(),
+            "restricted_from": restricted_from.isoformat(),
+            "restricted_until": restricted_until.isoformat(),
+            "cooldown_until": cooldown_until.isoformat(),
+            "phase": phase,
+            "url": row["url"],
+        })
+    if not windows:
+        return None
+    phase_priority = {"restricted": 0, "prepare": 1, "cooldown": 2}
+    return min(windows, key=lambda item: (phase_priority[str(item["phase"])], str(item["scheduled_at"])))
+
+
+def news_calendar_is_fresh(
+    conn: Connection,
+    now: datetime | None = None,
+    *,
+    max_age_hours: int = 36,
+) -> bool:
+    """Return whether persisted calendar data is fresh enough for compliance."""
+    now = now or datetime.now(UTC)
+    row = conn.execute("SELECT MAX(fetched_at) AS fetched_at FROM news_events").fetchone()
+    if row is None or not row["fetched_at"]:
+        return False
+    try:
+        fetched_at = datetime.fromisoformat(str(row["fetched_at"]))
+    except ValueError:
+        return False
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=UTC)
+    else:
+        fetched_at = fetched_at.astimezone(UTC)
+    return fetched_at >= now - timedelta(hours=max(int(max_age_hours), 1))
 
 
 # ---------------------------------------------------------------------------

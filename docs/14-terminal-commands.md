@@ -702,6 +702,11 @@ MT5_SERVER_UTC_OFFSET_HOURS=3
 ACCOUNT_LABEL=FTMO Demo
 ACCOUNT_PROFILE=ftmo_challenge
 ACCOUNT_BALANCE_SCALE=1.0
+FTMO_PHASE=evaluation
+FTMO_ACCOUNT_TYPE=standard
+FTMO_NEWS_BUFFER_MINUTES=5
+FTMO_NEWS_CALENDAR_MAX_AGE_HOURS=36
+FTMO_NEWS_FLATTEN_ENABLED=true
 LIVE_SYNC_CANDLES=false
 LIVE_RUN_DETECTORS=false
 EXECUTION_ENABLED=false
@@ -714,6 +719,15 @@ already returns UTC (the Exness worker), and set it to the observed server
 offset for FTMO (`3` in the example). Update the value if the broker changes
 between summer and winter server time. Secondary FTMO workers should continue
 using `LIVE_SYNC_CANDLES=false`; the offset still applies to deal-close history.
+
+Keep `FTMO_PHASE=evaluation` during Challenge/Verification. For a funded
+Standard account set `FTMO_PHASE=funded`; the worker then cancels bot pending
+orders and closes bot positions in the T-5 to T-3 preparation window, freezes
+all order actions from T-3 through T+2 (one minute before FTMO's official T-2
+boundary), and keeps a cooldown through T+5.
+`FTMO_ACCOUNT_TYPE=swing` disables this contractual guard. If calendar data is
+older than `FTMO_NEWS_CALENDAR_MAX_AGE_HOURS`, funded-Standard automation fails
+closed and emits a critical alert.
 
 `MT5_PATH` must point to `terminal64.exe`, not only the MetaTrader install
 folder. This avoids `IPC initialize failed, MetaTrader 5 x64 not found` when the
