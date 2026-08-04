@@ -110,7 +110,7 @@ Mỗi trade có action `Hide from chart` / `Show on chart`. Đây chỉ là tr�
 trình bày được lưu trong `trade_orders.hidden_on_chart`; trade vẫn còn nguyên
 trong history, report, thống kê P&L và không ảnh hưởng strategy/execution.
 
-Voi live trade, trade inspector co control Partial TP theo `account_label`:
+Voi live trade dang `filled` hoac `pending_fill`, trade inspector co control Partial TP theo `account_label`:
 bat/tat automation, nhap trigger tu `0.5R` den `2.0R`, va shortcut `1.00R` /
 `1.25R`. Setting ap dung cho moi live trade dang armed va cac lenh moi cua
 account; trade da partial hoac da dong chi hien thi snapshot lich su, khong bi

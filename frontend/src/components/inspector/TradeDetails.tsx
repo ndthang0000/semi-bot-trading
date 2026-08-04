@@ -169,7 +169,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         </div>
       ) : null}
 
-      {trade.source === "live" && trade.account_label ? (
+      {trade.source === "live" && trade.account_label && ["filled", "pending_fill"].includes(trade.status) ? (
         <PartialTakeProfitControls accountLabel={trade.account_label} showToast={showToast} />
       ) : null}
 
