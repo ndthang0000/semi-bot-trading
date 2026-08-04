@@ -454,17 +454,21 @@ export function restoreLockedViewport(chart: IChartApi | null, targetRef: { curr
 export function applyInitialViewport(chart: IChartApi, candles: CandleDatum[], requestedBars: number): void {
   if (candles.length === 0) return;
   const visibleBars = Math.min(candles.length, Math.max(50, requestedBars));
-  const to = Math.max(candles.length - 1 + RIGHT_OFFSET_BARS, 0);
-  const from = Math.max(0, to - visibleBars);
-  chart.timeScale().setVisibleLogicalRange({ from, to });
+  applyCandleTimeViewport(chart, candles, visibleBars);
 }
 
 export function applyReplayTimeViewport(chart: IChartApi, candles: CandleDatum[], requestedBars: number): void {
   if (candles.length === 0) return;
   const visibleBars = Math.min(Math.max(REPLAY_VISIBLE_BARS, requestedBars), 220);
-  const to = candles.length - 1 + RIGHT_OFFSET_BARS;
-  const from = to - visibleBars;
-  chart.timeScale().setVisibleLogicalRange({ from, to });
+  applyCandleTimeViewport(chart, candles, Math.min(candles.length, visibleBars));
+}
+
+function applyCandleTimeViewport(chart: IChartApi, candles: CandleDatum[], visibleBars: number): void {
+  const lastIndex = candles.length - 1;
+  const fromIndex = Math.max(0, lastIndex - visibleBars + 1);
+  const intervalSeconds = inferCandleIntervalSeconds(candles);
+  const futureTime = (Number(candles[lastIndex].time) + RIGHT_OFFSET_BARS * intervalSeconds) as CandleDatum["time"];
+  chart.timeScale().setVisibleRange({ from: candles[fromIndex].time, to: futureTime });
 }
 
 export function applyReplayPriceViewport(
@@ -750,11 +754,15 @@ function buildFocusedPriceRange(
 }
 
 function inferCandleIntervalSeconds(candles: CandleDatum[]): number {
-  for (let index = candles.length - 1; index > 0; index -= 1) {
+  const intervals: number[] = [];
+  const firstIndex = Math.max(1, candles.length - 32);
+  for (let index = firstIndex; index < candles.length; index += 1) {
     const interval = Number(candles[index].time) - Number(candles[index - 1].time);
-    if (interval > 0) return interval;
+    if (interval > 0) intervals.push(interval);
   }
-  return 3600;
+  if (intervals.length === 0) return 3600;
+  intervals.sort((left, right) => left - right);
+  return intervals[Math.floor(intervals.length / 2)];
 }
 
 function futureAxisEndTime(lastTime: number, intervalSeconds: number, events: NewsEvent[]): number {

@@ -36,6 +36,22 @@ button ở cuối sidebar; chọn một trang cũng tự đóng sidebar. Account
 dùng spacing mobile, chart có chiều cao ổn định và calendar 7 cột chuyển sang
 cell compact để không bóp méo text/card trên màn hình hẹp.
 
+Riêng trang Chart dùng mobile shell tới breakpoint dưới `1024px`, bao gồm cả
+điện thoại xoay ngang. Chart là canvas chính; Inspector không còn giữ cột cố
+định bên phải và TopBar desktop không bị ép vào một hàng quá rộng. Mobile UI có:
+
+- Header gọn với symbol, giá, biến động, timeframe và reload.
+- Context summary một hàng; chạm để mở toàn bộ Bias/Regime/Macro/ATR/RSI/M15
+  Trigger trong bottom sheet.
+- Bottom action dock với Timeframe, Layers, Draw, Inspector và More; mọi action
+  chính có touch target tối thiểu 44px và tôn trọng safe area.
+- Layers, Add Entity, candle window, playbooks và Inspector Zones/Setups/Trades
+  mở dạng bottom sheet phủ lên chart, không resize hoặc đổi viewport chart.
+- Mobile mặc định ưu tiên important zones, giới hạn mật độ nến/label và không
+  kéo future news whitespace quá xa làm nến hiện tại bị dồn sang trái.
+- Zone resize handle có vùng chạm lớn hơn desktop; marker có hit area mở rộng
+  nhưng giữ visual nhỏ để không che nến.
+
 ## Overlay style gợi ý
 
 - Support: xanh lá nhẹ.
