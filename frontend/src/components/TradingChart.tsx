@@ -33,6 +33,7 @@ import {
   focusZoneOnChart,
   isStructurePointAvailable,
   isZoneTypeVisible,
+  isZoneVisibleForPlaybooks,
   isoForZoneEnd,
   lockCurrentViewport,
   manualZoneSpec,
@@ -106,6 +107,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const selected = useChartStore((state) => state.selected);
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const showStructure = useChartStore((state) => state.showStructure);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
@@ -135,6 +137,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const payloadRef = useRef(payload);
   const showZonesRef = useRef(showZones);
   const zoneTypeVisibilityRef = useRef(zoneTypeVisibility);
+  const selectedPlaybooksRef = useRef(selectedPlaybooks);
   const showStructureRef = useRef(showStructure);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
@@ -181,6 +184,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
 
   showZonesRef.current = showZones;
   zoneTypeVisibilityRef.current = zoneTypeVisibility;
+  selectedPlaybooksRef.current = selectedPlaybooks;
   showStructureRef.current = showStructure;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
@@ -206,8 +210,10 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     const timeScale = chart.timeScale();
     const draftZone = draftZoneRef.current;
     const previewZone = drawPreviewZoneRef.current;
-    const zoneCandidates = (previewZone ? [...currentPayload.layers.zones, previewZone] : currentPayload.layers.zones).filter((zone) =>
-      isZoneTypeVisible(zone, zoneTypeVisibilityRef.current),
+    const zoneCandidates = (previewZone ? [...currentPayload.layers.zones, previewZone] : currentPayload.layers.zones).filter(
+      (zone) =>
+        isZoneTypeVisible(zone, zoneTypeVisibilityRef.current) &&
+        isZoneVisibleForPlaybooks(zone, selectedPlaybooksRef.current),
     );
     const currentSelected = useChartStore.getState().selected;
     const selectedZoneId = currentSelected?.kind === "zone" ? currentSelected.entity.id : null;
@@ -662,7 +668,17 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   useEffect(() => {
     payloadRef.current = payload;
     scheduleOverlayRecalc();
-  }, [importantZonesOnly, maxVisibleZones, payload, scheduleOverlayRecalc, showStructure, showZones, tradeVisibilityMode]);
+  }, [
+    importantZonesOnly,
+    maxVisibleZones,
+    payload,
+    scheduleOverlayRecalc,
+    selectedPlaybooks,
+    showStructure,
+    showZones,
+    tradeVisibilityMode,
+    zoneTypeVisibility,
+  ]);
 
   useEffect(() => {
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructure));

@@ -5,6 +5,7 @@ import { toUnixTime } from "../../lib/time";
 import type {
   AddEntityKind,
   ChartPayload,
+  PlaybookKey,
   PriceZone,
   SetupCandidate,
   StructurePoint,
@@ -62,13 +63,14 @@ export function manualZoneSpec(kind: AddEntityKind): ManualZoneSpec {
     bullish_fvg: { label: "Bullish FVG", zoneType: "fvg", direction: "bullish", weight: 0.72, confidence: 1 },
     bearish_fvg: { label: "Bearish FVG", zoneType: "fvg", direction: "bearish", weight: 0.72, confidence: 1 },
     consolidation: { label: "Consolidation", zoneType: "consolidation", direction: "neutral", weight: 0.65, confidence: 1 },
-    buy_side_liquidity: { label: "Buy-side Liquidity", zoneType: "liquidity_pool", direction: "neutral", weight: 0.68, confidence: 1 },
-    sell_side_liquidity: { label: "Sell-side Liquidity", zoneType: "liquidity_pool", direction: "neutral", weight: 0.68, confidence: 1 },
+    buy_side_liquidity: { label: "Buy Liquidity Zone", zoneType: "liquidity_pool", direction: "bullish", weight: 0.68, confidence: 1 },
+    sell_side_liquidity: { label: "Sell Liquidity Zone", zoneType: "liquidity_pool", direction: "bearish", weight: 0.68, confidence: 1 },
   };
   return specs[kind];
 }
 
 export function zoneDisplayName(zone: PriceZone): string {
+  if (isHistoricalLiquiditySweep(zone)) return "Historical Liquidity Sweep";
   const kind = zone.metadata.add_entity_kind;
   if (typeof kind === "string" && isAddEntityKind(kind)) {
     return manualZoneSpec(kind).label;
@@ -79,7 +81,9 @@ export function zoneDisplayName(zone: PriceZone): string {
   if (zone.type === "fvg") {
     return zone.direction === "bullish" ? "Bullish FVG" : "Bearish FVG";
   }
-  if (zone.type === "liquidity_pool") return "Liquidity Pool";
+  if (zone.type === "liquidity_pool") {
+    return zone.direction === "bullish" ? "Buy Liquidity Zone" : zone.direction === "bearish" ? "Sell Liquidity Zone" : "Liquidity Pool";
+  }
   return zone.type;
 }
 
@@ -289,6 +293,17 @@ export function isZoneTypeVisible(zone: PriceZone, visibility: ZoneTypeVisibilit
   if (zone.type === "fvg") return visibility.fvg;
   if (zone.type === "liquidity_pool") return visibility.liquidity_pool;
   if (zone.type === "consolidation") return visibility.consolidation;
+  return true;
+}
+
+export function isHistoricalLiquiditySweep(zone: PriceZone): boolean {
+  return zone.type === "liquidity_pool" && zone.status === "swept";
+}
+
+export function isZoneVisibleForPlaybooks(zone: PriceZone, playbooks: PlaybookKey[]): boolean {
+  if (playbooks.includes("liquidity_sweep_reclaim_v1") && isHistoricalLiquiditySweep(zone)) {
+    return false;
+  }
   return true;
 }
 
@@ -555,7 +570,7 @@ export function buildScaleAnchorData(candles: CandleDatum[], events: NewsEvent[]
 export function defaultTradeModesForZone(zone: PriceZone): ZoneTradeMode[] {
   const raw = zone.metadata.trade_modes;
   if (Array.isArray(raw)) {
-    return raw.filter((mode): mode is ZoneTradeMode => mode === "reject" || mode === "internal_reject" || mode === "breakout");
+    return raw.filter((mode): mode is ZoneTradeMode => mode === "reject" || mode === "internal_reject" || mode === "breakout" || mode === "liquidity_sweep");
   }
   if (zone.type === "fvg") return ["reject", "internal_reject"];
   if (zone.type === "consolidation") return ["breakout"];

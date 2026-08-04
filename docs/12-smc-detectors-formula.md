@@ -4,7 +4,7 @@ File này mô tả cách bot hiện tại tính các detector SMC mới trong co
 
 - Fair Value Gap: `fvg_v1`
 - Order Block: `order_block_v1`
-- Liquidity Sweep: `liquidity_v1`
+- Historical Liquidity Sweep: `liquidity_v1`
 - Consolidation / Range: `consolidation_v1`
 
 Mục tiêu của file này là ghi lại công thức thực tế đang được implement, để sau này có thể review, tinh chỉnh threshold, hoặc thay thế bằng version mới.
@@ -702,11 +702,20 @@ invalidated_rule: close beyond order block body
 - Structure break hiện dùng swing high/low gần nhất, chưa map trực tiếp tới stored BOS/CHOCH event.
 - Chưa có confluence score với FVG/SR/liquidity.
 
-## 4. Liquidity Sweep
+## 4. Historical Liquidity Sweep
 
 Detector id: `liquidity_v1`
 
 Zone type: `liquidity_pool`
+
+Detector này là **look-behind research detector**: chỉ tạo record sau khi nến
+sweep đã đóng và điều kiện reclaim đã xảy ra. Nó không dự đoán liquidity pool
+chưa bị quét và không cấp zone đầu vào cho playbook LIVE
+`liquidity_sweep_reclaim_v1`.
+
+Các record của detector luôn có `status=swept`, được giữ trong DB để nghiên cứu
+và replay. Khi chọn playbook Liquidity Sweep V1, UI ẩn các record lịch sử này để
+không lẫn với Zone Buy liquidity `active` do weekly plan/human import.
 
 ### 4.1. Input
 
@@ -804,6 +813,7 @@ atr_at_sweep: ...
 - Chưa yêu cầu sweep xảy ra tại vùng H1 quan trọng.
 - Chưa chấm điểm theo số lần touch liquidity level.
 - Chưa kết hợp confirmation M15 như engulfing/pinbar/BOS sau sweep.
+- Không dùng detector này làm tín hiệu dự đoán hoặc tự động tạo zone LIVE.
 
 ## 5. Consolidation / Range
 

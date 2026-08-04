@@ -115,8 +115,8 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
             <option value="bullish_fvg">Bullish FVG</option>
             <option value="bearish_fvg">Bearish FVG</option>
             <option value="consolidation">Consolidation</option>
-            <option value="buy_side_liquidity">Buy-side Liq</option>
-            <option value="sell_side_liquidity">Sell-side Liq</option>
+            <option value="buy_side_liquidity">Buy Liquidity Zone</option>
+            <option value="sell_side_liquidity">Sell Liquidity Zone</option>
           </select>
           {addEntityKind ? (
             <button
@@ -831,6 +831,7 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "zone_reaction_v2", label: "Zone Reaction V2" },
   { key: "sr_breakout_v1", label: "SR Breakout V1" },
+  { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1" },
 ];
 
 function playbookRequirementLabel(playbook: PlaybookKey): string {

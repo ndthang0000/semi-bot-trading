@@ -26,6 +26,7 @@ from .runtime_env import RuntimeEnv
 from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zones
 from .spread import record_spread_snapshot
 from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
+from .strategy.liquidity_sweep_reclaim_v1 import evaluate_live_buy_liquidity_zones
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
 
 logger = logging.getLogger(__name__)
@@ -452,6 +453,25 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             sync_closed_positions(conn, config, env, client, broker_symbol)
             manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
             maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
+            try:
+                quote = client.get_current_quote(broker_symbol)
+                liquidity_candidates = evaluate_live_buy_liquidity_zones(
+                    conn,
+                    symbol=config.symbol,
+                    timeframe=config.strategy.timeframe,
+                    account_label=env.account_label,
+                    bid=float(quote["bid"]),
+                    ask=float(quote["ask"]),
+                    spread=float(quote["spread"]),
+                    now=now,
+                    config=config.strategy,
+                )
+            except Exception:
+                liquidity_candidates = []
+                logger.warning("Could not evaluate live liquidity sweep zones", exc_info=True)
+            if liquidity_candidates:
+                queue_setup_alerts(conn, config, env, liquidity_candidates)
+                maybe_execute_candidates(conn, config, env, client, liquidity_candidates, broker_symbol)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
         if env.live_run_detectors and has_new_closed_m15:

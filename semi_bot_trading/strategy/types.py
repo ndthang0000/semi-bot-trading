@@ -12,14 +12,17 @@ BEARISH_BREAKS = {"BOS", "CHOCH"}
 PLAYBOOK_ZONE_TYPES: dict[str, set[str]] = {
     "zone_reaction_v2": {"support", "resistance", "fvg"},
     "sr_breakout_v1": {"support", "resistance"},
+    "liquidity_sweep_reclaim_v1": {"liquidity_pool"},
 }
-TRADE_MODES = {"reject", "internal_reject", "breakout"}
+TRADE_MODES = {"reject", "internal_reject", "breakout", "liquidity_sweep"}
 DEFAULT_TRADE_MODES_BY_ZONE_TYPE: dict[str, tuple[str, ...]] = {
     "support": ("reject",),
     "resistance": ("reject",),
     "fvg": ("reject", "internal_reject"),
     "consolidation": ("breakout",),
     "order_block": (),
+    # Liquidity zones are execution-sensitive and must be explicitly armed.
+    "liquidity_pool": (),
 }
 
 

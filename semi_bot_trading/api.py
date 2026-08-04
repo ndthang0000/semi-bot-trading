@@ -1037,7 +1037,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         if request.status not in {"active", "draft", "disabled"}:
             raise HTTPException(status_code=422, detail="status must be active, draft, or disabled")
         if request.trade_modes is not None:
-            unknown_modes = sorted(set(request.trade_modes) - {"reject", "internal_reject", "breakout"})
+            unknown_modes = sorted(set(request.trade_modes) - TRADE_MODES)
             if unknown_modes:
                 raise HTTPException(status_code=422, detail=f"Unknown trade mode(s): {', '.join(unknown_modes)}")
 
@@ -1054,6 +1054,11 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
+            requested_direction = request.direction or str(row["direction"])
+            try:
+                validate_zone_type(str(row["zone_type"]), requested_direction)
+            except ValueErrorForApi as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             if row["status"] == "draft" and request.status == "active":
                 raise HTTPException(
                     status_code=409,
@@ -1075,7 +1080,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             current_modes = sorted(
                 mode
                 for mode in current_metadata.get("trade_modes", [])
-                if mode in {"reject", "internal_reject", "breakout"}
+                if mode in TRADE_MODES
             )
             requested_status = request.status
             current_status = row["status"] if row["status"] in {"active", "draft", "disabled"} else "active"
@@ -1090,6 +1095,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 and abs(float(row["effective_weight"]) - request.weight) < 0.00001
                 and abs(float(row["effective_confidence"]) - confidence) < 0.00001
                 and requested_status == current_status
+                and requested_direction == row["direction"]
                 and (request_modes is None or request_modes == current_modes)
             )
             if no_material_change:
@@ -1127,6 +1133,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             after_patch = {
                 "price_low": request.price_low,
                 "price_high": request.price_high,
+                "direction": requested_direction,
                 "start_time": start_time,
                 "end_time": end_time,
                 "effective_weight": request.weight,
@@ -1163,6 +1170,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 UPDATE price_zones
                 SET price_low = ?,
                     price_high = ?,
+                    direction = ?,
                     start_time = ?,
                     end_time = ?,
                     effective_weight = ?,
@@ -1177,6 +1185,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 (
                     request.price_low,
                     request.price_high,
+                    requested_direction,
                     start_time,
                     end_time,
                     request.weight,

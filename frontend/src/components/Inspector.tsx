@@ -10,6 +10,7 @@ import { TradeDetails } from "./inspector/TradeDetails";
 import { ZoneEditor } from "./inspector/ZoneEditor";
 import { ZoneImportModal } from "./inspector/ZoneImportModal";
 import { MysticImportIcon } from "./inspector/MysticImportIcon";
+import { isZoneVisibleForPlaybooks } from "./chart/chartCore";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
@@ -41,7 +42,11 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const zones = payload?.layers.zones ?? [];
   const setupCandidates = payload?.layers.setup_candidates ?? [];
-  const layerFilteredZones = showZones ? zones.filter((zone) => isZoneTypeVisible(zone, zoneTypeVisibility)) : [];
+  const layerFilteredZones = showZones
+    ? zones.filter(
+        (zone) => isZoneTypeVisible(zone, zoneTypeVisibility) && isZoneVisibleForPlaybooks(zone, selectedPlaybooks),
+      )
+    : [];
   const lastCandle = payload?.layers.candles.at(-1);
   const selectedZoneId = selected?.kind === "zone" ? selected.entity.id : null;
   const visibleZones =
@@ -783,16 +788,19 @@ function isHumanZone(zone: PriceZone): boolean {
 }
 
 function zoneDisplayName(zone: PriceZone): string {
+  if (zone.type === "liquidity_pool" && zone.status === "swept") return "Historical Liquidity Sweep";
   const kind = zone.metadata.add_entity_kind;
   if (kind === "demand_order_block") return "Demand OB";
   if (kind === "supply_order_block") return "Supply OB";
   if (kind === "bullish_fvg") return "Bullish FVG";
   if (kind === "bearish_fvg") return "Bearish FVG";
-  if (kind === "buy_side_liquidity") return "Buy-side Liquidity";
-  if (kind === "sell_side_liquidity") return "Sell-side Liquidity";
+  if (kind === "buy_side_liquidity") return "Buy Liquidity Zone";
+  if (kind === "sell_side_liquidity") return "Sell Liquidity Zone";
   if (zone.type === "order_block") return zone.direction === "bullish" ? "Demand OB" : "Supply OB";
   if (zone.type === "fvg") return zone.direction === "bullish" ? "Bullish FVG" : "Bearish FVG";
-  if (zone.type === "liquidity_pool") return "Liquidity Pool";
+  if (zone.type === "liquidity_pool") {
+    return zone.direction === "bullish" ? "Buy Liquidity Zone" : zone.direction === "bearish" ? "Sell Liquidity Zone" : "Liquidity Pool";
+  }
   return zone.type;
 }
 

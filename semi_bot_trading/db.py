@@ -450,6 +450,29 @@ CREATE TABLE IF NOT EXISTS spread_snapshots (
 CREATE INDEX IF NOT EXISTS idx_spread_snapshots_symbol_time
 ON spread_snapshots(symbol, snapshot_at);
 
+-- Quote-driven state for the Liquidity Sweep Reclaim playbook. State is scoped
+-- per account because broker Bid/Ask and spread can differ.
+CREATE TABLE IF NOT EXISTS liquidity_sweep_states (
+    zone_id            TEXT NOT NULL,
+    account_label      TEXT NOT NULL,
+    symbol             TEXT NOT NULL,
+    zone_updated_at    TEXT NOT NULL,
+    state              TEXT NOT NULL,
+    touched_lower_at   TEXT,
+    deadline_at        TEXT,
+    atr_at_touch       REAL,
+    deepest_bid        REAL,
+    invalidation_price REAL,
+    reclaimed_at       TEXT,
+    terminal_reason    TEXT,
+    updated_at         TEXT NOT NULL,
+    PRIMARY KEY (zone_id, account_label),
+    FOREIGN KEY(zone_id) REFERENCES price_zones(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_liquidity_sweep_states_lookup
+ON liquidity_sweep_states(account_label, symbol, state, updated_at);
+
 """
 
 
