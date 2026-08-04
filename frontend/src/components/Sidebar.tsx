@@ -28,7 +28,11 @@ export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
       {!mobileOpen ? (
         <button
           aria-label="Mở menu điều hướng"
-          className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-3 z-[60] grid h-10 w-10 place-items-center rounded-xl border border-blue-400/35 bg-ink-900/95 text-blue-300 shadow-[0_8px_30px_rgba(0,0,0,0.45)] backdrop-blur transition hover:border-cyan-300/50 hover:text-cyan-200 md:hidden"
+          className={`fixed left-3 z-[60] grid h-10 w-10 place-items-center rounded-xl border border-blue-400/35 bg-ink-900/95 text-blue-300 shadow-[0_8px_30px_rgba(0,0,0,0.45)] backdrop-blur transition hover:border-cyan-300/50 hover:text-cyan-200 md:hidden ${
+            activePage === "chart"
+              ? "bottom-[calc(4.5rem+env(safe-area-inset-bottom))]"
+              : "bottom-[max(1rem,env(safe-area-inset-bottom))]"
+          }`}
           title="Mở menu"
           type="button"
           onClick={() => setMobileOpen(true)}

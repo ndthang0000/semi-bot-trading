@@ -230,6 +230,7 @@ function DetailPanel({ trade, onClose, onSaved }: {
           ["Account", trade.account_label || "Default"],
           ["Direction", trade.direction ?? trade.side],
           ["Entry", trade.entry_price?.toFixed(2) ?? "-"],
+          ["Volume", `${trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })} lot`],
           ["Stop Loss", trade.stop_loss?.toFixed(2) ?? "-"],
           ["Take Profit", typeof trade.take_profit[0] === "number" ? trade.take_profit[0].toFixed(2) : "-"],
           ["R:R", rr ? `1:${rr.toFixed(2)}` : "-"],
@@ -597,6 +598,9 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
       <td className={`px-3 py-2 font-medium ${trade.direction === "long" || trade.side === "buy" ? "text-green-400" : "text-red-400"}`}>
         {trade.direction ?? trade.side}
       </td>
+      <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-400">
+        {trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })}
+      </td>
       <td className="px-3 py-2 text-slate-400">{trade.entry_price?.toFixed(2) ?? "-"}</td>
       <td className="px-3 py-2 text-slate-400">{trade.stop_loss?.toFixed(2) ?? "-"}</td>
       <td className={`px-3 py-2 text-right font-semibold ${r !== null ? r >= 0 ? "text-green-400" : "text-red-400" : "text-slate-500"}`}>
@@ -749,13 +753,14 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
               ) : trades.length === 0 ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-600">No trades found</div>
               ) : (
-                <table className="w-full min-w-[920px]">
+                <table className="w-full min-w-[980px]">
                   <thead>
                     <tr className="border-b border-ink-700 bg-ink-900 text-xs text-slate-500">
                       <th className="px-3 py-2 text-left font-normal">Date (UTC)</th>
                       <th className="px-3 py-2 text-left font-normal">Account</th>
                       <th className="px-3 py-2 text-left font-normal">Playbook</th>
                       <th className="px-3 py-2 text-left font-normal">Dir</th>
+                      <th className="px-3 py-2 text-right font-normal">Volume (lot)</th>
                       <th className="px-3 py-2 text-left font-normal">Entry</th>
                       <th className="px-3 py-2 text-left font-normal">SL</th>
                       <th className="px-3 py-2 text-right font-normal">PnL</th>

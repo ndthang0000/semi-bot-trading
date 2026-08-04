@@ -1,8 +1,9 @@
-import { Pencil, RotateCcw, Save, X } from "lucide-react";
+import { ChevronUp, Pencil, RotateCcw, Save, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { updateMarketContextOverride } from "../api/chart";
 import { compactTime } from "../lib/time";
 import type { ChartPayload, MarketContext } from "../types";
+import { MobileBottomSheet } from "./mobile/MobileBottomSheet";
 
 type ContextType = "bias" | "regime";
 
@@ -35,6 +36,8 @@ const CONTEXT_CARD_CLASS = "h-20 overflow-hidden rounded-md border border-ink-70
 
 export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const [editing, setEditing] = useState<ContextType | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const h1 = payload?.layers.contexts.H1;
   const biasContext = h1?.bias;
   const regimeContext = h1?.regime;
@@ -44,8 +47,32 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
   const overlays = readOverlays(regimeContext?.metadata.overlays);
   const priceChange = readCurrentPriceChange(payload);
 
+  const signalHeadline = payload?.layers.m15_signal
+    ? triggerHeadline(
+        payload.layers.m15_signal.trigger_method,
+        payload.layers.m15_signal.reaction_state,
+        Boolean(payload.layers.m15_signal.candidate_id),
+      )
+    : "--";
+
   return (
-    <section className="grid grid-cols-[210px_220px_170px_150px_150px_280px_minmax(220px,1fr)] gap-3 overflow-x-auto border-b border-ink-700 bg-ink-950 px-4 py-3">
+    <>
+    <button
+      className="flex h-11 w-full items-center gap-3 border-b border-ink-700 bg-ink-950 px-3 text-left lg:hidden"
+      type="button"
+      onClick={() => setMobileOpen(true)}
+    >
+      <span className={`text-xs font-bold ${bias === "bullish" ? "text-emerald-300" : bias === "bearish" ? "text-rose-300" : "text-slate-300"}`}>
+        {bias}
+      </span>
+      <span className="h-4 w-px bg-ink-600" />
+      <span className="max-w-[7rem] truncate text-xs font-semibold text-slate-300">{regime}</span>
+      <span className="h-4 w-px bg-ink-600" />
+      <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">M15 · {signalHeadline}</span>
+      <ChevronUp className="shrink-0 text-slate-500" size={16} />
+    </button>
+
+    <section className="hidden grid-cols-[210px_220px_170px_150px_150px_280px_minmax(220px,1fr)] gap-3 overflow-x-auto border-b border-ink-700 bg-ink-950 px-4 py-3 lg:grid">
       <BiasCard bias={bias} context={biasContext} priceChange={priceChange} onEdit={() => setEditing("bias")} />
       <ContextCard
         label="H1 Regime"
@@ -71,6 +98,46 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
         />
       ) : null}
     </section>
+
+    <MobileBottomSheet
+      expanded={mobileExpanded}
+      onExpandedChange={setMobileExpanded}
+      onClose={() => {
+        setEditing(null);
+        setMobileOpen(false);
+      }}
+      open={mobileOpen}
+      title="Market context"
+    >
+      <div className="grid gap-3 p-4">
+        <BiasCard bias={bias} context={biasContext} priceChange={priceChange} onEdit={() => setEditing("bias")} />
+        <ContextCard
+          label="H1 Regime"
+          value={overlays.length ? `${regime} + ${overlays.join(" + ")}` : regime}
+          context={regimeContext}
+          onEdit={() => setEditing("regime")}
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <MacroTrendCard context={macroContext} />
+          <AtrCard atr={payload?.layers.atr} />
+          <RsiCard rsi={payload?.layers.rsi} />
+          <ContextCard label="Range" value={payload ? `${compactTime(payload.range.start)} -> ${compactTime(payload.range.end)}` : "--"} />
+        </div>
+        <M15SignalCard signal={payload?.layers.m15_signal} />
+        {editing && h1?.[editing] ? (
+          <ContextOverrideEditor
+            context={h1[editing]}
+            contextType={editing}
+            onCancel={() => setEditing(null)}
+            onSaved={() => {
+              setEditing(null);
+              onContextUpdated();
+            }}
+          />
+        ) : null}
+      </div>
+    </MobileBottomSheet>
+    </>
   );
 }
 
@@ -358,7 +425,7 @@ function ContextOverrideEditor({
 
   const values = contextType === "bias" ? BIAS_VALUES : REGIME_VALUES;
   return (
-    <div className="col-span-4 grid gap-3 rounded-md border border-ink-700 bg-ink-900 p-3">
+    <div className="grid gap-3 rounded-md border border-ink-700 bg-ink-900 p-3 md:col-span-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs text-slate-500">H1 {contextType === "bias" ? "Bias" : "Regime"} Override</div>
@@ -371,7 +438,7 @@ function ContextOverrideEditor({
         </IconButton>
       </div>
 
-      <div className="grid grid-cols-[160px_120px_140px_120px_minmax(0,1fr)] gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-[160px_120px_140px_120px_minmax(0,1fr)]">
         <label className="grid gap-1 text-xs text-slate-500">
           Value
           <select
@@ -413,7 +480,7 @@ function ContextOverrideEditor({
             ))}
           </select>
         </label>
-        <label className="mt-6 flex items-center gap-2 text-xs text-slate-400">
+        <label className="flex min-h-11 items-center gap-2 text-xs text-slate-400 md:mt-6">
           <input
             checked={noExpiry}
             className="accent-cyan-400"

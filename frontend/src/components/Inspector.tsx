@@ -51,6 +51,11 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const [activeTab, setActiveTab] = useState<InspectorTab>("zones");
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
+  useEffect(() => {
+    if (selected?.kind === "trade") setActiveTab("trades");
+    if (selected?.kind === "zone") setActiveTab("zones");
+  }, [selected?.kind]);
+
   const showToast = useCallback((kind: ToastMessage["kind"], text: string) => {
     setToast({ id: Date.now(), kind, text });
   }, []);
@@ -62,7 +67,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   }, [toast]);
 
   return (
-    <aside className="relative grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-l border-ink-700 bg-ink-900">
+    <aside className="relative grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-900 lg:border-l lg:border-ink-700">
       {toast ? <Toast toast={toast} onClose={() => setToast(null)} /> : null}
       <div className="border-b border-ink-700 p-3">
         <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1">

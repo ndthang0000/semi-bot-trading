@@ -856,7 +856,7 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
       </div>
 
       {/* Metrics grid */}
-      <div className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs sm:grid-cols-3 sm:gap-x-4 sm:gap-y-2">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs sm:grid-cols-4 sm:gap-x-4 sm:gap-y-2">
         <div className="min-w-0">
           <div className="text-slate-500">Balance</div>
           <div className="break-words font-semibold tabular-nums text-slate-100">{acc.balance.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}</div>
@@ -867,7 +867,13 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
             {acc.equity.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}
           </div>
         </div>
-        <div className="col-span-2 min-w-0 sm:col-span-1">
+        <div className="min-w-0">
+          <div className="text-slate-500">Open PnL</div>
+          <div className={`break-words font-semibold tabular-nums ${acc.profit >= 0 ? "text-green-400" : "text-red-400"}`}>
+            {acc.profit >= 0 ? "+" : ""}{acc.profit.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}
+          </div>
+        </div>
+        <div className="min-w-0">
           <div className="text-slate-500">Today Profit · CE(S)T</div>
           <div className={`break-words font-semibold tabular-nums ${dailyProfit >= 0 ? "text-green-400" : "text-red-400"}`}>
             {dailyProfit >= 0 ? "+" : ""}{dailyProfit.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cur}

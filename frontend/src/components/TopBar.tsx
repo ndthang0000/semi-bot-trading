@@ -1,20 +1,26 @@
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, MoreHorizontal, PanelBottomOpen, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/auth";
 import type { NewsResponse } from "../api/chart";
 import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
+import { MobileBottomSheet } from "./mobile/MobileBottomSheet";
 import { NewsPill } from "./NewsWidget";
 
 type TopBarProps = {
   isFetching: boolean;
   mode: "dashboard" | "replay";
+  currentPrice?: number | null;
+  priceChangePercent?: number | null;
+  onOpenInspector: () => void;
   onRefresh: () => void;
   newsData?: NewsResponse | null;
 };
 
-export function TopBar({ isFetching, mode, onRefresh, newsData }: TopBarProps) {
+type MobilePanel = "layers" | "draw" | "more" | null;
+
+export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefresh, priceChangePercent, newsData }: TopBarProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
   const startIndex = useChartStore((state) => state.startIndex);
@@ -27,13 +33,53 @@ export function TopBar({ isFetching, mode, onRefresh, newsData }: TopBarProps) {
   const setAutoRefreshEnabled = useChartStore((state) => state.setAutoRefreshEnabled);
   const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
   const autoRefreshActive = mode === "dashboard" && autoRefreshEnabled && startIndex === null;
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>(null);
   // H1 is the only zone/context timeframe; manual zones on M15 are rejected by
   // the API (422), so the draw entry point is disabled while viewing M15 to
   // avoid a dead-end UX (draw -> submit -> error).
   const canAddEntity = timeframe === "H1";
 
+  const priceTone = (priceChangePercent ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300";
+
   return (
-    <header className="flex h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4">
+    <>
+    <header className="flex h-12 items-center justify-between border-b border-ink-700 bg-ink-900/95 px-3 backdrop-blur lg:hidden">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold tracking-wide text-slate-100">XAUUSD</span>
+          <span className={`text-xs font-semibold tabular-nums ${priceTone}`}>
+            {typeof currentPrice === "number" ? currentPrice.toFixed(2) : "--"}
+          </span>
+          {typeof priceChangePercent === "number" ? (
+            <span className={`text-[10px] tabular-nums ${priceTone}`}>
+              {priceChangePercent > 0 ? "+" : ""}{priceChangePercent.toFixed(2)}%
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-0.5 text-[10px] text-slate-500">
+          {mode === "replay" ? "Replay" : startIndex === null ? "Realtime · Latest" : `History · ${startIndex}`}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button
+          className="h-10 min-w-12 rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 text-sm font-bold text-cyan-100 active:bg-cyan-400/20"
+          type="button"
+          onClick={() => setTimeframe(timeframe === "H1" ? "M15" : "H1")}
+        >
+          {timeframe}
+        </button>
+        <button
+          aria-label="Reload chart"
+          className="grid h-10 w-10 place-items-center rounded-lg border border-ink-700 bg-ink-800 text-slate-300 active:border-cyan-400"
+          type="button"
+          onClick={onRefresh}
+        >
+          <RefreshCw className={isFetching ? "animate-spin" : ""} size={18} />
+        </button>
+      </div>
+    </header>
+
+    <header className="hidden h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4 lg:flex">
       <div className="flex items-center gap-3 font-semibold text-slate-100">
         <span className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-ink-800 text-cyan-300">
           <Activity size={18} />
@@ -154,7 +200,280 @@ export function TopBar({ isFetching, mode, onRefresh, newsData }: TopBarProps) {
         <LogoutButton />
       </div>
     </header>
+
+    <nav className="fixed inset-x-0 bottom-0 z-[65] grid h-[calc(3.75rem+env(safe-area-inset-bottom))] grid-cols-5 border-t border-ink-600 bg-ink-900/95 px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_30px_rgba(0,0,0,0.35)] backdrop-blur lg:hidden">
+      <MobileDockButton label={timeframe} icon={<Activity size={19} />} onClick={() => setTimeframe(timeframe === "H1" ? "M15" : "H1")} active />
+      <MobileDockButton label="Layers" icon={<Layers size={19} />} onClick={() => setMobilePanel("layers")} />
+      <MobileDockButton label="Draw" icon={<Plus size={20} />} onClick={() => setMobilePanel("draw")} disabled={!canAddEntity} active={Boolean(addEntityKind)} />
+      <MobileDockButton label="Inspect" icon={<PanelBottomOpen size={19} />} onClick={onOpenInspector} />
+      <MobileDockButton label="More" icon={<MoreHorizontal size={20} />} onClick={() => setMobilePanel("more")} />
+    </nav>
+
+    <MobileBottomSheet open={mobilePanel === "layers"} onClose={() => setMobilePanel(null)} title="Chart layers">
+      <MobileLayersPanel />
+    </MobileBottomSheet>
+    <MobileBottomSheet open={mobilePanel === "draw"} onClose={() => setMobilePanel(null)} title="Draw on H1 chart">
+      <MobileDrawPanel
+        selected={addEntityKind}
+        onSelect={(kind) => {
+          setAddEntityKind(kind);
+          setMobilePanel(null);
+        }}
+      />
+    </MobileBottomSheet>
+    <MobileBottomSheet open={mobilePanel === "more"} onClose={() => setMobilePanel(null)} title="Chart settings">
+      <MobileMorePanel
+        autoRefreshActive={autoRefreshActive}
+        isFetching={isFetching}
+        limit={limit}
+        mode={mode}
+        newsData={newsData}
+        onClose={() => setMobilePanel(null)}
+        onRefresh={onRefresh}
+        startIndex={startIndex}
+      />
+    </MobileBottomSheet>
+    </>
   );
+}
+
+function MobileDockButton({
+  active = false,
+  disabled = false,
+  icon,
+  label,
+  onClick,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`flex min-w-0 flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition active:bg-ink-700 ${
+        active ? "text-cyan-300" : "text-slate-400"
+      } disabled:opacity-35`}
+      disabled={disabled}
+      type="button"
+      onClick={onClick}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function MobileLayersPanel() {
+  const activeZonesOnly = useChartStore((state) => state.activeZonesOnly);
+  const showZones = useChartStore((state) => state.showZones);
+  const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
+  const showStructure = useChartStore((state) => state.showStructure);
+  const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
+  const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
+  const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const setActiveZonesOnly = useChartStore((state) => state.setActiveZonesOnly);
+  const setShowZones = useChartStore((state) => state.setShowZones);
+  const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
+  const setShowStructure = useChartStore((state) => state.setShowStructure);
+  const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
+  const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
+  const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
+  const requiredZones = new Set(selectedPlaybooks.flatMap((playbook) => playbookLayerRequirements[playbook].zones));
+  const structureRequired = selectedPlaybooks.some((playbook) => playbookLayerRequirements[playbook].structure);
+
+  return (
+    <div className="grid gap-2 p-4">
+      <MobileToggleRow checked={importantZonesOnly} label="Important zones only" onChange={setImportantZonesOnly} />
+      <label className="flex min-h-12 items-center gap-3 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-200">
+        <span className="flex-1">Maximum visible zones</span>
+        <input
+          className="h-10 w-20 rounded-lg border border-ink-600 bg-ink-950 px-2 text-center text-sm tabular-nums outline-none"
+          max={40}
+          min={1}
+          type="number"
+          value={maxVisibleZones}
+          onChange={(event) => setMaxVisibleZones(Number(event.target.value))}
+        />
+      </label>
+      <MobileToggleRow checked={activeZonesOnly} label="Active zones only" onChange={setActiveZonesOnly} />
+      <MobileToggleRow checked={showZones} label="Price zones" onChange={setShowZones} />
+      <div className="grid grid-cols-2 gap-2">
+        {LAYER_ITEMS.map((item) => (
+          <MobileToggleRow
+            key={item.key}
+            checked={zoneTypeVisibility[item.key]}
+            compact
+            disabled={!showZones || requiredZones.has(item.key)}
+            label={item.label}
+            onChange={(checked) => setZoneTypeVisible(item.key, checked)}
+          />
+        ))}
+      </div>
+      <MobileToggleRow checked={showStructure} disabled={structureRequired} label="Structure + ZigZag" onChange={setShowStructure} />
+      <label className="flex min-h-12 items-center gap-3 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-200">
+        <span className="flex-1">Trades</span>
+        <select
+          className="h-10 rounded-lg border border-ink-600 bg-ink-950 px-2 text-sm outline-none"
+          value={tradeVisibilityMode}
+          onChange={(event) => setTradeVisibilityMode(event.target.value as TradeVisibilityMode)}
+        >
+          <option value="visible">Visible</option>
+          <option value="hidden">Hidden</option>
+          <option value="all">All</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <p className="px-1 text-[11px] leading-relaxed text-slate-500">
+        Layers required by an active playbook stay enabled automatically.
+      </p>
+    </div>
+  );
+}
+
+function MobileToggleRow({
+  checked,
+  compact = false,
+  disabled = false,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  compact?: boolean;
+  disabled?: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`flex min-h-12 items-center gap-2 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm ${disabled ? "opacity-50" : "text-slate-200"}`}>
+      <span className={`min-w-0 flex-1 ${compact ? "text-xs" : ""}`}>{label}</span>
+      <input
+        checked={checked}
+        className="h-5 w-5 accent-cyan-400"
+        disabled={disabled}
+        type="checkbox"
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
+  );
+}
+
+const MOBILE_DRAW_ITEMS: Array<{ kind: AddEntityKind; label: string; description: string }> = [
+  { kind: "support", label: "Support", description: "Manual H1 support zone" },
+  { kind: "resistance", label: "Resistance", description: "Manual H1 resistance zone" },
+  { kind: "demand_order_block", label: "Demand OB", description: "Bullish order block" },
+  { kind: "supply_order_block", label: "Supply OB", description: "Bearish order block" },
+  { kind: "bullish_fvg", label: "Bullish FVG", description: "Bullish imbalance" },
+  { kind: "bearish_fvg", label: "Bearish FVG", description: "Bearish imbalance" },
+  { kind: "consolidation", label: "Consolidation", description: "Range or compression box" },
+  { kind: "buy_side_liquidity", label: "Buy liquidity", description: "Liquidity above highs" },
+  { kind: "sell_side_liquidity", label: "Sell liquidity", description: "Liquidity below lows" },
+];
+
+function MobileDrawPanel({ selected, onSelect }: { selected: AddEntityKind | null; onSelect: (kind: AddEntityKind) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 p-4">
+      {MOBILE_DRAW_ITEMS.map((item) => (
+        <button
+          key={item.kind}
+          className={`min-h-20 rounded-xl border p-3 text-left active:scale-[0.99] ${
+            selected === item.kind ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850"
+          }`}
+          type="button"
+          onClick={() => onSelect(item.kind)}
+        >
+          <span className="block text-sm font-semibold text-slate-100">{item.label}</span>
+          <span className="mt-1 block text-[11px] leading-snug text-slate-500">{item.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MobileMorePanel({
+  autoRefreshActive,
+  isFetching,
+  limit,
+  mode,
+  newsData,
+  onClose,
+  onRefresh,
+  startIndex,
+}: {
+  autoRefreshActive: boolean;
+  isFetching: boolean;
+  limit: number;
+  mode: "dashboard" | "replay";
+  newsData?: NewsResponse | null;
+  onClose: () => void;
+  onRefresh: () => void;
+  startIndex: number | null;
+}) {
+  const autoRefreshEnabled = useChartStore((state) => state.autoRefreshEnabled);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const setAutoRefreshEnabled = useChartStore((state) => state.setAutoRefreshEnabled);
+  const setLimit = useChartStore((state) => state.setLimit);
+  const setStartIndex = useChartStore((state) => state.setStartIndex);
+  const shiftStartIndex = useChartStore((state) => state.shiftStartIndex);
+  const toggleSelectedPlaybook = useChartStore((state) => state.toggleSelectedPlaybook);
+
+  return (
+    <div className="grid gap-4 p-4">
+      <div className="grid grid-cols-2 gap-2">
+        <a className={`grid h-12 place-items-center rounded-xl border text-sm font-semibold ${mode === "dashboard" ? "border-cyan-400 bg-cyan-400/10 text-cyan-100" : "border-ink-700 bg-ink-850 text-slate-300"}`} href="/">
+          Realtime
+        </a>
+        <a className={`grid h-12 place-items-center rounded-xl border text-sm font-semibold ${mode === "replay" ? "border-cyan-400 bg-cyan-400/10 text-cyan-100" : "border-ink-700 bg-ink-850 text-slate-300"}`} href="/replay-chart">
+          Replay
+        </a>
+      </div>
+
+      <section className="grid gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Candle window</div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="grid gap-1 text-xs text-slate-500">
+            Limit
+            <input className="h-11 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none" min={50} max={15000} step={50} type="number" value={limit} onChange={(event) => setLimit(Number(event.target.value))} />
+          </label>
+          <label className="grid gap-1 text-xs text-slate-500">
+            Start index
+            <input className="h-11 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none" min={0} placeholder="Latest" type="number" value={startIndex ?? ""} onChange={(event) => setStartIndex(event.target.value === "" ? null : Number(event.target.value))} />
+          </label>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          <MobileSmallButton label="Prev" disabled={startIndex === null || startIndex <= 0} onClick={() => shiftStartIndex(-limit)} />
+          <MobileSmallButton label="Next" onClick={() => shiftStartIndex(limit)} />
+          <MobileSmallButton label="First" onClick={() => setStartIndex(0)} />
+          <MobileSmallButton label="Latest" onClick={() => setStartIndex(null)} />
+        </div>
+      </section>
+
+      <section className="grid gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Playbooks</div>
+        {PLAYBOOK_ITEMS.map((item) => (
+          <MobileToggleRow
+            key={item.key}
+            checked={selectedPlaybooks.includes(item.key)}
+            label={item.label}
+            onChange={(checked) => toggleSelectedPlaybook(item.key, checked)}
+          />
+        ))}
+      </section>
+
+      <MobileToggleRow checked={autoRefreshEnabled} label={autoRefreshActive ? "Auto refresh every 60s" : "Auto refresh (paused in history)"} onChange={setAutoRefreshEnabled} />
+      <button className="flex h-12 items-center justify-center gap-2 rounded-xl border border-ink-700 bg-ink-850 text-sm font-semibold text-slate-200" type="button" onClick={() => { onRefresh(); onClose(); }}>
+        <RefreshCw className={isFetching ? "animate-spin" : ""} size={17} /> Reload chart
+      </button>
+      {newsData ? <div className="flex justify-center"><NewsPill data={newsData} /></div> : null}
+      <div className="flex justify-end"><LogoutButton /></div>
+    </div>
+  );
+}
+
+function MobileSmallButton({ disabled = false, label, onClick }: { disabled?: boolean; label: string; onClick: () => void }) {
+  return <button className="h-11 rounded-xl border border-ink-700 bg-ink-850 text-xs font-semibold text-slate-300 disabled:opacity-35" disabled={disabled} type="button" onClick={onClick}>{label}</button>;
 }
 
 function LogoutButton() {

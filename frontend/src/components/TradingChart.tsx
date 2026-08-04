@@ -12,6 +12,7 @@ import { ArrowDown, ArrowUp, Newspaper } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
 import { toUnixTime } from "../lib/time";
+import { isMobileChartWidth, visibleChartBars } from "../lib/mobileChart";
 import { useChartStore } from "../store/chartStore";
 import {
   applyInitialPriceViewport,
@@ -720,7 +721,10 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         borderColor: "#202b3a",
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 20,
+        // Future whitespace is already supplied by the transparent scale-anchor
+        // series. A second right offset pushes the latest candle too far left,
+        // which is especially costly on narrow mobile charts.
+        rightOffset: 0,
       },
     });
 
@@ -751,17 +755,20 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     scaleAnchorSeriesRef.current = scaleAnchorSeries;
     zigzagSeriesRef.current = zigzagSeries;
     candleSeries.setData(candleDataRef.current);
-    scaleAnchorSeries.setData(buildScaleAnchorData(candleDataRef.current, newsDataRef.current?.events ?? []));
+    scaleAnchorSeries.setData(
+      buildScaleAnchorData(candleDataRef.current, scaleEventsForViewport(container.clientWidth, newsDataRef.current?.events ?? [])),
+    );
     zigzagSeries.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
     appliedViewKeyRef.current = viewKey;
     manualViewportRef.current = false;
+    const requestedVisibleBars = visibleChartBars(container.clientWidth, payload.timeframe, payload.range.limit);
     if (payloadRef.current.replay?.enabled) {
-      applyReplayTimeViewport(chart, candleDataRef.current, payloadRef.current.range.limit);
+      applyReplayTimeViewport(chart, candleDataRef.current, requestedVisibleBars);
       replayPriceRangeRef.current = applyReplayPriceViewport(chart, candleDataRef.current, true);
     } else {
-      applyInitialViewport(chart, candleDataRef.current, payloadRef.current.range.limit);
+      applyInitialViewport(chart, candleDataRef.current, requestedVisibleBars);
       replayPriceRangeRef.current = applyInitialPriceViewport(chart, candleDataRef.current);
     }
     lastViewportRef.current = readCurrentViewport(chart);
@@ -932,7 +939,12 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
 
     // Full reload path (window change, symbol/timeframe change, or replay mode).
     series.setData(candleData);
-    scaleAnchorSeriesRef.current?.setData(buildScaleAnchorData(candleData, newsDataRef.current?.events ?? []));
+    scaleAnchorSeriesRef.current?.setData(
+      buildScaleAnchorData(
+        candleData,
+        scaleEventsForViewport(containerRef.current?.clientWidth ?? window.innerWidth, newsDataRef.current?.events ?? []),
+      ),
+    );
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
@@ -940,7 +952,11 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     if (isReplay) {
       if (previousViewKey !== viewKey || visiblePriceRange === null) {
         manualViewportRef.current = false;
-        applyReplayTimeViewport(chart, candleData, payload.range.limit);
+        applyReplayTimeViewport(
+          chart,
+          candleData,
+          visibleChartBars(containerRef.current?.clientWidth ?? window.innerWidth, payload.timeframe, payload.range.limit),
+        );
         replayPriceRangeRef.current = applyReplayPriceViewport(chart, candleData, true);
       } else {
         if (visibleRange) {
@@ -954,7 +970,11 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       lockedViewportRef.current = null;
       manualViewportRef.current = false;
       replayPriceRangeRef.current = null;
-      applyInitialViewport(chart, candleData, payload.range.limit);
+      applyInitialViewport(
+        chart,
+        candleData,
+        visibleChartBars(containerRef.current?.clientWidth ?? window.innerWidth, payload.timeframe, payload.range.limit),
+      );
       replayPriceRangeRef.current = applyInitialPriceViewport(chart, candleData);
     } else {
       // Same view but non-incremental (e.g. many candles changed at once).
@@ -981,15 +1001,22 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     if (!chart || !anchorSeries) return;
 
     const viewport = readCurrentViewport(chart);
-    anchorSeries.setData(buildScaleAnchorData(candleDataRef.current, newsData?.events ?? []));
+    anchorSeries.setData(
+      buildScaleAnchorData(
+        candleDataRef.current,
+        scaleEventsForViewport(containerRef.current?.clientWidth ?? window.innerWidth, newsData?.events ?? []),
+      ),
+    );
     restoreViewport(chart, viewport);
     scheduleOverlayRecalc();
   }, [newsData, scheduleOverlayRecalc]);
 
+  const compactViewport = isMobileChartWidth(containerRef.current?.clientWidth ?? window.innerWidth);
+
   return (
     <div
       data-chart-capture-root="true"
-      className="relative h-full min-h-[540px] overflow-hidden bg-[#080b10]"
+      className="relative h-full min-h-0 touch-none overflow-hidden bg-[#080b10] lg:min-h-[540px]"
       onMouseLeave={() => setPointerY(null)}
       onMouseMove={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
@@ -1024,12 +1051,13 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
           const isHovered = hoveredZoneId === box.zone.id;
           const setupStatus = setupStateByZone.get(box.zone.id);
           const zoneClasses = zoneVisualClasses(box.zone);
-          const showLabel =
-            isSelected ||
-            isHovered ||
-            (importantZonesOnly
-              ? box.width > 220 && box.height > 18 && box.zone.weight >= 0.7
-              : box.width > 170 && box.height > 18 && box.zone.weight >= 0.55);
+          const showLabel = compactViewport
+            ? isSelected || (box.width > 150 && box.height > 20 && box.zone.weight >= 0.78)
+            : isSelected ||
+              isHovered ||
+              (importantZonesOnly
+                ? box.width > 220 && box.height > 18 && box.zone.weight >= 0.7
+                : box.width > 170 && box.height > 18 && box.zone.weight >= 0.55);
           return (
             <div
               key={box.zone.id}
@@ -1073,28 +1101,28 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
               {isSelected ? (
                 <>
                   <button
-                    className="absolute left-0 top-0 z-40 h-2.5 w-full cursor-ns-resize border-t border-cyan-200/90 bg-cyan-300/20"
+                    className="absolute left-0 top-0 z-40 h-4 w-full cursor-ns-resize border-t border-cyan-200/90 bg-cyan-300/20 md:h-2.5"
                     title="Drag to resize zone high"
                     type="button"
                     onClick={(event) => event.stopPropagation()}
                     onPointerDown={(event) => beginZoneDrag(event, box, "resize-top")}
                   />
                   <button
-                    className="absolute bottom-0 left-0 z-40 h-2.5 w-full cursor-ns-resize border-b border-cyan-200/90 bg-cyan-300/20"
+                    className="absolute bottom-0 left-0 z-40 h-4 w-full cursor-ns-resize border-b border-cyan-200/90 bg-cyan-300/20 md:h-2.5"
                     title="Drag to resize zone low"
                     type="button"
                     onClick={(event) => event.stopPropagation()}
                     onPointerDown={(event) => beginZoneDrag(event, box, "resize-bottom")}
                   />
                   <button
-                    className="absolute left-0 top-0 z-50 h-full w-2.5 cursor-ew-resize border-l border-cyan-200/90 bg-cyan-300/20"
+                    className="absolute left-0 top-0 z-50 h-full w-4 cursor-ew-resize border-l border-cyan-200/90 bg-cyan-300/20 md:w-2.5"
                     title="Drag to resize zone start"
                     type="button"
                     onClick={(event) => event.stopPropagation()}
                     onPointerDown={(event) => beginZoneDrag(event, box, "resize-left")}
                   />
                   <button
-                    className="absolute right-0 top-0 z-50 h-full w-2.5 cursor-ew-resize border-r border-cyan-200/90 bg-cyan-300/20"
+                    className="absolute right-0 top-0 z-50 h-full w-4 cursor-ew-resize border-r border-cyan-200/90 bg-cyan-300/20 md:w-2.5"
                     title="Drag to resize zone end"
                     type="button"
                     onClick={(event) => event.stopPropagation()}
@@ -1121,7 +1149,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
           return (
             <button
               key={dot.point.id}
-              className={`pointer-events-auto absolute z-30 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border shadow-[0_0_6px_rgba(0,0,0,0.55)] transition hover:scale-110 ${
+              className={`pointer-events-auto absolute z-30 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border shadow-[0_0_6px_rgba(0,0,0,0.55)] transition after:absolute after:-inset-2 after:content-[''] hover:scale-110 ${
                 isHigh
                   ? "-translate-y-[calc(100%+4px)] border-rose-300/80 bg-rose-950/90 text-rose-300"
                   : "translate-y-[4px] border-emerald-300/80 bg-emerald-950/90 text-emerald-300"
@@ -1251,7 +1279,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
               >
                 {isGroup ? `${box.trades.length} acct` : `${trade.pnl_r?.toFixed(2) ?? "--"}R`}
               </span>
-              {isGroup ? (
+              {isGroup && (!compactViewport || isSelected) ? (
                 <span className="absolute right-1 top-1 max-w-[calc(100%-4.5rem)] truncate rounded border border-slate-200/70 bg-ink-950/95 px-1 py-0.5 text-[9px] font-black text-slate-100 shadow-lg">
                   {compactTradeGroupSummary(box.trades)}
                 </span>
@@ -1282,4 +1310,8 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
 
 function filterVisibleM15Triggers(triggers: M15TriggerOverlay[]): M15TriggerOverlay[] {
   return triggers.filter((trigger) => trigger.candidate_id !== null);
+}
+
+function scaleEventsForViewport<T>(width: number, events: T[]): T[] {
+  return isMobileChartWidth(width) ? [] : events;
 }

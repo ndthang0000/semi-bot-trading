@@ -7,6 +7,7 @@ import { Inspector } from "../components/Inspector";
 import { ReplayControls } from "../components/ReplayControls";
 import { TopBar } from "../components/TopBar";
 import { TradingChart } from "../components/TradingChart";
+import { MobileBottomSheet } from "../components/mobile/MobileBottomSheet";
 import type { NewsResponse } from "../api/chart";
 import { useChartStore } from "../store/chartStore";
 import type { ChartPayload, PriceZone } from "../types";
@@ -26,9 +27,12 @@ export function ChartPage({ newsData }: ChartPageProps) {
   const activeZonesOnly = useChartStore((state) => state.activeZonesOnly);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const autoRefreshEnabled = useChartStore((state) => state.autoRefreshEnabled);
+  const selected = useChartStore((state) => state.selected);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [replaySpeedSeconds, setReplaySpeedSeconds] = useState(1);
   const [replayIndex, setReplayIndex] = useState(0);
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [mobileInspectorExpanded, setMobileInspectorExpanded] = useState(false);
   const autoRefreshActive = !isReplayRoute && autoRefreshEnabled && startIndex === null;
 
   const timelineQuery = useQuery({
@@ -98,6 +102,10 @@ export function ChartPage({ newsData }: ChartPageProps) {
   }, [symbol, timeframe, limit, startIndex]);
 
   useEffect(() => {
+    if (selected) setMobileInspectorOpen(true);
+  }, [selected]);
+
+  useEffect(() => {
     if (!isReplayRoute || !replayPlaying || replayTimes.length === 0) return;
     const intervalId = window.setInterval(() => {
       setReplayIndex((current) => {
@@ -126,10 +134,24 @@ export function ChartPage({ newsData }: ChartPageProps) {
     [replayIndex, replayPlaying, replaySpeedSeconds, timelineQuery.data],
   );
 
+  const firstCandle = chartQuery.data?.layers.candles[0];
+  const lastCandle = chartQuery.data?.layers.candles.at(-1);
+  const priceChangePercent = firstCandle && lastCandle && firstCandle.open !== 0
+    ? ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100
+    : null;
+
   return (
-    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-950 text-slate-100">
-      <TopBar mode={mode} isFetching={chartQuery.isFetching || timelineQuery.isFetching} onRefresh={refreshChart} newsData={newsData} />
-      <main className="grid min-h-0 grid-cols-[minmax(0,1fr)_340px]">
+    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-950 pb-[calc(3.75rem+env(safe-area-inset-bottom))] text-slate-100 lg:pb-0">
+      <TopBar
+        currentPrice={lastCandle?.close ?? null}
+        mode={mode}
+        isFetching={chartQuery.isFetching || timelineQuery.isFetching}
+        onOpenInspector={() => setMobileInspectorOpen(true)}
+        onRefresh={refreshChart}
+        priceChangePercent={priceChangePercent}
+        newsData={newsData}
+      />
+      <main className="grid min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px]">
         <section className={`grid min-h-0 ${isReplayRoute ? "grid-rows-[auto_auto_minmax(0,1fr)]" : "grid-rows-[auto_minmax(0,1fr)]"}`}>
           <ContextStrip payload={chartQuery.data} onContextUpdated={() => chartQuery.refetch()} />
           {isReplayRoute ? (
@@ -159,8 +181,21 @@ export function ChartPage({ newsData }: ChartPageProps) {
             <div className="grid place-items-center bg-ink-950 text-sm text-slate-500">Loading chart...</div>
           )}
         </section>
-        <Inspector payload={chartQuery.data} onZoneUpdated={refreshChart} />
+        <div className="hidden min-h-0 lg:block">
+          <Inspector payload={chartQuery.data} onZoneUpdated={refreshChart} />
+        </div>
       </main>
+      <MobileBottomSheet
+        expanded={mobileInspectorExpanded}
+        onExpandedChange={setMobileInspectorExpanded}
+        onClose={() => setMobileInspectorOpen(false)}
+        open={mobileInspectorOpen}
+        title={selected ? `Inspector · ${selected.kind}` : "Inspector"}
+      >
+        <div className="h-full min-h-[20rem]">
+          <Inspector payload={chartQuery.data} onZoneUpdated={refreshChart} />
+        </div>
+      </MobileBottomSheet>
     </div>
   );
 }
