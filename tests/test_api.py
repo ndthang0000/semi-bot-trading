@@ -72,6 +72,11 @@ class ApiTest(unittest.TestCase):
                 listing = client.get("/api/accounts")
                 disabled = client.patch("/api/accounts/FTMO%20100K/execution", json={"enabled": False})
                 enabled = client.patch("/api/accounts/FTMO%20100K/execution", json={"enabled": True})
+                partial = client.patch(
+                    "/api/accounts/FTMO%20100K/partial-take-profit",
+                    json={"enabled": True, "trigger_r": 1.0},
+                )
+                listing_after_partial = client.get("/api/accounts")
                 close_all = client.post(
                     "/api/accounts/FTMO%20100K/close-all",
                     json={"idempotency_key": "close-ftmo-once", "include_manual_positions": True},
@@ -93,8 +98,13 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(500, account["daily"]["profit"])
         self.assertEqual(0.5, account["daily"]["profit_pct"])
         self.assertTrue(account["execution"]["effective_enabled"])
+        self.assertTrue(account["partial_take_profit"]["enabled"])
+        self.assertEqual(1.25, account["partial_take_profit"]["trigger_r"])
         self.assertEqual(200, disabled.status_code)
         self.assertEqual(200, enabled.status_code)
+        self.assertEqual(200, partial.status_code)
+        self.assertEqual(1.0, partial.json()["partial_take_profit"]["trigger_r"])
+        self.assertEqual(1.0, listing_after_partial.json()["accounts"][0]["partial_take_profit"]["trigger_r"])
         self.assertEqual(202, close_all.status_code)
         self.assertTrue(close_all.json()["include_manual_positions"])
         self.assertEqual(close_all.json()["command_id"], duplicate.json()["command_id"])

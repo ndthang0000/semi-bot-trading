@@ -319,10 +319,22 @@ def refresh_account_execution_control(
         """
         INSERT OR IGNORE INTO account_execution_controls (
             account_label, requested_enabled, effective_enabled, hard_enabled,
-            worker_status, broker_symbol, heartbeat_at, acknowledged_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?)
+            worker_status, broker_symbol, partial_take_profit_enabled,
+            partial_take_profit_r, heartbeat_at, acknowledged_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?)
         """,
-        (env.account_label, int(env.execution_enabled), int(env.execution_enabled), int(env.execution_enabled), broker_symbol, now, now, now),
+        (
+            env.account_label,
+            int(env.execution_enabled),
+            int(env.execution_enabled),
+            int(env.execution_enabled),
+            broker_symbol,
+            int(env.partial_take_profit_enabled),
+            float(env.partial_take_profit_r),
+            now,
+            now,
+            now,
+        ),
     )
     row = conn.execute(
         "SELECT requested_enabled FROM account_execution_controls WHERE account_label = ?",
@@ -334,12 +346,21 @@ def refresh_account_execution_control(
         UPDATE account_execution_controls
         SET effective_enabled = ?, hard_enabled = ?, worker_status = 'online', broker_symbol = ?,
             open_bot_positions = ?, pending_bot_orders = ?, heartbeat_at = ?,
+            partial_take_profit_enabled = COALESCE(partial_take_profit_enabled, ?),
+            partial_take_profit_r = COALESCE(partial_take_profit_r, ?),
             acknowledged_at = ?, last_error = NULL, updated_at = ?
         WHERE account_label = ?
         """,
         (
             int(env.execution_enabled and requested), int(env.execution_enabled), broker_symbol,
-            open_positions, pending_orders, now, now, now, env.account_label,
+            open_positions,
+            pending_orders,
+            now,
+            int(env.partial_take_profit_enabled),
+            float(env.partial_take_profit_r),
+            now,
+            now,
+            env.account_label,
         ),
     )
     conn.commit()
@@ -354,6 +375,24 @@ def account_execution_is_enabled(conn: Connection, env: RuntimeEnv) -> bool:
     ).fetchone()
     # Backward compatible for direct unit calls before the worker heartbeat.
     return True if row is None else bool(row["requested_enabled"] and row["effective_enabled"])
+
+
+def account_partial_take_profit_settings(conn: Connection, env: RuntimeEnv) -> tuple[bool, float]:
+    row = conn.execute(
+        """
+        SELECT partial_take_profit_enabled, partial_take_profit_r
+        FROM account_execution_controls
+        WHERE account_label = ?
+        """,
+        (env.account_label,),
+    ).fetchone()
+    if row is None:
+        return bool(env.partial_take_profit_enabled), float(env.partial_take_profit_r)
+    enabled_value = row["partial_take_profit_enabled"]
+    trigger_value = row["partial_take_profit_r"]
+    enabled = bool(env.partial_take_profit_enabled) if enabled_value is None else bool(enabled_value)
+    trigger_r = float(env.partial_take_profit_r) if trigger_value is None else float(trigger_value)
+    return enabled, min(max(trigger_r, 0.5), 2.0)
 
 
 def process_account_execution_commands(
@@ -1593,6 +1632,7 @@ def execute_candidate(
         trade_metadata["account_label"] = env.account_label
         trade_metadata["account_profile"] = env.account_profile
         trade_metadata["broker_symbol"] = broker_symbol
+        partial_enabled, partial_trigger_r = account_partial_take_profit_settings(conn, env)
         trade_metadata.update(
             _partial_take_profit_metadata(
                 env=env,
@@ -1601,6 +1641,8 @@ def execute_candidate(
                 stop_loss=exec_stop,
                 take_profit=exec_take_profit[0],
                 quantity=volume,
+                enabled=partial_enabled,
+                trigger_r=partial_trigger_r,
             )
         )
         conn.execute(
@@ -1683,23 +1725,26 @@ def _partial_take_profit_metadata(
     stop_loss: float,
     take_profit: float,
     quantity: float,
+    enabled: bool | None = None,
+    trigger_r: float | None = None,
 ) -> dict[str, Any]:
     risk = abs(entry_price - stop_loss)
-    enabled = bool(env.partial_take_profit_enabled and risk > 0 and quantity > 0)
+    resolved_enabled = bool(env.partial_take_profit_enabled if enabled is None else enabled)
+    resolved_enabled = bool(resolved_enabled and risk > 0 and quantity > 0)
     fraction = min(max(float(env.partial_take_profit_fraction), 0.0), 1.0)
-    trigger_r = max(float(env.partial_take_profit_r), 0.0)
+    resolved_trigger_r = min(max(float(env.partial_take_profit_r if trigger_r is None else trigger_r), 0.5), 2.0)
     if side == "buy":
-        trigger_price = entry_price + risk * trigger_r
+        trigger_price = entry_price + risk * resolved_trigger_r
         breakeven_stop = entry_price + float(env.partial_take_profit_be_buffer)
     else:
-        trigger_price = entry_price - risk * trigger_r
+        trigger_price = entry_price - risk * resolved_trigger_r
         breakeven_stop = entry_price - float(env.partial_take_profit_be_buffer)
     return {
         "initial_stop_loss": stop_loss,
         "initial_quantity": quantity,
         "partial_take_profit": {
-            "enabled": enabled,
-            "trigger_r": trigger_r,
+            "enabled": resolved_enabled,
+            "trigger_r": resolved_trigger_r,
             "trigger_price": round(trigger_price, 5),
             "fraction": fraction,
             "breakeven_stop": round(breakeven_stop, 5),
@@ -1717,8 +1762,9 @@ def manage_open_trade_partial_take_profit(
     broker_symbol: str,
 ) -> None:
     """Partial-close 50% at the configured R milestone and move the rest to BE."""
-    if not env.execution_enabled or not env.partial_take_profit_enabled or not broker_symbol:
+    if not env.execution_enabled or not broker_symbol:
         return
+    account_enabled, account_trigger_r = account_partial_take_profit_settings(conn, env)
     rows = conn.execute(
         """
         SELECT id, side, entry_price, stop_loss, take_profit_json, quantity, metadata_json
@@ -1744,7 +1790,31 @@ def manage_open_trade_partial_take_profit(
     for row in rows:
         metadata = json.loads(row["metadata_json"] or "{}")
         plan = metadata.get("partial_take_profit")
-        if not isinstance(plan, dict) or not plan.get("enabled"):
+        if not isinstance(plan, dict):
+            continue
+        if not plan.get("done"):
+            initial_stop = float(metadata.get("initial_stop_loss") or row["stop_loss"])
+            entry = float(row["entry_price"])
+            trigger_price = (
+                entry + abs(entry - initial_stop) * account_trigger_r
+                if str(row["side"]).lower() == "buy"
+                else entry - abs(entry - initial_stop) * account_trigger_r
+            )
+            if (
+                bool(plan.get("enabled")) != account_enabled
+                or abs(float(plan.get("trigger_r") or 0.0) - account_trigger_r) > 1e-9
+                or abs(float(plan.get("trigger_price") or 0.0) - trigger_price) > 1e-5
+            ):
+                plan["enabled"] = account_enabled
+                plan["trigger_r"] = account_trigger_r
+                plan["trigger_price"] = round(trigger_price, 5)
+                metadata["partial_take_profit"] = plan
+                conn.execute(
+                    "UPDATE trade_orders SET metadata_json = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(metadata, sort_keys=True, default=str), utc_now_iso(), row["id"]),
+                )
+                updated_any = True
+        if not plan.get("enabled"):
             continue
         broker_order_id = str(metadata.get("broker_order_id") or "")
         broker_deal_id = str(metadata.get("broker_deal_id") or "")
@@ -1829,7 +1899,7 @@ def manage_open_trade_partial_take_profit(
                     side=side,
                     volume=close_volume,
                     magic=env.mt5_magic,
-                    comment="partial 1.25R",
+                    comment=f"partial {float(plan.get('trigger_r') or account_trigger_r):g}R",
                 )
             except Exception as exc:
                 queue_alert(

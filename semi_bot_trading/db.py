@@ -388,6 +388,8 @@ CREATE TABLE IF NOT EXISTS account_execution_controls (
     broker_symbol       TEXT,
     open_bot_positions  INTEGER NOT NULL DEFAULT 0,
     pending_bot_orders  INTEGER NOT NULL DEFAULT 0,
+    partial_take_profit_enabled INTEGER,
+    partial_take_profit_r REAL,
     requested_by        TEXT,
     requested_at        TEXT,
     acknowledged_at     TEXT,
@@ -480,6 +482,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "weekly_journals", "icon", "TEXT NOT NULL DEFAULT '📝'")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
     ensure_column(conn, "account_execution_commands", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column(conn, "account_execution_controls", "partial_take_profit_enabled", "INTEGER")
+    ensure_column(conn, "account_execution_controls", "partial_take_profit_r", "REAL")
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)

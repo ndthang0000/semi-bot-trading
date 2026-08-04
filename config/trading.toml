@@ -147,7 +147,7 @@ slow_body_max_ratio = 0.8
 # the bot falls back toward tighter stop models instead of blocking the setup.
 # "reaction_wick" always uses the wick unless it is still too wide.
 reject_stop_mode = "zone"
-rr_minimum = 2.5
+rr_minimum = 2.0
 stop_buffer_atr = 0.2
 min_stop_price = 4.0
 min_stop_atr = 1.5
@@ -209,7 +209,7 @@ sl_mode = "zone_edge"
 sl_zone_buffer_atr = 0.2
 sl_min_atr = 0.6
 sl_atr = 1.6
-rr = 2.5
+rr = 2.0
 # Wide zone-edge stops fall back to ATR stop; this is not a hard block cap.
 max_stop_distance = 40.0
 

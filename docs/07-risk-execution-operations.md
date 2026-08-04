@@ -261,7 +261,7 @@ Live worker quan ly lenh dang mo bang rule mac dinh:
 
 - Khi trade dat `+1.25R`, dong `50%` volume.
 - Sau khi partial close thanh cong, doi SL cua position con lai ve entry, cong/tru buffer neu co.
-- Phan con lai giu TP cuoi cua setup, hien tai thuong la `2.5R`.
+- Phan con lai giu TP cuoi cua setup; `zone_reaction_v2` hien tai dung `2.0R`.
 - Metadata `trade_orders.metadata_json.partial_take_profit` ghi `armed/done`, trigger price, closed volume va BE SL de UI/debug.
 
 Config `.env`:
@@ -274,6 +274,11 @@ PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 ```
 
 Rule nay chi ap dung cho `trade_orders.source = live` dang `filled`; pending limit order phai filled thanh position truoc khi duoc quan ly.
+
+Chart inspector cho phep doi Partial TP theo tung account: bat/tat va chon moc
+tu `0.5R` den `2.0R`. Thay doi duoc worker ap dung cho tat ca lenh live dang
+`armed` (chua partial) va cac lenh tao sau do; lich su lenh da partial/da dong
+khong bi viet lai. `.env` la gia tri khoi tao khi account chua co UI override.
 
 Khi MT5 position dong, worker tinh net P&L tu gross exit profit cong voi
 commission, swap va fee cua **toan bo deals** thuoc position. Commission co the

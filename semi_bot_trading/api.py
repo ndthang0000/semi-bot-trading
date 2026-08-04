@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .api_models import (
     AccountCloseAllRequest,
     AccountExecutionControlRequest,
+    AccountPartialTakeProfitRequest,
     ContextOverrideRequest,
     LoginRequest,
     LogoutRequest,
@@ -374,7 +375,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        d.trading_day, d.timezone AS daily_timezone, d.balance_at_midnight,
                        d.daily_profit, d.daily_profit_pct, d.initial_balance, d.baseline_source,
                        c.requested_enabled, c.effective_enabled, c.hard_enabled, c.worker_status,
-                       c.open_bot_positions, c.pending_bot_orders, c.heartbeat_at
+                       c.open_bot_positions, c.pending_bot_orders, c.heartbeat_at,
+                       c.partial_take_profit_enabled, c.partial_take_profit_r
                 FROM account_snapshots a
                 LEFT JOIN account_daily_metrics d
                   ON d.account_label = a.account_label
@@ -418,6 +420,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                         "pending_bot_orders": row["pending_bot_orders"] or 0,
                         "heartbeat_at": row["heartbeat_at"],
                     },
+                    "partial_take_profit": {
+                        "enabled": True if row["partial_take_profit_enabled"] is None else bool(row["partial_take_profit_enabled"]),
+                        "trigger_r": float(row["partial_take_profit_r"] or 1.25),
+                    },
                 }
                 for row in rows
             ]
@@ -456,6 +462,39 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             )
             conn.commit()
         return {"label": account_label, "requested_enabled": request.enabled, "status": "pending_worker_ack"}
+
+    @app.patch("/api/accounts/{account_label}/partial-take-profit")
+    def update_account_partial_take_profit(
+        account_label: str,
+        request: AccountPartialTakeProfitRequest = Body(...),
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC).isoformat()
+        with connect(config.database) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM account_execution_controls WHERE account_label = ?",
+                (account_label,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Account worker has not registered yet")
+            conn.execute(
+                """
+                UPDATE account_execution_controls
+                SET partial_take_profit_enabled = ?, partial_take_profit_r = ?,
+                    requested_by = ?, requested_at = ?, updated_at = ?
+                WHERE account_label = ?
+                """,
+                (int(request.enabled), float(request.trigger_r), username, now, now, account_label),
+            )
+            conn.commit()
+        return {
+            "label": account_label,
+            "partial_take_profit": {
+                "enabled": request.enabled,
+                "trigger_r": request.trigger_r,
+            },
+            "status": "saved",
+        }
 
     @app.post("/api/accounts/{account_label}/close-all", status_code=202)
     def close_all_bot_trades(

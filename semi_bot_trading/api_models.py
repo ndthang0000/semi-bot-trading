@@ -23,6 +23,11 @@ class AccountExecutionControlRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class AccountPartialTakeProfitRequest(BaseModel):
+    enabled: bool
+    trigger_r: float = Field(ge=0.5, le=2.0)
+
+
 class AccountCloseAllRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
     idempotency_key: str | None = Field(default=None, max_length=100)

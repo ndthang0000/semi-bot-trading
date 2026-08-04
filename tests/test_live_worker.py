@@ -582,6 +582,55 @@ class TestPartialTakeProfit(unittest.TestCase):
         client.close_partial_position.assert_not_called()
         client.modify_position_sltp.assert_not_called()
 
+    def test_account_ui_settings_disable_then_rearm_open_trade_at_one_r(self):
+        self._insert_open_order()
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO account_execution_controls (
+                account_label, requested_enabled, effective_enabled, hard_enabled,
+                partial_take_profit_enabled, partial_take_profit_r, updated_at
+            ) VALUES ('Test', 1, 1, 1, 0, 1.0, ?)
+            """,
+            (now,),
+        )
+        self._conn.commit()
+        disabled_client = _fake_client(current_price=3021.0, open_tickets={"11111"})
+        disabled_client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.02, "price_open": 3000.0, "sl": 2980.0, "tp": 3040.0}
+        ]
+
+        manage_open_trade_partial_take_profit(
+            self._conn, self._config, self._env, disabled_client, "XAUUSDm"
+        )
+
+        disabled_client.close_partial_position.assert_not_called()
+        disabled_plan = self._metadata()["partial_take_profit"]
+        self.assertFalse(disabled_plan["enabled"])
+        self.assertEqual(1.0, disabled_plan["trigger_r"])
+        self.assertEqual(3020.0, disabled_plan["trigger_price"])
+
+        self._conn.execute(
+            "UPDATE account_execution_controls SET partial_take_profit_enabled = 1 WHERE account_label = 'Test'"
+        )
+        self._conn.commit()
+        enabled_client = _fake_client(current_price=3021.0, open_tickets={"11111"})
+        enabled_client.get_open_positions.return_value = disabled_client.get_open_positions.return_value
+
+        manage_open_trade_partial_take_profit(
+            self._conn, self._config, self._env, enabled_client, "XAUUSDm"
+        )
+
+        enabled_client.close_partial_position.assert_called_once_with(
+            "XAUUSDm",
+            position_ticket="11111",
+            side="buy",
+            volume=0.01,
+            magic=self._env.mt5_magic,
+            comment="partial 1R",
+        )
+        self.assertTrue(self._metadata()["partial_take_profit"]["done"])
+
     def test_partial_take_profit_closes_half_and_moves_stop_to_entry(self):
         self._insert_open_order()
         client = _fake_client(current_price=3025.5, open_tickets={"11111"})

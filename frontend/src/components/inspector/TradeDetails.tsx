@@ -16,6 +16,36 @@ type StateMachineStep = {
   status: string;
 };
 
+type AccountPartialTakeProfitSettings = {
+  enabled: boolean;
+  trigger_r: number;
+};
+
+async function fetchAccountPartialTakeProfit(accountLabel: string): Promise<AccountPartialTakeProfitSettings> {
+  const response = await authFetch("/api/accounts");
+  if (!response.ok) throw new Error("Could not load Partial TP settings.");
+  const body = (await response.json()) as {
+    accounts?: Array<{ label: string; partial_take_profit?: AccountPartialTakeProfitSettings }>;
+  };
+  const account = body.accounts?.find((item) => item.label === accountLabel);
+  if (!account?.partial_take_profit) throw new Error("Account worker has not registered Partial TP settings yet.");
+  return account.partial_take_profit;
+}
+
+async function updateAccountPartialTakeProfit(
+  accountLabel: string,
+  settings: AccountPartialTakeProfitSettings,
+): Promise<AccountPartialTakeProfitSettings> {
+  const response = await authFetch(`/api/accounts/${encodeURIComponent(accountLabel)}/partial-take-profit`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail ?? "Could not update Partial TP settings.");
+  return body.partial_take_profit as AccountPartialTakeProfitSettings;
+}
+
 export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kind: ToastKind, text: string) => void }) {
   const queryClient = useQueryClient();
   const setSelected = useChartStore((state) => state.setSelected);
@@ -139,6 +169,10 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         </div>
       ) : null}
 
+      {trade.source === "live" && trade.account_label ? (
+        <PartialTakeProfitControls accountLabel={trade.account_label} showToast={showToast} />
+      ) : null}
+
       <div className="grid gap-2">
         <Detail label="Opened" value={compactTime(trade.opened_at)} />
         <Detail label="Closed" value={compactTime(trade.closed_at)} />
@@ -185,6 +219,118 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
           setSelected({ kind: "trade", entity: { ...trade, review } });
         }}
       />
+    </div>
+  );
+}
+
+function PartialTakeProfitControls({
+  accountLabel,
+  showToast,
+}: {
+  accountLabel: string;
+  showToast: (kind: ToastKind, text: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const settingsQuery = useQuery({
+    queryKey: ["account-partial-take-profit", accountLabel],
+    queryFn: () => fetchAccountPartialTakeProfit(accountLabel),
+    staleTime: 15_000,
+  });
+  const [triggerDraft, setTriggerDraft] = useState("1.25");
+  const settings = settingsQuery.data;
+
+  useEffect(() => {
+    if (settings) setTriggerDraft(settings.trigger_r.toString());
+  }, [settings]);
+
+  const mutation = useMutation({
+    mutationFn: (next: AccountPartialTakeProfitSettings) => updateAccountPartialTakeProfit(accountLabel, next),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["account-partial-take-profit", accountLabel], saved);
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      showToast("success", `Partial TP ${saved.enabled ? `ON at ${saved.trigger_r}R` : "OFF"} for ${accountLabel}.`);
+    },
+    onError: (error) => {
+      showToast("error", error instanceof Error ? error.message : "Could not update Partial TP settings.");
+    },
+  });
+
+  const parsedTrigger = Number(triggerDraft);
+  const validTrigger = Number.isFinite(parsedTrigger) && parsedTrigger >= 0.5 && parsedTrigger <= 2;
+  const save = (enabled: boolean) => {
+    if (!validTrigger) {
+      showToast("error", "Partial TP trigger must be between 0.5R and 2.0R.");
+      return;
+    }
+    mutation.mutate({ enabled, trigger_r: parsedTrigger });
+  };
+
+  return (
+    <div className="grid gap-3 rounded-md border border-cyan-400/25 bg-cyan-400/[0.05] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold text-cyan-100">Partial TP automation</div>
+          <div className="mt-0.5 text-[10px] text-slate-500">{accountLabel}</div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={settings?.enabled ?? false}
+          disabled={!settings || mutation.isPending}
+          onClick={() => save(!settings?.enabled)}
+          className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+            settings?.enabled
+              ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-200"
+              : "border-ink-600 bg-ink-950 text-slate-500"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          <span className={`relative h-4 w-7 rounded-full ${settings?.enabled ? "bg-cyan-500" : "bg-ink-600"}`}>
+            <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${settings?.enabled ? "left-3.5" : "left-0.5"}`} />
+          </span>
+          {settings?.enabled ? "ON" : "OFF"}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+        <label className="grid gap-1 text-[11px] text-slate-500">
+          Trigger R
+          <input
+            type="number"
+            min="0.5"
+            max="2"
+            step="0.25"
+            value={triggerDraft}
+            onChange={(event) => setTriggerDraft(event.target.value)}
+            className="h-9 min-w-0 rounded-md border border-ink-700 bg-ink-950 px-2 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!settings || !validTrigger || mutation.isPending}
+          onClick={() => save(settings?.enabled ?? true)}
+          className="mt-[19px] h-9 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-3 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {mutation.isPending ? "Saving" : "Apply"}
+        </button>
+      </div>
+
+      <div className="flex gap-2">
+        {[1, 1.25].map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTriggerDraft(value.toString())}
+            className="rounded border border-ink-700 bg-ink-950 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-400/50 hover:text-cyan-100"
+          >
+            {value.toFixed(2)}R
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[10px] leading-relaxed text-slate-500">
+        Applies to every armed live trade and future trade on this account. Lowering the trigger below current profit can execute on the next worker cycle; closed history is unchanged.
+      </p>
+      {settingsQuery.isError ? <div className="text-xs text-rose-300">{settingsQuery.error.message}</div> : null}
     </div>
   );
 }

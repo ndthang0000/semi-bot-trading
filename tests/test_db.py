@@ -11,6 +11,22 @@ from semi_bot_trading.db import connect, init_db
 
 
 class DbMigrationTest(unittest.TestCase):
+    def test_partial_take_profit_control_columns_migrate_existing_account_table(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "legacy.sqlite3"
+            with closing(connect(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE account_execution_controls (account_label TEXT PRIMARY KEY)"
+                )
+                init_db(conn)
+                columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(account_execution_controls)").fetchall()
+                }
+
+        self.assertIn("partial_take_profit_enabled", columns)
+        self.assertIn("partial_take_profit_r", columns)
+
     def test_account_label_indexes_are_created_after_legacy_columns_migrate(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "legacy.sqlite3"

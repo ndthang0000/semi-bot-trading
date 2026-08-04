@@ -79,7 +79,7 @@ breakout_buffer_atr = 0.15
 market_entry_max_distance_atr = 0.5
 retest_max_bars = 8
 sl_atr = 1.5
-rr = 2.5
+rr = 2.0
 max_stop_distance = 40.0
 ```
 

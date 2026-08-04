@@ -12,6 +12,8 @@ class ConfigTest(unittest.TestCase):
         config = load_config()
 
         self.assertEqual(720, config.macro_trend.lookback_candles)
+        self.assertEqual(2.0, config.strategy.zone_reaction_v2_rr_minimum)
+        self.assertEqual(2.0, config.strategy.sr_breakout_v1_rr)
 
     def test_loads_swing_timeframe_config(self) -> None:
         with TemporaryDirectory() as temp_dir:
