@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect } from "react";
 import { authFetch, clearStoredRefreshToken, getStoredRefreshToken, refreshAccessToken } from "./api/auth";
 import { BlackoutBanner, useNewsData } from "./components/NewsWidget";
+import { AppHotkeys } from "./components/AppHotkeys";
 import { CalmResetMonitor } from "./components/CalmResetMonitor";
 import { LoginPage } from "./components/LoginPage";
 import { Sidebar } from "./components/Sidebar";
@@ -77,6 +78,7 @@ function AppShell() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
+      <AppHotkeys activePage={renderedPage} reviewLocked={weeklyReviewGate.active} />
       <CalmResetMonitor />
       {newsData?.active_blackout && <BlackoutBanner event={newsData.active_blackout} />}
       <div className="relative flex flex-1 min-h-0 overflow-hidden">

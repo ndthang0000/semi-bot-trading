@@ -25,6 +25,8 @@ export const defaultZoneTypeVisibility: ZoneTypeVisibility = {
 
 export const defaultSelectedPlaybooks: PlaybookKey[] = ["zone_reaction_v2"];
 
+export type InspectorTab = "zones" | "setups" | "trades";
+
 export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibilityKey[]; structure: boolean }> = {
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
@@ -44,6 +46,7 @@ type ChartState = {
   maxVisibleZones: number;
   autoRefreshEnabled: boolean;
   selectedPlaybooks: PlaybookKey[];
+  inspectorTab: InspectorTab;
   addEntityKind: AddEntityKind | null;
   selected: SelectedEntity | null;
   zoneFocusRequest: ZoneFocusRequest | null;
@@ -63,6 +66,7 @@ type ChartState = {
   setAutoRefreshEnabled: (autoRefreshEnabled: boolean) => void;
   setSelectedPlaybooks: (playbooks: PlaybookKey[]) => void;
   toggleSelectedPlaybook: (playbook: PlaybookKey, enabled: boolean) => void;
+  setInspectorTab: (tab: InspectorTab) => void;
   setAddEntityKind: (kind: AddEntityKind | null) => void;
   setSelected: (selected: SelectedEntity | null) => void;
   focusZone: (zone: PriceZone) => void;
@@ -85,6 +89,7 @@ export const useChartStore = create<ChartState>()(
       maxVisibleZones: 8,
       autoRefreshEnabled: true,
       selectedPlaybooks: defaultSelectedPlaybooks,
+      inspectorTab: "zones",
       addEntityKind: null,
       selected: null,
       zoneFocusRequest: null,
@@ -146,6 +151,7 @@ export const useChartStore = create<ChartState>()(
             : state.selectedPlaybooks.filter((item) => item !== playbook);
           return applyPlaybookLayerRequirements({ ...state, selectedPlaybooks });
         }),
+      setInspectorTab: (inspectorTab) => set({ inspectorTab }),
       setAddEntityKind: (addEntityKind) => set({ addEntityKind, selected: null }),
       setSelected: (selected) => set({ selected }),
       focusZone: (zone) =>
@@ -195,6 +201,7 @@ export const useChartStore = create<ChartState>()(
               ? null
               : Math.max(0, Math.floor(Number(layerSettings.startIndex) || 0)),
           selected: null,
+          inspectorTab: "zones" as InspectorTab,
           addEntityKind: null,
           zoneFocusRequest: null,
           tradeFocusRequest: null,

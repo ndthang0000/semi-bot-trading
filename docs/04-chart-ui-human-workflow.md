@@ -110,6 +110,10 @@ Mỗi trade có action `Hide from chart` / `Show on chart`. Đây chỉ là tr�
 trình bày được lưu trong `trade_orders.hidden_on_chart`; trade vẫn còn nguyên
 trong history, report, thống kê P&L và không ảnh hưởng strategy/execution.
 
+Khi click trực tiếp một trade overlay trên chart, Inspector mở tab Zones để
+review lệnh trong context của zone. Nếu user chủ động chọn trade từ tab Trades,
+tab Trades vẫn được giữ nguyên để tiếp tục duyệt lịch sử.
+
 Voi live trade dang `filled` hoac `pending_fill`, trade inspector co control Partial TP theo `account_label`:
 bat/tat automation, nhap trigger tu `0.5R` den `2.0R`, va shortcut `1.00R` /
 `1.25R`. Setting ap dung cho moi live trade dang armed va cac lenh moi cua
@@ -410,7 +414,9 @@ Không nên build chart engine từ đầu ở MVP.
 - Dùng màu nhưng không phụ thuộc hoàn toàn vào màu; thêm label/line style.
 - Hit target vùng đủ dễ click.
 - Có list entity bên cạnh để chọn nếu vùng overlap.
-- Có hotkey sau MVP, nhưng không cần trong bản đầu.
+- Hotkey toàn app: `1` Chart, `2` Dashboard, `3` Journal, `4` Weekly Journal, `5` Calm và `?` mở bảng hướng dẫn.
+- Hotkey riêng khi ở Chart: `T` chuyển H1/M15, `V` bật/tắt trade overlays và `R` reload dữ liệu tương đương nút Reload trên toolbar.
+- Hotkey không kích hoạt khi focus vào input, textarea, select hoặc contenteditable; khóa Weekly Review vẫn áp dụng khi điều hướng bằng phím.
 
 ## Cần mock sớm
 

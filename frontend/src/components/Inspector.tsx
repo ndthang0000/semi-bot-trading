@@ -16,7 +16,6 @@ type InspectorProps = {
   onZoneUpdated: () => void;
 };
 
-type InspectorTab = "zones" | "setups" | "trades";
 type ToastMessage = {
   id: number;
   kind: "success" | "error";
@@ -27,6 +26,8 @@ const TRADE_FILTER_STORAGE_KEY = "semi-bot-trade-history-filters";
 
 export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const selected = useChartStore((state) => state.selected);
+  const activeTab = useChartStore((state) => state.inspectorTab);
+  const setActiveTab = useChartStore((state) => state.setInspectorTab);
   const setSelected = useChartStore((state) => state.setSelected);
   const focusZone = useChartStore((state) => state.focusZone);
   const focusTrade = useChartStore((state) => state.focusTrade);
@@ -48,13 +49,11 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
     importantZonesOnly && lastCandle
       ? filterImportantZoneList(layerFilteredZones, lastCandle.close, lastCandle.time, maxVisibleZones, selectedZoneId)
       : layerFilteredZones.slice().sort((a, b) => b.weight - a.weight);
-  const [activeTab, setActiveTab] = useState<InspectorTab>("zones");
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   useEffect(() => {
-    if (selected?.kind === "trade") setActiveTab("trades");
     if (selected?.kind === "zone") setActiveTab("zones");
-  }, [selected?.kind]);
+  }, [selected?.kind, setActiveTab]);
 
   const showToast = useCallback((kind: ToastMessage["kind"], text: string) => {
     setToast({ id: Date.now(), kind, text });

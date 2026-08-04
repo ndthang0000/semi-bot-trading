@@ -104,6 +104,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const zigzagSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const setSelected = useChartStore((state) => state.setSelected);
   const selected = useChartStore((state) => state.selected);
+  const setInspectorTab = useChartStore((state) => state.setInspectorTab);
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
@@ -631,11 +632,12 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const selectTrade = useCallback(
     (trade: TradeOrder) => {
       lockCurrentViewport(chartRef.current, lockedViewportRef);
+      setInspectorTab("zones");
       setSelected({ kind: "trade", entity: trade });
       restoreLockedViewport(chartRef.current, lockedViewportRef);
       scheduleOverlayRecalc();
     },
-    [scheduleOverlayRecalc, setSelected],
+    [scheduleOverlayRecalc, setInspectorTab, setSelected],
   );
 
   useEffect(() => {
