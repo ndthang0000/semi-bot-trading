@@ -61,6 +61,19 @@ export function ChartPage({ newsData }: ChartPageProps) {
     void chartQuery.refetch();
   }, [chartQuery.refetch]);
 
+  useEffect(() => {
+    if (!autoRefreshActive) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void chartQuery.refetch();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("pageshow", refreshWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("pageshow", refreshWhenVisible);
+    };
+  }, [autoRefreshActive, chartQuery.refetch]);
+
   const handleZonePersisted = useCallback(
     (zone: PriceZone) => {
       queryClient.setQueriesData<ChartPayload>({ queryKey: ["chart"] }, (current) => {

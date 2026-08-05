@@ -55,6 +55,7 @@ import {
 } from "./chart/chartCore";
 import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
+import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import {
   clampNumber,
   compactTradeGroupSummary,
@@ -149,6 +150,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
   const persistedZoneDraftRef = useRef<PriceZone | null>(null);
   const candleDataRef = useRef<CandleDatum[]>([]);
+  const appliedCandleDataRef = useRef<CandleDatum[]>([]);
   const appliedCandleKeyRef = useRef<string | null>(null);
   const appliedViewKeyRef = useRef<string | null>(null);
   const replayPriceRangeRef = useRef<PriceRange | null>(null);
@@ -168,15 +170,12 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     ),
     [payload.layers.candles],
   );
-  const candleKey = useMemo(() => {
-    const first = payload.layers.candles.at(0)?.time ?? "";
-    const lastCandle = payload.layers.candles.at(-1);
-    const lastTime = lastCandle?.time ?? "";
-    // Include last candle's close price so live-candle price updates
-    // (same open_time, different close) also trigger a chart series update.
-    const lastClose = lastCandle?.close?.toFixed(5) ?? "";
-    return `${payload.symbol}:${payload.timeframe}:${payload.layers.candles.length}:${first}:${lastTime}:${lastClose}`;
-  }, [payload.layers.candles, payload.symbol, payload.timeframe]);
+  // Include every OHLC value. MT5 can finalize/correct a candle after the tab
+  // was backgrounded, so tracking only the latest close leaves stale history.
+  const candleKey = useMemo(
+    () => `${payload.symbol}:${payload.timeframe}:${candleSeriesKey(candleData)}`,
+    [candleData, payload.symbol, payload.timeframe],
+  );
   const viewKey = `${payload.symbol}:${payload.timeframe}:${payload.range.limit}:${payload.range.start_index ?? "latest"}`;
   const setupStateByZone = useMemo(() => buildSetupStateByZone(payload.layers.setup_candidates), [payload.layers.setup_candidates]);
 
@@ -763,6 +762,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     zigzagSeries.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
+    appliedCandleDataRef.current = candleDataRef.current;
     appliedViewKeyRef.current = viewKey;
     manualViewportRef.current = false;
     const requestedVisibleBars = visibleChartBars(container.clientWidth, payload.timeframe, payload.range.limit);
@@ -879,6 +879,9 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     if (!chart || !series) return;
     if (appliedCandleKeyRef.current === candleKey) {
       payloadRef.current = payload;
+      zigzagSeriesRef.current?.setData(
+        buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current),
+      );
       scheduleOverlayRecalc();
       return;
     }
@@ -890,20 +893,15 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     const visiblePriceRange = savedViewport?.priceRange ?? chart.priceScale("right").getVisibleRange();
     const isReplay = Boolean(payload.replay?.enabled);
 
-    // Detect incremental update: same view window, last candle updated OR one new candle added.
-    // Works for both growing windows and sliding fixed-limit windows (oldest bar drops, new bar appends).
-    // Use series.update() instead of setData() to avoid resetting the viewport.
-    const prevData = candleDataRef.current;
+    // Only use update() when stable history is byte-for-byte unchanged. A
+    // fixed-size window shift or corrected historical OHLC needs setData().
+    const prevData = appliedCandleDataRef.current;
     const isSameView = previousViewKey === viewKey;
-    const lastCandleTimeNew = Number(candleData.at(-1)?.time ?? 0);
-    const lastCandleTimePrev = Number(prevData.at(-1)?.time ?? 0);
+    const candleChange = classifyCandleSeriesChange(prevData, candleData);
     const isIncremental =
       !isReplay &&
       isSameView &&
-      prevData.length > 0 &&
-      candleData.length >= prevData.length &&
-      candleData.length <= prevData.length + 1 &&
-      lastCandleTimeNew >= lastCandleTimePrev; // last candle same or newer (not a full window shift)
+      (candleChange === "last-candle" || candleChange === "single-append");
 
     if (isIncremental) {
       // Snapshot viewport BEFORE update — series.update() with a new timestamp triggers
@@ -912,7 +910,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       const priceRangeBeforeUpdate = visiblePriceRange;
       const wasManual = manualViewportRef.current;
 
-      if (candleData.length > prevData.length) {
+      if (candleChange === "single-append") {
         // New candle: finalize the previous last bar, then append the new one.
         series.update(candleData[candleData.length - 2]);
       }
@@ -934,6 +932,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       );
       payloadRef.current = payload;
       appliedCandleKeyRef.current = candleKey;
+      appliedCandleDataRef.current = candleData;
       lastViewportRef.current = readCurrentViewport(chart);
       scheduleOverlayRecalc();
       return;
@@ -950,6 +949,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
+    appliedCandleDataRef.current = candleData;
     appliedViewKeyRef.current = viewKey;
     if (isReplay) {
       if (previousViewKey !== viewKey || visiblePriceRange === null) {

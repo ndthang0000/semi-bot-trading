@@ -388,6 +388,9 @@ Mỗi alert nên click để focus chart vào vùng liên quan.
 ## Realtime requirements
 
 - Candle mới cập nhật realtime.
+- Khi browser tab active trở lại, realtime chart phải refetch ngay. Nếu fixed
+  window đã trượt hoặc OHLC lịch sử được broker hiệu chỉnh, chart phải reload
+  toàn bộ candle series và giữ nguyên viewport thay vì chỉ update cây cuối.
 - Bot entity mới xuất hiện không được làm mất selection hiện tại.
 - Khi human đang kéo vùng, update từ bot không được ghi đè thao tác đang diễn ra.
 - Nếu override hết hạn trong lúc mở chart, UI phải refresh effective state và báo rõ.
