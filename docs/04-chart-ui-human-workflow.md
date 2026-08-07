@@ -4,7 +4,7 @@
 
 Chart UI là nơi human và bot gặp nhau. UI không chỉ hiển thị chart, mà phải giúp trader chỉnh context nhanh, rõ và có audit.
 
-MVP UI là web app local, dark mode mặc định, tập trung một symbol XAUUSD với hai timeframe H1 + M15. Replay mode là requirement bắt buộc để backtest trước khi nối MT5/live execution.
+MVP UI là web app local, dark mode mặc định, tập trung một symbol XAUUSD với H1 + M15; M5 được dùng làm execution timeframe cho Manual AI. Replay mode là requirement bắt buộc để backtest trước khi nối MT5/live execution.
 
 ## Layout MVP
 
@@ -78,6 +78,52 @@ Backend validate toàn bộ envelope và kiểm tra lại duplicate theo databas
 tại. Import là atomic: chỉ cần một payload sai hoặc trùng thì không zone nào
 được tạo. Human support/resistance sau import vẫn là `draft` và phải hoàn tất
 questionnaire trước khi bot có thể sử dụng.
+
+## Manual AI V1
+
+`Add entity → Manual AI trade` mở workflow limit-order có hướng dẫn. Human phải
+đọc entry discipline, sau đó paste JSON do `plan-xauusd-manual-ai` tạo hoặc nhập
+giá thủ công. Hai đường đều normalize về cùng contract API và luôn tạo `draft`.
+
+Backend tự tính lại RR từ entry/SL/TP, chỉ nhận XAUUSD limit plan với đúng 1%
+risk và RR 1.5–2.5, không nhận lot từ browser hay AI JSON. Approval yêu cầu
+questionnaire và mỗi account/symbol chỉ có một primary plan đang active. UI lấy
+account label từ `/api/accounts`, mặc định chọn toàn bộ worker đã được dashboard
+phát hiện; backend fan-out thành một plan riêng cho từng account để mỗi worker tự
+tính đúng 1% risk. Live worker yêu cầu M5 fresh, kiểm tra lại
+execution/news/weekend/spread/risk, tính
+lot từ structural SL, giữ partial config riêng của lệnh và gửi expiry sang MT5.
+UI/JSON nhận `expires_in_minutes` (5–1440 phút); backend quy đổi từ `as_of`
+thành timestamp tuyệt đối trước khi lưu.
+Manual AI chỉ cho phép mở wizard tại `Realtime · Latest`; Replay và cửa sổ
+chart lịch sử khóa entry point để giá quá khứ không thể tạo nhầm kế hoạch LIVE.
+`Cancel limit` hủy cả nhóm plan: draft/approved được dừng ngay; plan đang armed
+chuyển sang `cancel_requested` để từng worker hủy đúng pending-order ticket đã lưu.
+`Reject` cũng dùng cùng broker-safe transition khi plan đã armed; UI không được
+chỉ ẩn setup local hoặc loại plan khỏi worker trước khi pending order được hủy.
+Worker đối chiếu ticket với active orders và order history của MT5 mỗi vòng poll:
+order còn pending tiếp tục được quản lý, fill chuyển setup sang live trade, còn
+broker cancel/expiry mới đóng trạng thái DB. Expiry và cancel condition vẫn được
+áp dụng sau khi order đã armed; worker chỉ ghi cancelled sau khi broker xác nhận
+order không còn pending, tránh nhầm một position vừa fill thành order đã hủy.
+Manual input dùng hai nút BUY/SELL tương phản, hiển thị current chart price và
+khoảng SL theo cả đơn vị giá lẫn XAUUSD pip (`1 pip = 0.01`). UI chặn limit nằm
+sai phía current price hoặc SL nằm sai phía entry. Đóng wizard sau approval sẽ
+reset toàn bộ draft; màn hình thành công cũng có action `Thêm lệnh mới`.
+
+Manual AI plan chưa fill (`draft`, `approved`, `arming`, `armed`) được đưa vào
+`setup_candidates` của realtime chart và vẽ cùng geometry Entry/SL/TP như trade
+overlay, với border vàng nét đứt. Primary pending setup là safety overlay nên
+vẫn hiện kể cả filter playbook đang tắt; import đồng thời bật Manual AI và
+refresh chart. Khi order fill, pending setup biến mất; `trade_orders` live tiếp
+tục hiển thị bằng trade overlay chuẩn hiện có. Replay không hiển thị draft/live
+Manual AI hiện tại để tránh look-ahead.
+
+Manual AI không khóa bất kỳ price-zone layer nào; requirement duy nhất là
+`Structure + ZigZag`. Khi Manual AI là playbook duy nhất, UI tự ẩn price zones.
+Hotkey `P` chuyển độc quyền tới playbook kế tiếp theo thứ tự Zone Reaction V2 →
+SR Breakout V1 → Manual AI; `Shift+P` chuyển ngược. Hotkey không chạy khi đang
+gõ trong input, textarea, select hoặc rich-text editor.
 
 ## Trade overlay
 

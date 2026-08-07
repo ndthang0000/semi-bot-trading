@@ -81,6 +81,33 @@ class MT5TimestampNormalizationTest(unittest.TestCase):
 
 
 class MT5BotOwnershipTest(unittest.TestCase):
+    def test_pending_order_state_prefers_active_order_book(self) -> None:
+        mt5 = MagicMock()
+        mt5.orders_get.return_value = [SimpleNamespace(ticket=22)]
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.ensure_symbol = MagicMock()
+
+        self.assertEqual("pending", client.get_pending_order_state("XAUUSD", order_ticket="22"))
+        mt5.history_orders_get.assert_not_called()
+
+    def test_pending_order_state_distinguishes_fill_from_broker_expiry(self) -> None:
+        mt5 = MagicMock()
+        mt5.ORDER_STATE_FILLED = 4
+        mt5.ORDER_STATE_CANCELED = 2
+        mt5.ORDER_STATE_EXPIRED = 6
+        mt5.ORDER_STATE_REJECTED = 3
+        mt5.orders_get.return_value = []
+        mt5.history_orders_get.return_value = [SimpleNamespace(ticket=22, state=4, time_done_msc=100)]
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.ensure_symbol = MagicMock()
+
+        self.assertEqual("filled", client.get_pending_order_state("XAUUSD", order_ticket="22"))
+
+        mt5.history_orders_get.return_value = [SimpleNamespace(ticket=22, state=6, time_done_msc=200)]
+        self.assertEqual("cancelled", client.get_pending_order_state("XAUUSD", order_ticket="22"))
+
     def test_counts_only_matching_magic(self) -> None:
         mt5 = MagicMock()
         mt5.positions_get.return_value = [SimpleNamespace(magic=7), SimpleNamespace(magic=0), SimpleNamespace(magic=7)]

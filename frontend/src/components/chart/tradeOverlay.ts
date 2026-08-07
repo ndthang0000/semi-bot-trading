@@ -1,6 +1,6 @@
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 import { toUnixTime } from "../../lib/time";
-import type { TradeOrder } from "../../types";
+import type { SetupCandidate, TradeOrder } from "../../types";
 
 export type CandleDatum = {
   time: ReturnType<typeof toUnixTime>;
@@ -27,6 +27,50 @@ export type TradeBox = {
   profit: BoxRect;
   loss: BoxRect;
 };
+
+export type SetupBox = {
+  candidate: SetupCandidate;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  profit: BoxRect;
+  loss: BoxRect;
+};
+
+export function setupToBox(
+  candidate: SetupCandidate,
+  rangeStart: string,
+  rangeEnd: string,
+  candles: CandleDatum[],
+  chartWidth: number,
+  chartHeight: number,
+  timeScale: ReturnType<IChartApi["timeScale"]>,
+  series: ISeriesApi<"Candlestick">,
+): SetupBox | null {
+  const entry = candidate.entry;
+  const stop = candidate.stop_loss;
+  const takeProfit = candidate.take_profit[0];
+  if (entry === null || stop === null || typeof takeProfit !== "number") return null;
+  const createdAt = readString(candidate.metadata.created_at) ?? readString(candidate.metadata.as_of) ?? rangeEnd;
+  const expiresAt = candidate.expires_at ?? rangeEnd;
+  const startX = chartXForTradeTime(timeScale, createdAt, rangeStart, rangeEnd, candles, chartWidth);
+  const rawEndX = chartXForTradeTime(timeScale, expiresAt, rangeStart, rangeEnd, candles, chartWidth);
+  if (startX === null || rawEndX === null) return null;
+  const left = clampNumber(Math.min(startX, rawEndX), 0, chartWidth);
+  const right = clampNumber(Math.max(rawEndX, startX + 44), 0, chartWidth);
+  if (right - left < 2) return null;
+  const entryY = series.priceToCoordinate(entry);
+  const stopY = series.priceToCoordinate(stop);
+  const takeProfitY = series.priceToCoordinate(takeProfit);
+  if (entryY === null || stopY === null || takeProfitY === null) return null;
+  const profit = clipBoxRect({ x: left, y: Math.min(entryY, takeProfitY), width: right - left, height: Math.abs(takeProfitY - entryY) }, chartWidth, chartHeight);
+  const loss = clipBoxRect({ x: left, y: Math.min(entryY, stopY), width: right - left, height: Math.abs(stopY - entryY) }, chartWidth, chartHeight);
+  if (!profit || !loss) return null;
+  const y = Math.min(profit.y, loss.y);
+  const bottom = Math.max(profit.y + profit.height, loss.y + loss.height);
+  return { candidate, x: left, y, width: right - left, height: Math.max(2, bottom - y), profit, loss };
+}
 
 export function tradeToBox(
   trade: TradeOrder,
@@ -228,7 +272,7 @@ function tradeVisualStopLoss(trade: TradeOrder): number | null {
   return trade.stop_loss;
 }
 
-function chartXForTradeTime(
+export function chartXForTradeTime(
   timeScale: ReturnType<IChartApi["timeScale"]>,
   value: string,
   rangeStart: string,
@@ -244,6 +288,10 @@ function chartXForTradeTime(
   if (timestamp <= start) return 0;
   if (timestamp >= end) return chartWidth;
   return null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function clipBoxRect(rect: BoxRect, chartWidth: number, chartHeight: number): BoxRect | null {

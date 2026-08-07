@@ -62,9 +62,11 @@ import {
   groupTradeBoxesByCandidate,
   interpolateChartX,
   readObject,
+  setupToBox,
   tradeGroupSummary,
   tradeToBox,
   type CandleDatum,
+  type SetupBox,
   type TradeBox,
 } from "./chart/tradeOverlay";
 import type {
@@ -120,6 +122,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const [structureDots, setStructureDots] = useState<StructureDot[]>([]);
   const [swingDots, setSwingDots] = useState<SwingDot[]>([]);
   const [tradeBoxes, setTradeBoxes] = useState<TradeBox[]>([]);
+  const [setupBoxes, setSetupBoxes] = useState<SetupBox[]>([]);
   const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
   const [newsTimelineMarkers, setNewsTimelineMarkers] = useState<NewsTimelineMarker[]>([]);
   const [hoveredNewsMarker, setHoveredNewsMarker] = useState<NewsTimelineMarker | null>(null);
@@ -272,6 +275,24 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       return box ? [box] : [];
     });
     const trades = groupTradeBoxesByCandidate(tradeBoxes);
+    const manualAiSetups = currentPayload.layers.setup_candidates.flatMap((candidate) => {
+      if (
+        candidate.metadata.manual_ai !== true
+        || candidate.metadata.execution_state !== "primary"
+        || candidate.status !== "waiting_confirmation"
+      ) return [];
+      const box = setupToBox(
+        candidate,
+        currentPayload.range.start,
+        currentPayload.range.end,
+        candleDataRef.current,
+        plotWidth,
+        height,
+        timeScale,
+        series,
+      );
+      return box ? [box] : [];
+    });
     const visibleM15Triggers = filterVisibleM15Triggers(currentPayload.layers.m15_triggers ?? []);
     const m15Triggers = visibleM15Triggers.flatMap((trigger) => {
       const x = interpolateChartX(timeScale, toUnixTime(trigger.time), candleDataRef.current);
@@ -286,6 +307,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
     setSwingDots(visibleSwings);
     setTradeBoxes(trades);
+    setSetupBoxes(manualAiSetups);
     setM15TriggerMarkers(m15Triggers);
     setNewsTimelineMarkers(newsMarkers);
 
@@ -1219,6 +1241,39 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         {hoveredNewsMarker ? (
           <NewsTimelineTooltip marker={hoveredNewsMarker} />
         ) : null}
+        {setupBoxes.map((box) => {
+          const candidate = box.candidate;
+          const planStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
+            ? candidate.metadata.manual_ai_plan_status
+            : "pending";
+          const label = `${planStatus === "draft" ? "DRAFT" : "PENDING"} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
+          return (
+            <button
+              key={`manual-ai:${candidate.id}`}
+              className="pointer-events-auto absolute z-[34] overflow-hidden border-2 border-dashed border-yellow-300/90 bg-transparent text-left shadow-[0_0_12px_rgba(250,204,21,0.3)] transition hover:brightness-125"
+              style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+              title={`${label}\nEntry ${candidate.entry} · SL ${candidate.stop_loss} · TP ${candidate.take_profit[0]}\nExpires ${candidate.expires_at ?? "--"}`}
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setInspectorTab("setups");
+              }}
+            >
+              <span
+                className="absolute border border-dashed border-cyan-200/70 bg-cyan-400/14"
+                style={{ left: box.profit.x - box.x, top: box.profit.y - box.y, width: box.profit.width, height: box.profit.height }}
+              />
+              <span
+                className="absolute border border-dashed border-fuchsia-200/70 bg-fuchsia-500/14"
+                style={{ left: box.loss.x - box.x, top: box.loss.y - box.y, width: box.loss.width, height: box.loss.height }}
+              />
+              <span className="absolute left-1 top-1 max-w-[calc(100%-0.5rem)] truncate rounded border border-yellow-200/80 bg-yellow-950/95 px-1.5 py-0.5 text-[9px] font-black text-yellow-100 shadow-lg">
+                {label}
+              </span>
+            </button>
+          );
+        })}
         {tradeBoxes.map((box) => {
           const trade = box.trade;
           const isLong = trade.direction === "long" || trade.side === "buy";

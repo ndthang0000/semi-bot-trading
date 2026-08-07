@@ -16,6 +16,85 @@ CHART_PAYLOAD_VERSION = 1
 MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS = 500
 
 
+def load_manual_ai_setup_candidates(
+    conn: Connection,
+    symbol: str,
+    _allowed_playbooks: set[str] | None,
+    as_of: str,
+) -> list[dict[str, Any]]:
+    """Expose unfilled Manual AI plans through the normal setup layer."""
+    rows = conn.execute(
+        """
+        SELECT * FROM manual_ai_plans
+        WHERE symbol = ?
+          AND execution_state IN ('primary', 'watch_only')
+          AND status IN ('draft', 'approved', 'arming', 'armed')
+          AND expires_at > ?
+        ORDER BY created_at ASC
+        """,
+        (symbol, as_of),
+    ).fetchall()
+    candidates: list[dict[str, Any]] = []
+    grouped_rows: dict[str, list[Any]] = {}
+    for row in rows:
+        grouped_rows.setdefault(str(row["client_id"]), []).append(row)
+    for row in rows:
+        client_id = str(row["client_id"])
+        group = grouped_rows.pop(client_id, None)
+        if group is None:
+            continue
+        raw_payload = json.loads(row["raw_payload_json"] or "{}")
+        raw_candidates = raw_payload.get("candidates") if isinstance(raw_payload, dict) else []
+        raw_candidate = next(
+            (
+                item
+                for item in raw_candidates or []
+                if isinstance(item, dict) and item.get("client_id") == client_id
+            ),
+            {},
+        )
+        status_order = {"draft": 0, "approved": 1, "arming": 2, "armed": 3}
+        plan_status = max((str(item["status"]) for item in group), key=lambda value: status_order.get(value, -1))
+        account_labels = sorted(str(item["account_label"]) for item in group if item["account_label"])
+        candidates.append(
+            {
+                "id": str(row["id"]),
+                "symbol": str(row["symbol"]),
+                "timeframe": "M5",
+                "playbook": "manual_ai_v1",
+                "direction": "long" if row["side"] == "buy" else "short",
+                "status": "waiting_confirmation",
+                "zone_reaction_state": "limit_pending",
+                "score": float(raw_candidate.get("confidence") or 0.5),
+                "entry": float(row["entry_price"]),
+                "stop_loss": float(row["stop_loss"]),
+                "take_profit": [float(row["take_profit"])],
+                "risk_reward": float(row["risk_reward"]),
+                "primary_zone_id": None,
+                "related_zone_ids": [],
+                "trigger_point_ids": [],
+                "reason": [
+                    str(raw_candidate.get("entry_reason") or f"Manual AI {plan_status} limit plan")
+                ],
+                "blocked_reason": [],
+                "expires_at": str(row["expires_at"]),
+                "metadata": {
+                    "manual_ai": True,
+                    "manual_ai_plan_status": plan_status,
+                    "execution_state": str(row["execution_state"]),
+                    "created_at": str(row["created_at"]),
+                    "as_of": raw_payload.get("as_of"),
+                    "account_label": row["account_label"],
+                    "account_labels": account_labels,
+                    "order_type": "limit",
+                    "partial_take_profit": json.loads(row["partial_take_profit_json"] or "{}"),
+                    "cancel_conditions": json.loads(row["cancel_conditions_json"] or "[]"),
+                },
+            }
+        )
+    return candidates
+
+
 def build_m15_signal_snapshot(
     candles: list[dict[str, Any]],
     setup_candidates: list[dict[str, Any]],
@@ -904,6 +983,16 @@ def build_chart_payload(
                 raw_setup_candidates,
                 account_label=traded_account_label,
             )
+    if is_latest_mode:
+        setup_candidates = [
+            *setup_candidates,
+            *load_manual_ai_setup_candidates(
+                conn,
+                symbol,
+                allowed_playbooks,
+                datetime.now(UTC).isoformat(),
+            ),
+        ]
     avg_body_period = (
         int(getattr(strategy_config, "zone_reaction_v2_reject_avg_body_period", 20))
         if strategy_config is not None

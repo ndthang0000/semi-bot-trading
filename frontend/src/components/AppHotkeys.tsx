@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { isEditableHotkeyTarget, resolveAppHotkey } from "../lib/appHotkeys";
 import { useChartStore } from "../store/chartStore";
+import type { PlaybookKey } from "../types";
 import { type AppPage, useNavigationStore } from "../store/navigationStore";
 
 type AppHotkeysProps = {
@@ -27,6 +28,7 @@ const SHORTCUT_GROUPS = [
     shortcuts: [
       ["T", "Chuyển H1 ↔ M15"],
       ["V", "Bật/tắt trade overlays"],
+      ["P / Shift+P", "Playbook kế tiếp / trước"],
       ["R", "Reload dữ liệu chart"],
     ],
   },
@@ -48,6 +50,8 @@ export function AppHotkeys({ activePage, reviewLocked }: AppHotkeysProps) {
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const setTimeframe = useChartStore((state) => state.setTimeframe);
   const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const setSelectedPlaybooks = useChartStore((state) => state.setSelectedPlaybooks);
   const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
@@ -82,6 +86,13 @@ export function AppHotkeys({ activePage, reviewLocked }: AppHotkeysProps) {
         setTimeframe(timeframe === "H1" ? "M15" : "H1");
       } else if (action.kind === "toggle-trades") {
         setTradeVisibilityMode(tradeVisibilityMode === "off" ? "visible" : "off");
+      } else if (action.kind === "cycle-playbook") {
+        const order: PlaybookKey[] = ["zone_reaction_v2", "sr_breakout_v1", "manual_ai_v1"];
+        const currentIndex = selectedPlaybooks.length === 1 ? order.indexOf(selectedPlaybooks[0]) : -1;
+        const nextIndex = action.direction === 1
+          ? (currentIndex + 1 + order.length) % order.length
+          : (currentIndex < 0 ? order.length - 1 : currentIndex - 1 + order.length) % order.length;
+        setSelectedPlaybooks([order[nextIndex]]);
       } else if (action.kind === "reload-chart") {
         void queryClient.refetchQueries({ queryKey: ["chart"], type: "active" });
       }
@@ -89,7 +100,7 @@ export function AppHotkeys({ activePage, reviewLocked }: AppHotkeysProps) {
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [activePage, helpOpen, queryClient, reviewLocked, setPage, setTimeframe, setTradeVisibilityMode, timeframe, tradeVisibilityMode]);
+  }, [activePage, helpOpen, queryClient, reviewLocked, selectedPlaybooks, setPage, setSelectedPlaybooks, setTimeframe, setTradeVisibilityMode, timeframe, tradeVisibilityMode]);
 
   if (!helpOpen) return null;
 

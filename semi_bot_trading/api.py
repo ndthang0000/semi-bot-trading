@@ -20,6 +20,8 @@ from .api_models import (
     ContextOverrideRequest,
     LoginRequest,
     LogoutRequest,
+    ManualAiApproveRequest,
+    ManualAiPlanImportRequest,
     RefreshRequest,
     TradeReviewAttachmentRequest,
     TradeReviewRequest,
@@ -114,6 +116,88 @@ def zones_are_duplicates(candidate: Any, existing: Any) -> bool:
     center_distance = abs((candidate_low + candidate_high) / 2 - (existing_low + existing_high) / 2)
     exact = abs(candidate_low - existing_low) <= 0.01 and abs(candidate_high - existing_high) <= 0.01
     return exact or overlap_smaller >= 0.70 or center_distance <= max(candidate_width, existing_width) * 0.65
+
+
+def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
+    context_snapshot = json_loads(row["context_snapshot_json"], {})
+    expires_in_minutes: int | None = None
+    try:
+        as_of = datetime.fromisoformat(str(context_snapshot["as_of"]))
+        expires_at = datetime.fromisoformat(str(row["expires_at"]))
+        expires_in_minutes = round((expires_at - as_of).total_seconds() / 60)
+    except (KeyError, TypeError, ValueError):
+        pass
+    return {
+        "id": row["id"],
+        "client_id": row["client_id"],
+        "account_label": row["account_label"],
+        "symbol": row["symbol"],
+        "playbook": "manual_ai_v1",
+        "side": row["side"],
+        "status": row["status"],
+        "execution_state": row["execution_state"],
+        "order_type": "limit",
+        "entry_price": float(row["entry_price"]),
+        "stop_loss": float(row["stop_loss"]),
+        "take_profit": float(row["take_profit"]),
+        "risk_pct": float(row["risk_pct"]),
+        "risk_reward": float(row["risk_reward"]),
+        "expires_at": row["expires_at"],
+        "expires_in_minutes": expires_in_minutes,
+        "partial_take_profit": json_loads(row["partial_take_profit_json"], {}),
+        "cancel_conditions": json_loads(row["cancel_conditions_json"], []),
+        "questionnaire": json_loads(row["questionnaire_json"], {}),
+        "market_context": context_snapshot,
+        "trade_idea_id": row["trade_idea_id"],
+        "execution_request_id": row["execution_request_id"],
+        "approved_at": row["approved_at"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tuple[Any, float, str]]:
+    as_of = require_timezone_aware_iso(request.as_of, "as_of")
+    if request.symbol.upper() != "XAUUSD":
+        raise HTTPException(status_code=422, detail="Manual AI V1 currently supports XAUUSD only")
+    expected_timeframes = {"context": "H1", "structure": "M15", "execution": "M5"}
+    if request.analysis_timeframes != expected_timeframes:
+        raise HTTPException(status_code=422, detail=f"analysis_timeframes must equal {expected_timeframes}")
+    primary_count = sum(candidate.execution_state == "primary" for candidate in request.candidates)
+    if primary_count != 1:
+        raise HTTPException(status_code=422, detail="Exactly one candidate must have execution_state=primary")
+    priorities = [candidate.priority for candidate in request.candidates]
+    if len(priorities) != len(set(priorities)):
+        raise HTTPException(status_code=422, detail="Candidate priorities must be unique")
+    client_ids = [candidate.client_id for candidate in request.candidates]
+    if len(client_ids) != len(set(client_ids)):
+        raise HTTPException(status_code=422, detail="Candidate client_id values must be unique")
+
+    validated: list[tuple[Any, float, str]] = []
+    for index, candidate in enumerate(request.candidates):
+        expires_at = as_of + timedelta(minutes=candidate.expires_in_minutes)
+        if candidate.side == "buy":
+            valid_geometry = candidate.stop_loss < candidate.entry_price < candidate.take_profit
+        else:
+            valid_geometry = candidate.take_profit < candidate.entry_price < candidate.stop_loss
+        if not valid_geometry:
+            raise HTTPException(status_code=422, detail=f"candidates[{index}] has invalid {candidate.side} price geometry")
+        risk = abs(candidate.entry_price - candidate.stop_loss)
+        reward = abs(candidate.take_profit - candidate.entry_price)
+        risk_reward = reward / risk
+        if not 1.5 <= risk_reward <= 2.5:
+            raise HTTPException(
+                status_code=422,
+                detail=f"candidates[{index}] risk/reward must be between 1.5 and 2.5; calculated={risk_reward:.3f}",
+            )
+        for condition_index, condition in enumerate(candidate.cancel_conditions):
+            if condition.type.endswith(("below", "above")) and condition.price is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"candidates[{index}].cancel_conditions[{condition_index}].price is required",
+                )
+        validated.append((candidate, risk_reward, expires_at.isoformat()))
+    return validated
 
 
 def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | str | None = None):
@@ -1535,6 +1619,257 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 )
             planned.append({**candidate, "status": "planned", "source": "import"})
         return conflicts
+
+    def insert_manual_ai_envelope(request: ManualAiPlanImportRequest, source: str) -> dict[str, Any]:
+        validated = validate_manual_ai_envelope(request)
+        now = utc_now_iso()
+        raw_payload = request.model_dump(mode="json")
+        context_snapshot = {
+            "as_of": request.as_of,
+            "analysis_timeframes": request.analysis_timeframes,
+            "market_context": request.market_context,
+        }
+        with connect(config.database) as conn:
+            init_db(conn)
+            rows = []
+            for candidate, risk_reward, expires_at in validated:
+                existing = conn.execute(
+                    """
+                    SELECT id FROM manual_ai_plans
+                    WHERE client_id = ? AND status NOT IN ('cancelled', 'rejected', 'expired')
+                    LIMIT 1
+                    """,
+                    (candidate.client_id,),
+                ).fetchone()
+                if existing is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Manual AI candidate client_id already exists: {candidate.client_id}",
+                    )
+                plan_id = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT INTO manual_ai_plans (
+                        id, client_id, symbol, side, status, execution_state,
+                        entry_price, stop_loss, take_profit, risk_pct, risk_reward,
+                        expires_at, partial_take_profit_json, cancel_conditions_json,
+                        context_snapshot_json, raw_payload_json, source, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1.0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        plan_id,
+                        candidate.client_id,
+                        request.symbol.upper(),
+                        candidate.side,
+                        candidate.execution_state,
+                        candidate.entry_price,
+                        candidate.stop_loss,
+                        candidate.take_profit,
+                        risk_reward,
+                        expires_at,
+                        json.dumps(candidate.partial_take_profit.model_dump(mode="json"), sort_keys=True),
+                        json.dumps([item.model_dump(mode="json") for item in candidate.cancel_conditions], sort_keys=True),
+                        json.dumps(context_snapshot, sort_keys=True),
+                        json.dumps(raw_payload, sort_keys=True),
+                        source,
+                        now,
+                        now,
+                    ),
+                )
+                rows.append(conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone())
+            conn.commit()
+        return {"created_count": len(rows), "plans": [manual_ai_row_to_api(row) for row in rows]}
+
+    @app.post("/api/manual-ai/plans/import")
+    def import_manual_ai_plans(
+        request: ManualAiPlanImportRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        return insert_manual_ai_envelope(request, "ai_import")
+
+    @app.post("/api/manual-ai/plans")
+    def create_manual_ai_plans(
+        request: ManualAiPlanImportRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        return insert_manual_ai_envelope(request, "human_manual")
+
+    @app.get("/api/manual-ai/plans")
+    def list_manual_ai_plans(
+        status_filter: str | None = Query(default=None, alias="status"),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            if status_filter:
+                rows = conn.execute(
+                    "SELECT * FROM manual_ai_plans WHERE status = ? ORDER BY created_at DESC",
+                    (status_filter,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM manual_ai_plans ORDER BY created_at DESC").fetchall()
+        return {"plans": [manual_ai_row_to_api(row) for row in rows]}
+
+    @app.get("/api/manual-ai/plans/{plan_id}")
+    def get_manual_ai_plan(plan_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+        return manual_ai_row_to_api(row)
+
+    @app.post("/api/manual-ai/plans/{plan_id}/approve")
+    def approve_manual_ai_plan(
+        plan_id: str,
+        request: ManualAiApproveRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        answers = request.questionnaire
+        if not answers.accepts_one_percent_risk or not answers.confirms_lot_not_fixed:
+            raise HTTPException(status_code=422, detail="Approval requires accepting 1% risk and lot sizing from structural SL")
+        if answers.emotion_state != "calm":
+            raise HTTPException(status_code=422, detail="Manual AI approval requires emotion_state=calm")
+        if answers.competing_exposure:
+            raise HTTPException(status_code=422, detail="Resolve competing XAUUSD exposure before approving Manual AI")
+        requested_labels = [label.strip() for label in request.account_labels if label.strip()]
+        if request.account_label and request.account_label.strip():
+            requested_labels.append(request.account_label.strip())
+        account_labels = list(dict.fromkeys(requested_labels))
+        if not account_labels:
+            raise HTTPException(status_code=422, detail="Select at least one worker account")
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+            if row["status"] != "draft":
+                raise HTTPException(status_code=409, detail=f"Only draft plans can be approved; current status={row['status']}")
+            if row["execution_state"] != "primary":
+                raise HTTPException(status_code=422, detail="watch_only candidates cannot be approved")
+            if require_timezone_aware_iso(row["expires_at"], "expires_at") <= datetime.now(UTC):
+                conn.execute("UPDATE manual_ai_plans SET status = 'expired', updated_at = ? WHERE id = ?", (now, plan_id))
+                conn.commit()
+                raise HTTPException(status_code=409, detail="Manual AI plan has expired")
+            placeholders = ",".join("?" for _ in account_labels)
+            active_rows = conn.execute(
+                f"""
+                SELECT DISTINCT account_label FROM manual_ai_plans
+                WHERE account_label IN ({placeholders}) AND symbol = ?
+                  AND status IN ('approved', 'arming', 'armed', 'filled') AND id <> ?
+                ORDER BY account_label
+                """,
+                (*account_labels, row["symbol"], plan_id),
+            ).fetchall()
+            if active_rows:
+                conflicts = ", ".join(str(item["account_label"]) for item in active_rows)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cancel the active Manual AI plan first for: {conflicts}",
+                )
+            questionnaire_json = json.dumps(answers.model_dump(mode="json"), sort_keys=True)
+            primary_account = account_labels[0]
+            conn.execute(
+                """
+                UPDATE manual_ai_plans
+                SET account_label = ?, questionnaire_json = ?, status = 'approved',
+                    approved_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    primary_account,
+                    questionnaire_json,
+                    now,
+                    now,
+                    plan_id,
+                ),
+            )
+            for account_label in account_labels[1:]:
+                clone_id = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT INTO manual_ai_plans (
+                        id, client_id, account_label, symbol, side, status, execution_state,
+                        entry_price, stop_loss, take_profit, risk_pct, risk_reward,
+                        expires_at, partial_take_profit_json, cancel_conditions_json,
+                        questionnaire_json, context_snapshot_json, raw_payload_json, source,
+                        approved_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        clone_id,
+                        row["client_id"],
+                        account_label,
+                        row["symbol"],
+                        row["side"],
+                        row["execution_state"],
+                        row["entry_price"],
+                        row["stop_loss"],
+                        row["take_profit"],
+                        row["risk_pct"],
+                        row["risk_reward"],
+                        row["expires_at"],
+                        row["partial_take_profit_json"],
+                        row["cancel_conditions_json"],
+                        questionnaire_json,
+                        row["context_snapshot_json"],
+                        row["raw_payload_json"],
+                        row["source"],
+                        now,
+                        row["created_at"],
+                        now,
+                    ),
+                )
+            conn.commit()
+            updated_rows = conn.execute(
+                "SELECT * FROM manual_ai_plans WHERE client_id = ? AND account_label IN (" + placeholders + ") ORDER BY account_label",
+                (row["client_id"], *account_labels),
+            ).fetchall()
+        plans = [manual_ai_row_to_api(updated) for updated in updated_rows]
+        if request.account_labels:
+            return {"plans": plans}
+        return plans[0]
+
+    def transition_manual_ai_plan(plan_id: str, target_status: str) -> dict[str, Any]:
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+            if row["status"] in {"filled", "cancelled", "rejected", "expired"}:
+                raise HTTPException(status_code=409, detail=f"Plan is already terminal: {row['status']}")
+            group_rows = conn.execute(
+                """
+                SELECT id, status FROM manual_ai_plans
+                WHERE client_id = ? AND symbol = ?
+                  AND status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
+                """,
+                (row["client_id"], row["symbol"]),
+            ).fetchall()
+            for group_row in group_rows:
+                current_status = str(group_row["status"])
+                effective_status = (
+                    "cancel_requested"
+                    if target_status in {"cancelled", "rejected"} and current_status in {"arming", "armed", "cancel_requested"}
+                    else target_status
+                )
+                conn.execute(
+                    "UPDATE manual_ai_plans SET status = ?, updated_at = ? WHERE id = ?",
+                    (effective_status, now, group_row["id"]),
+                )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+        return manual_ai_row_to_api(updated)
+
+    @app.post("/api/manual-ai/plans/{plan_id}/reject")
+    def reject_manual_ai_plan(plan_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+        return transition_manual_ai_plan(plan_id, "rejected")
+
+    @app.post("/api/manual-ai/plans/{plan_id}/cancel")
+    def cancel_manual_ai_plan(plan_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+        return transition_manual_ai_plan(plan_id, "cancelled")
 
     @app.post("/api/zones")
     def create_zone(request: ZoneCreateRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:

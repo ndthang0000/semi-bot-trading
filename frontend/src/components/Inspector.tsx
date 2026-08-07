@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { History, Layers, MousePointer2, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
+import { cancelManualAiPlan, rejectManualAiPlan } from "../api/manualAi";
 import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tradeHistoryFilters";
 import { compactTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
@@ -117,7 +118,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
           totalZones={zones.length}
         />
       ) : activeTab === "setups" ? (
-        <SetupsPanel candidates={setupCandidates} m15Triggers={payload?.layers.m15_triggers ?? []} zones={zones} />
+        <SetupsPanel candidates={setupCandidates} m15Triggers={payload?.layers.m15_triggers ?? []} zones={zones} onChanged={onZoneUpdated} showToast={showToast} />
       ) : (
         <TradesTab
           focusTrade={focusTrade}
@@ -561,12 +562,13 @@ function ZonesTab({
   );
 }
 
-function SetupsPanel({ candidates, m15Triggers, zones }: { candidates: SetupCandidate[]; m15Triggers: M15TriggerOverlay[]; zones: PriceZone[] }) {
+function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: { candidates: SetupCandidate[]; m15Triggers: M15TriggerOverlay[]; zones: PriceZone[]; onChanged: () => void; showToast: (kind: ToastMessage["kind"], text: string) => void }) {
   const focusZone = useChartStore((state) => state.focusZone);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
   const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
   const [rejectedIds, setRejectedIds] = useState<Set<string>>(new Set());
   const [disabledPlaybooks, setDisabledPlaybooks] = useState<Set<string>>(new Set());
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const visibleCandidates = candidates.filter(
     (candidate) => !rejectedIds.has(candidate.id) && !disabledPlaybooks.has(candidate.playbook),
   );
@@ -590,6 +592,50 @@ function SetupsPanel({ candidates, m15Triggers, zones }: { candidates: SetupCand
     }
     return result;
   }, [m15Triggers]);
+
+  const disableCandidatePlaybook = async (candidate: SetupCandidate) => {
+    if (candidate.playbook !== "manual_ai_v1") {
+      setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook));
+      return;
+    }
+    setCancellingIds((current) => addSetValue(current, candidate.id));
+    try {
+      const result = await cancelManualAiPlan(candidate.id);
+      showToast(
+        "success",
+        result.status === "cancel_requested"
+          ? "Đã gửi yêu cầu hủy limit tới các worker."
+          : "Đã hủy Manual AI limit plan.",
+      );
+      onChanged();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Không thể hủy Manual AI limit");
+    } finally {
+      setCancellingIds((current) => removeSetValue(current, candidate.id));
+    }
+  };
+
+  const rejectCandidate = async (candidate: SetupCandidate) => {
+    if (candidate.playbook !== "manual_ai_v1") {
+      setRejectedIds((current) => addSetValue(current, candidate.id));
+      return;
+    }
+    setCancellingIds((current) => addSetValue(current, candidate.id));
+    try {
+      const result = await rejectManualAiPlan(candidate.id);
+      showToast(
+        "success",
+        result.status === "cancel_requested"
+          ? "Đã gửi yêu cầu hủy limit trước khi reject plan."
+          : "Đã reject Manual AI plan.",
+      );
+      onChanged();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Không thể reject Manual AI plan");
+    } finally {
+      setCancellingIds((current) => removeSetValue(current, candidate.id));
+    }
+  };
 
   return (
     <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
@@ -616,8 +662,9 @@ function SetupsPanel({ candidates, m15Triggers, zones }: { candidates: SetupCand
                       watched={watchedIds.has(candidate.id)}
                       onFocus={() => focusCandidate(candidate)}
                       onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
-                      onReject={() => setRejectedIds((current) => addSetValue(current, candidate.id))}
-                      onDisablePlaybook={() => setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook))}
+                      onReject={() => { void rejectCandidate(candidate); }}
+                      disableBusy={cancellingIds.has(candidate.id)}
+                      onDisablePlaybook={() => { void disableCandidatePlaybook(candidate); }}
                     />
                   ))}
                 </div>
@@ -639,6 +686,7 @@ function SetupCard({
   onToggleWatch,
   onReject,
   onDisablePlaybook,
+  disableBusy,
 }: {
   candidate: SetupCandidate;
   focused: boolean;
@@ -648,6 +696,7 @@ function SetupCard({
   onToggleWatch: () => void;
   onReject: () => void;
   onDisablePlaybook: () => void;
+  disableBusy: boolean;
 }) {
   return (
     <div
@@ -701,26 +750,29 @@ function SetupCard({
       <div className="mt-2 flex min-w-0 flex-wrap gap-1">
         <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} />
         <SetupAction label="Reject" onClick={onReject} />
-        <SetupAction label="Disable PB" onClick={onDisablePlaybook} />
+        <SetupAction label={candidate.playbook === "manual_ai_v1" ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} />
       </div>
     </div>
   );
 }
 
-function SetupAction({ label, onClick }: { label: string; onClick: () => void }) {
+function SetupAction({ disabled = false, label, onClick }: { disabled?: boolean; label: string; onClick: () => void }) {
   return (
     <span
-      className="rounded border border-ink-700 bg-ink-950 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-500 hover:text-cyan-100"
+      aria-disabled={disabled}
+      className="rounded border border-ink-700 bg-ink-950 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-500 hover:text-cyan-100 aria-disabled:cursor-wait aria-disabled:opacity-50"
       role="button"
       tabIndex={0}
       onClick={(event) => {
         event.stopPropagation();
+        if (disabled) return;
         onClick();
       }}
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
+        if (disabled) return;
         onClick();
       }}
     >
@@ -845,6 +897,12 @@ function toggleSetValue(current: Set<string>, value: string): Set<string> {
 function addSetValue(current: Set<string>, value: string): Set<string> {
   const next = new Set(current);
   next.add(value);
+  return next;
+}
+
+function removeSetValue(current: Set<string>, value: string): Set<string> {
+  const next = new Set(current);
+  next.delete(value);
   return next;
 }
 

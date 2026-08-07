@@ -395,6 +395,10 @@ as the FTMO Maximum Daily Loss objective. Daily profit is calculated as current
 equity minus the balance reconstructed at `00:00 Europe/Prague`; this IANA zone
 automatically follows CET/CEST daylight-saving changes. `DAILY_RESET_TIMEZONE`
 defaults to `Europe/Prague`.
+The pre-order Risk Engine uses that same equity-based snapshot, including open
+P/L, and calculates the 5% limit from the original account balance. FTMO entry
+fails closed if the daily metric is missing or older than two minutes; the live
+worker refreshes it immediately before evaluating candidates.
 For FTMO labels containing the account size (for example `FTMO 100K 2-Step`),
 the worker can infer `100000`; the explicit env value still takes priority.
 

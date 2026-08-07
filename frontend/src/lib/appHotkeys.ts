@@ -4,6 +4,7 @@ export type AppHotkeyAction =
   | { kind: "navigate"; page: AppPage }
   | { kind: "toggle-timeframe" }
   | { kind: "toggle-trades" }
+  | { kind: "cycle-playbook"; direction: 1 | -1 }
   | { kind: "reload-chart" }
   | { kind: "show-help" };
 
@@ -24,6 +25,7 @@ export function resolveAppHotkey(event: Pick<KeyboardEvent, "altKey" | "code" | 
   const key = event.key.toLowerCase();
   if (key === "t") return { kind: "toggle-timeframe" };
   if (key === "v") return { kind: "toggle-trades" };
+  if (key === "p") return { kind: "cycle-playbook", direction: event.shiftKey ? -1 : 1 };
   if (key === "r") return { kind: "reload-chart" };
   if (event.key === "?" || (event.code === "Slash" && event.shiftKey)) return { kind: "show-help" };
   return null;

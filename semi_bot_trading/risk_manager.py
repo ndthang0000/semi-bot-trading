@@ -15,7 +15,7 @@ Account profiles
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlite3 import Connection
 import math
 from typing import Any, TYPE_CHECKING
@@ -135,9 +135,46 @@ class RiskManager:
         if risk_balance <= 0:
             return RiskAssessment(allowed=False, lot_size=0.0, reason=f"Invalid risk-adjusted balance: {risk_balance}")
 
-        # Daily loss check
-        daily_loss = get_today_realized_loss(conn, symbol, account_label=account_label) * self._balance_scale
-        daily_loss_limit = risk_balance * self.profile.max_daily_loss_pct / 100.0
+        # FTMO's daily loss is equity-based and therefore includes floating P/L.
+        # snapshot_account refreshes this metric immediately before candidates
+        # are evaluated. Fail closed when that safety snapshot is absent/stale.
+        if self.profile.name.lower().startswith("ftmo"):
+            daily_metric = conn.execute(
+                """
+                SELECT daily_profit, initial_balance, balance_at_midnight, snapshot_at
+                FROM account_daily_metrics
+                WHERE account_label = ?
+                ORDER BY snapshot_at DESC
+                LIMIT 1
+                """,
+                (account_label,),
+            ).fetchone()
+            if daily_metric is None:
+                return RiskAssessment(
+                    allowed=False,
+                    lot_size=0.0,
+                    reason=f"[{self.profile.name}] blocked: FTMO daily equity metric is unavailable",
+                    balance=risk_balance,
+                )
+            try:
+                metric_at = datetime.fromisoformat(str(daily_metric["snapshot_at"]).replace("Z", "+00:00"))
+                if metric_at.tzinfo is None:
+                    metric_at = metric_at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                metric_at = datetime.min.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - metric_at.astimezone(timezone.utc) > timedelta(minutes=2):
+                return RiskAssessment(
+                    allowed=False,
+                    lot_size=0.0,
+                    reason=f"[{self.profile.name}] blocked: FTMO daily equity metric is stale",
+                    balance=risk_balance,
+                )
+            daily_loss = max(-float(daily_metric["daily_profit"]) * self._balance_scale, 0.0)
+            limit_base = float(daily_metric["initial_balance"] or daily_metric["balance_at_midnight"]) * self._balance_scale
+            daily_loss_limit = limit_base * self.profile.max_daily_loss_pct / 100.0
+        else:
+            daily_loss = get_today_realized_loss(conn, symbol, account_label=account_label) * self._balance_scale
+            daily_loss_limit = risk_balance * self.profile.max_daily_loss_pct / 100.0
         if daily_loss >= daily_loss_limit:
             return RiskAssessment(
                 allowed=False,

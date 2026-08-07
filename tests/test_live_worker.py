@@ -26,6 +26,7 @@ from pathlib import Path
 from tests.helpers import TemporaryDirectory
 from unittest.mock import MagicMock, call, patch
 
+from semi_bot_trading.candles import Candle, upsert_candles
 from semi_bot_trading.config import load_config
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.live_worker import (
@@ -47,6 +48,7 @@ from semi_bot_trading.live_worker import (
     maybe_ftmo_news_flatten,
     maybe_weekend_flatten,
     maybe_execute_candidates,
+    process_manual_ai_plans,
     run_live_iteration,
     sync_closed_positions,
     trading_session,
@@ -670,6 +672,31 @@ class TestPartialTakeProfit(unittest.TestCase):
 
         client.close_partial_position.assert_not_called()
 
+    def test_partial_take_profit_can_leave_stop_unchanged_without_corrupting_db(self):
+        self._insert_open_order()
+        metadata = self._metadata()
+        metadata["partial_take_profit"]["move_stop_to"] = "unchanged"
+        metadata["partial_take_profit"]["locked"] = True
+        self._conn.execute(
+            "UPDATE trade_orders SET metadata_json = ? WHERE id = 'order-partial'",
+            (json.dumps(metadata),),
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3026.0, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.02, "price_open": 3000.0, "sl": 2980.0, "tp": 3050.0}
+        ]
+
+        manage_open_trade_partial_take_profit(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        client.close_partial_position.assert_called_once()
+        client.modify_position_sltp.assert_not_called()
+        row = self._conn.execute("SELECT stop_loss, metadata_json FROM trade_orders WHERE id = 'order-partial'").fetchone()
+        self.assertEqual(2980.0, row["stop_loss"])
+        saved = json.loads(row["metadata_json"])
+        self.assertEqual("partial_taken_sl_unchanged", saved["stop_management_state"])
+        self.assertEqual(2980.0, saved["current_stop_loss"])
+
     def test_partial_take_profit_infers_done_when_position_volume_already_reduced(self):
         self._insert_open_order()
         client = _fake_client(current_price=3026.0, open_tickets={"11111"})
@@ -707,6 +734,132 @@ class TestPartialTakeProfit(unittest.TestCase):
         metadata = self._metadata()
         self.assertTrue(metadata["partial_take_profit"]["breakeven_applied"])
         self.assertIsNone(metadata["partial_take_profit"]["modify_error"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual AI pending-order lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestManualAiPendingOrderLifecycle(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._tmp.name)
+        self._config = replace(load_config(), database=self._db_path)
+        self._env = _make_env()
+
+    def tearDown(self):
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def _insert_armed_plan(self, *, expires_at: datetime) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """INSERT INTO trade_ideas
+               (id, symbol, direction, playbook, status, related_zone_ids_json,
+                context_snapshot_json, suggested_entry, suggested_stop_loss,
+                suggested_take_profit_json, risk_reward, created_at, expires_at)
+               VALUES ('manual-idea', 'XAUUSD', 'long', 'manual_ai_v1', 'approved', '[]',
+                       '{}', 3000, 2980, '[3040]', 2.0, ?, ?)""",
+            (now, expires_at.isoformat()),
+        )
+        self._conn.execute(
+            """INSERT INTO execution_requests
+               (id, trade_idea_id, account_label, symbol, broker_symbol, side,
+                order_type, quantity, entry_price, stop_loss, take_profit_json,
+                requested_by, status, broker_order_id, created_at, updated_at)
+               VALUES ('manual-request', 'manual-idea', 'Test', 'XAUUSD', 'XAUUSDm', 'buy',
+                       'limit', 0.01, 3000, 2980, '[3040]', 'strategy', 'sent', '33333', ?, ?)""",
+            (now, now),
+        )
+        self._conn.execute(
+            """INSERT INTO trade_orders
+               (id, trade_idea_id, account_label, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity, opened_at,
+                source, metadata_json, created_at, updated_at)
+               VALUES ('manual-order', 'manual-idea', 'Test', 'XAUUSD', 'buy', 'limit',
+                       'pending_fill', 3000, 2980, '[3040]', 0.01, ?, 'live',
+                       '{"broker_order_id":"33333","broker_deal_id":"0"}', ?, ?)""",
+            (now, now, now),
+        )
+        self._conn.execute(
+            """INSERT INTO manual_ai_plans
+               (id, client_id, account_label, symbol, side, status, execution_state,
+                entry_price, stop_loss, take_profit, risk_pct, risk_reward, expires_at,
+                trade_idea_id, execution_request_id, created_at, updated_at)
+               VALUES ('manual-plan', 'manual-client', 'Test', 'XAUUSD', 'buy', 'armed',
+                       'primary', 3000, 2980, 3040, 1.0, 2.0, ?,
+                       'manual-idea', 'manual-request', ?, ?)""",
+            (expires_at.isoformat(), now, now),
+        )
+        self._conn.commit()
+
+    def test_filled_limit_becomes_filled_in_db_and_is_not_cancelled(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        client = _fake_client()
+        client.get_pending_order_state.return_value = "filled"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
+        self.assertEqual("filled", plan["status"])
+        self.assertEqual("filled", order["status"])
+        client.cancel_pending_order.assert_not_called()
+
+    def test_expired_armed_limit_is_cancelled_at_broker_before_db_closes(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now - timedelta(seconds=1))
+        client = _fake_client()
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm", order_ticket="33333", comment="Manual AI expired"
+        )
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
+        self.assertEqual("expired", plan["status"])
+        self.assertEqual("cancelled", order["status"])
+
+    def test_armed_limit_keeps_cancel_conditions_active(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        self._conn.execute(
+            "UPDATE manual_ai_plans SET cancel_conditions_json = ? WHERE id = 'manual-plan'",
+            (json.dumps([{"type": "m5_close_below", "price": 2990.0}]),),
+        )
+        upsert_candles(
+            self._conn,
+            [
+                Candle(
+                    symbol="XAUUSD",
+                    timeframe="M5",
+                    open_time=now - timedelta(minutes=5),
+                    close_time=now,
+                    open=2995.0,
+                    high=2996.0,
+                    low=2987.0,
+                    close=2988.0,
+                    volume=100,
+                    source="test",
+                )
+            ],
+        )
+        client = _fake_client(current_price=2988.0)
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm", order_ticket="33333", comment="Manual AI m5_close_below"
+        )
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
+        self.assertEqual("cancelled", plan["status"])
+        self.assertEqual("cancelled", order["status"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
