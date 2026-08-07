@@ -130,7 +130,7 @@ from semi_bot_trading.db import connect
 
 config = load_config()
 with connect(config.database) as conn:
-    for timeframe in ["H1", "M15"]:
+    for timeframe in ["H1", "M15", "M5"]:
         row = conn.execute(
             "select count(*) c, min(open_time) mn, max(open_time) mx from candles where symbol=? and timeframe=?",
             (config.symbol, timeframe),

@@ -6,6 +6,7 @@ import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
 import { MobileBottomSheet } from "./mobile/MobileBottomSheet";
+import { ManualAiModal } from "./ManualAiModal";
 import { NewsPill } from "./NewsWidget";
 
 type TopBarProps = {
@@ -34,10 +35,18 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
   const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
   const autoRefreshActive = mode === "dashboard" && autoRefreshEnabled && startIndex === null;
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>(null);
+  const [manualAiOpen, setManualAiOpen] = useState(false);
   // H1 is the only zone/context timeframe; manual zones on M15 are rejected by
   // the API (422), so the draw entry point is disabled while viewing M15 to
   // avoid a dead-end UX (draw -> submit -> error).
   const canAddEntity = timeframe === "H1";
+  const canCreateManualAi = mode === "dashboard" && startIndex === null;
+
+  useEffect(() => {
+    if (!canCreateManualAi) {
+      setManualAiOpen(false);
+    }
+  }, [canCreateManualAi]);
 
   const priceTone = (priceChangePercent ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300";
 
@@ -89,34 +98,35 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
 
       <div className="flex min-w-0 items-center gap-2">
         <div
-          className={`flex h-9 items-center overflow-hidden rounded-md border border-ink-700 bg-ink-850 ${
-            canAddEntity ? "" : "opacity-50"
-          }`}
+          className="flex h-9 items-center overflow-hidden rounded-md border border-ink-700 bg-ink-850"
         >
           <span className="flex h-full items-center px-2 text-cyan-300">
             <Plus size={15} />
           </span>
           <select
             className="h-full min-w-[150px] bg-transparent pr-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed"
-            disabled={!canAddEntity}
-            title={
-              canAddEntity
-                ? "Add entity: select a type, then drag a box on the chart"
-                : "Manual zones can only be drawn on the H1 chart"
-            }
+            title={canCreateManualAi ? "Add a chart zone or create a Manual AI trade plan" : "Manual AI is only available in Realtime · Latest"}
             value={addEntityKind ?? ""}
-            onChange={(event) => setAddEntityKind((event.target.value || null) as AddEntityKind | null)}
+            onChange={(event) => {
+              if (event.target.value === "manual_ai") {
+                setAddEntityKind(null);
+                setManualAiOpen(true);
+                return;
+              }
+              setAddEntityKind((event.target.value || null) as AddEntityKind | null);
+            }}
           >
             <option value="">Add entity</option>
-            <option value="support">Support</option>
-            <option value="resistance">Resistance</option>
-            <option value="demand_order_block">Demand OB</option>
-            <option value="supply_order_block">Supply OB</option>
-            <option value="bullish_fvg">Bullish FVG</option>
-            <option value="bearish_fvg">Bearish FVG</option>
-            <option value="consolidation">Consolidation</option>
-            <option value="buy_side_liquidity">Buy-side Liq</option>
-            <option value="sell_side_liquidity">Sell-side Liq</option>
+            <option disabled={!canCreateManualAi} value="manual_ai">Manual AI trade…</option>
+            <option disabled={!canAddEntity} value="support">Support</option>
+            <option disabled={!canAddEntity} value="resistance">Resistance</option>
+            <option disabled={!canAddEntity} value="demand_order_block">Demand OB</option>
+            <option disabled={!canAddEntity} value="supply_order_block">Supply OB</option>
+            <option disabled={!canAddEntity} value="bullish_fvg">Bullish FVG</option>
+            <option disabled={!canAddEntity} value="bearish_fvg">Bearish FVG</option>
+            <option disabled={!canAddEntity} value="consolidation">Consolidation</option>
+            <option disabled={!canAddEntity} value="buy_side_liquidity">Buy-side Liq</option>
+            <option disabled={!canAddEntity} value="sell_side_liquidity">Sell-side Liq</option>
           </select>
           {addEntityKind ? (
             <button
@@ -154,6 +164,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
         >
           <option value="H1">H1</option>
           <option value="M15">M15</option>
+          <option value="M5">M5</option>
         </select>
         <input
           className="h-9 w-24 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none"
@@ -204,7 +215,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
     <nav className="fixed inset-x-0 bottom-0 z-[65] grid h-[calc(3.75rem+env(safe-area-inset-bottom))] grid-cols-5 border-t border-ink-600 bg-ink-900/95 px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_30px_rgba(0,0,0,0.35)] backdrop-blur lg:hidden">
       <MobileDockButton label={timeframe} icon={<Activity size={19} />} onClick={() => setTimeframe(timeframe === "H1" ? "M15" : "H1")} active />
       <MobileDockButton label="Layers" icon={<Layers size={19} />} onClick={() => setMobilePanel("layers")} />
-      <MobileDockButton label="Draw" icon={<Plus size={20} />} onClick={() => setMobilePanel("draw")} disabled={!canAddEntity} active={Boolean(addEntityKind)} />
+      <MobileDockButton label="Add" icon={<Plus size={20} />} onClick={() => setMobilePanel("draw")} active={Boolean(addEntityKind)} />
       <MobileDockButton label="Inspect" icon={<PanelBottomOpen size={19} />} onClick={onOpenInspector} />
       <MobileDockButton label="More" icon={<MoreHorizontal size={20} />} onClick={() => setMobilePanel("more")} />
     </nav>
@@ -215,12 +226,16 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
     <MobileBottomSheet open={mobilePanel === "draw"} onClose={() => setMobilePanel(null)} title="Draw on H1 chart">
       <MobileDrawPanel
         selected={addEntityKind}
+        canDrawZones={canAddEntity}
+        canCreateManualAi={canCreateManualAi}
+        onManualAi={() => { setMobilePanel(null); setManualAiOpen(true); }}
         onSelect={(kind) => {
           setAddEntityKind(kind);
           setMobilePanel(null);
         }}
       />
     </MobileBottomSheet>
+    <ManualAiModal currentPrice={currentPrice ?? null} open={manualAiOpen} onChanged={onRefresh} onClose={() => setManualAiOpen(false)} />
     <MobileBottomSheet open={mobilePanel === "more"} onClose={() => setMobilePanel(null)} title="Chart settings">
       <MobileMorePanel
         autoRefreshActive={autoRefreshActive}
@@ -372,15 +387,20 @@ const MOBILE_DRAW_ITEMS: Array<{ kind: AddEntityKind; label: string; description
   { kind: "sell_side_liquidity", label: "Sell liquidity", description: "Liquidity below lows" },
 ];
 
-function MobileDrawPanel({ selected, onSelect }: { selected: AddEntityKind | null; onSelect: (kind: AddEntityKind) => void }) {
+function MobileDrawPanel({ canCreateManualAi, canDrawZones, onManualAi, selected, onSelect }: { canCreateManualAi: boolean; canDrawZones: boolean; onManualAi: () => void; selected: AddEntityKind | null; onSelect: (kind: AddEntityKind) => void }) {
   return (
     <div className="grid grid-cols-2 gap-2 p-4">
+      <button className="col-span-2 min-h-16 rounded-xl border border-cyan-400/40 bg-cyan-400/10 p-3 text-left disabled:cursor-not-allowed disabled:opacity-35" disabled={!canCreateManualAi} type="button" onClick={onManualAi}>
+        <span className="block text-sm font-semibold text-cyan-100">Manual AI trade</span>
+        <span className="mt-1 block text-[11px] text-cyan-200/60">Import AI JSON hoặc nhập limit plan thủ công</span>
+      </button>
       {MOBILE_DRAW_ITEMS.map((item) => (
         <button
           key={item.kind}
           className={`min-h-20 rounded-xl border p-3 text-left active:scale-[0.99] ${
             selected === item.kind ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850"
-          }`}
+          } disabled:opacity-35`}
+          disabled={!canDrawZones}
           type="button"
           onClick={() => onSelect(item.kind)}
         >
@@ -831,6 +851,7 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "zone_reaction_v2", label: "Zone Reaction V2" },
   { key: "sr_breakout_v1", label: "SR Breakout V1" },
+  { key: "manual_ai_v1", label: "Manual AI" },
 ];
 
 function playbookRequirementLabel(playbook: PlaybookKey): string {
@@ -844,5 +865,6 @@ function playbookRequirementLabel(playbook: PlaybookKey): string {
   };
   const requirements = playbookLayerRequirements[playbook];
   const zoneLabels = requirements.zones.map((zoneType) => labels[zoneType]).join(", ");
-  return `Layers: ${zoneLabels}${requirements.structure ? " + Structure" : ""}`;
+  const parts = [...(zoneLabels ? [zoneLabels] : []), ...(requirements.structure ? ["Structure + ZigZag"] : [])];
+  return `Layers: ${parts.join(" + ") || "None"}`;
 }

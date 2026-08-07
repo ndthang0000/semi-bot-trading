@@ -1,4 +1,4 @@
-export type Timeframe = "M15" | "H1";
+export type Timeframe = "M5" | "M15" | "H1";
 
 export type ZoneVisibilityKey =
   | "support"
@@ -12,7 +12,7 @@ export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 
 export type TradeVisibilityMode = "visible" | "hidden" | "all" | "off";
 
-export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1";
+export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1" | "manual_ai_v1";
 
 export type AddEntityKind =
   | "support"

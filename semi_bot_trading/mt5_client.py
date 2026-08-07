@@ -321,6 +321,68 @@ class MT5BrokerClient:
             results.append(data)
         return results
 
+    def cancel_pending_order(self, broker_symbol: str, *, order_ticket: str, comment: str = "cancel plan") -> dict[str, Any]:
+        """Cancel one known pending order without touching other bot/manual orders."""
+        self.ensure_symbol(broker_symbol)
+        try:
+            ticket = int(order_ticket)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid pending-order ticket: {order_ticket}") from exc
+        payload = {
+            "action": self.mt5.TRADE_ACTION_REMOVE,
+            "order": ticket,
+            "symbol": broker_symbol,
+            "comment": comment[:31],
+        }
+        result = self.mt5.order_send(payload)
+        if result is None:
+            raise RuntimeError(f"MT5 cancel order failed: {self.mt5.last_error()}")
+        data = result._asdict()
+        retcode = int(data.get("retcode", -1))
+        if retcode != self.mt5.TRADE_RETCODE_DONE:
+            raise RuntimeError(f"MT5 cancel order rejected retcode={retcode}: {data}")
+        return data
+
+    def get_pending_order_state(self, broker_symbol: str, *, order_ticket: str) -> str | None:
+        """Return the broker lifecycle state for one known pending-order ticket.
+
+        ``pending`` means the order still exists in the active order book.
+        Terminal history is consulted only after the order disappears so a fill
+        is never mistaken for a cancellation. ``None`` deliberately means that
+        MT5 has not exposed enough information yet; callers must retry instead
+        of guessing a terminal state.
+        """
+        self.ensure_symbol(broker_symbol)
+        try:
+            ticket = int(order_ticket)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid pending-order ticket: {order_ticket}") from exc
+
+        active_orders = self.mt5.orders_get(ticket=ticket)
+        if active_orders is None:
+            return None
+        if any(int(getattr(order, "ticket", 0) or 0) == ticket for order in active_orders):
+            return "pending"
+
+        historical_orders = self.mt5.history_orders_get(ticket=ticket)
+        if historical_orders is None:
+            return None
+        matching = [order for order in historical_orders if int(getattr(order, "ticket", 0) or 0) == ticket]
+        if not matching:
+            return None
+        order = max(matching, key=lambda item: int(getattr(item, "time_done_msc", 0) or getattr(item, "time_done", 0) or 0))
+        state = int(getattr(order, "state", -1))
+        if state == int(self.mt5.ORDER_STATE_FILLED):
+            return "filled"
+        terminal_states = {
+            int(self.mt5.ORDER_STATE_CANCELED),
+            int(self.mt5.ORDER_STATE_EXPIRED),
+            int(self.mt5.ORDER_STATE_REJECTED),
+        }
+        if state in terminal_states:
+            return "cancelled"
+        return None
+
     def close_open_positions(self, broker_symbol: str, *, magic: int | None, comment: str = "weekend flatten") -> list[dict[str, Any]]:
         """Close positions at market; magic=None explicitly includes manual positions."""
         self.ensure_symbol(broker_symbol)

@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+import unittest
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from semi_bot_trading.db import connect
+from tests.helpers import TemporaryDirectory
+from tests.test_api import authenticated_test_client, seed_candles, write_test_config
+
+
+def envelope(*, rr: float = 2.0, execution_state: str = "primary") -> dict:
+    now = datetime.now(UTC)
+    return {
+        "schema_version": 1,
+        "as_of": now.isoformat(),
+        "symbol": "XAUUSD",
+        "playbook": "manual_ai_v1",
+        "analysis_timeframes": {"context": "H1", "structure": "M15", "execution": "M5"},
+        "market_context": {"h1_bias": "bullish"},
+        "candidates": [
+            {
+                "client_id": "manual-ai-test-1",
+                "priority": 1,
+                "execution_state": execution_state,
+                "side": "buy",
+                "order_type": "limit",
+                "entry_price": 2000,
+                "stop_loss": 1990,
+                "take_profit": 2000 + 10 * rr,
+                "risk_pct": 1.0,
+                "risk_reward": rr,
+                "expires_in_minutes": 120,
+                "partial_take_profit": {
+                    "enabled": True,
+                    "trigger_r": 1.0,
+                    "close_fraction": 0.5,
+                    "move_stop_to": "breakeven",
+                    "breakeven_buffer": 0,
+                },
+                "cancel_conditions": [
+                    {"type": "m5_close_below", "price": 1990},
+                    {"type": "price_reached_target_without_fill"},
+                ],
+                "entry_reason": "M5 pullback",
+                "stop_reason": "Structural invalidation",
+                "target_reason": "M15 liquidity",
+                "confidence": 0.75,
+            }
+        ],
+    }
+
+
+class ManualAiApiTest(unittest.TestCase):
+    def test_import_recalculates_rr_and_approval_requires_discipline(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+
+            payload = envelope()
+            imported = client.post("/api/manual-ai/plans/import", json=payload)
+            self.assertEqual(imported.status_code, 200)
+            plan = imported.json()["plans"][0]
+            self.assertEqual(plan["status"], "draft")
+            self.assertEqual(plan["risk_reward"], 2.0)
+            self.assertEqual(plan["expires_in_minutes"], 120)
+            expected_expiry = datetime.fromisoformat(payload["as_of"]) + timedelta(minutes=120)
+            self.assertEqual(datetime.fromisoformat(plan["expires_at"]), expected_expiry)
+            chart = client.get("/api/chart?symbol=XAUUSD&timeframe=H1&limit=20&playbooks=manual_ai_v1")
+            self.assertEqual(chart.status_code, 200)
+            setup = chart.json()["layers"]["setup_candidates"][0]
+            self.assertEqual(setup["id"], plan["id"])
+            self.assertEqual(setup["status"], "waiting_confirmation")
+            self.assertEqual(setup["metadata"]["manual_ai_plan_status"], "draft")
+            safety_chart = client.get("/api/chart?symbol=XAUUSD&timeframe=H1&limit=20&playbooks=zone_reaction_v2")
+            self.assertEqual(len(safety_chart.json()["layers"]["setup_candidates"]), 1)
+
+            blocked = client.post(
+                f"/api/manual-ai/plans/{plan['id']}/approve",
+                json={"account_label": "FTMO 100K", "questionnaire": questionnaire(accepts=False)},
+            )
+            self.assertEqual(blocked.status_code, 422)
+
+            approved = client.post(
+                f"/api/manual-ai/plans/{plan['id']}/approve",
+                json={"account_label": "FTMO 100K", "questionnaire": questionnaire()},
+            )
+            self.assertEqual(approved.status_code, 200)
+            self.assertEqual(approved.json()["status"], "approved")
+            with connect(db_path) as conn:
+                row = conn.execute("SELECT status, account_label FROM manual_ai_plans WHERE id = ?", (plan["id"],)).fetchone()
+            self.assertEqual((row["status"], row["account_label"]), ("approved", "FTMO 100K"))
+
+    def test_import_rejects_bad_rr_and_missing_primary(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            self.assertEqual(client.post("/api/manual-ai/plans/import", json=envelope(rr=1.0)).status_code, 422)
+            self.assertEqual(client.post("/api/manual-ai/plans/import", json=envelope(execution_state="watch_only")).status_code, 422)
+
+    def test_approval_fans_out_to_workers_and_cancel_stops_the_whole_group(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+
+            imported = client.post("/api/manual-ai/plans/import", json=envelope()).json()["plans"][0]
+            approved = client.post(
+                f"/api/manual-ai/plans/{imported['id']}/approve",
+                json={"account_labels": ["FTMO 100K", "Exness Personal"], "questionnaire": questionnaire()},
+            )
+            self.assertEqual(approved.status_code, 200)
+            plans = approved.json()["plans"]
+            self.assertEqual({plan["account_label"] for plan in plans}, {"FTMO 100K", "Exness Personal"})
+            self.assertEqual({plan["status"] for plan in plans}, {"approved"})
+
+            chart = client.get("/api/chart?symbol=XAUUSD&timeframe=H1&limit=20&playbooks=manual_ai_v1")
+            setups = chart.json()["layers"]["setup_candidates"]
+            self.assertEqual(len(setups), 1)
+            self.assertEqual(set(setups[0]["metadata"]["account_labels"]), {"FTMO 100K", "Exness Personal"})
+
+            with connect(db_path) as conn:
+                conn.execute(
+                    "UPDATE manual_ai_plans SET status = 'armed' WHERE client_id = ? AND account_label = ?",
+                    (imported["client_id"], "FTMO 100K"),
+                )
+                conn.commit()
+            cancelled = client.post(f"/api/manual-ai/plans/{imported['id']}/cancel")
+            self.assertEqual(cancelled.status_code, 200)
+            repeated = client.post(f"/api/manual-ai/plans/{imported['id']}/cancel")
+            self.assertEqual(repeated.status_code, 200)
+            with connect(db_path) as conn:
+                statuses = {
+                    row["status"]
+                    for row in conn.execute(
+                        "SELECT status FROM manual_ai_plans WHERE client_id = ?",
+                        (imported["client_id"],),
+                    ).fetchall()
+                }
+            self.assertEqual(statuses, {"cancelled", "cancel_requested"})
+
+    def test_rejecting_an_armed_plan_requests_broker_cancel(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+
+            imported = client.post("/api/manual-ai/plans/import", json=envelope()).json()["plans"][0]
+            approved = client.post(
+                f"/api/manual-ai/plans/{imported['id']}/approve",
+                json={"account_label": "FTMO 100K", "questionnaire": questionnaire()},
+            ).json()
+            with connect(db_path) as conn:
+                conn.execute("UPDATE manual_ai_plans SET status = 'armed' WHERE id = ?", (approved["id"],))
+                conn.commit()
+
+            rejected = client.post(f"/api/manual-ai/plans/{approved['id']}/reject")
+
+            self.assertEqual(rejected.status_code, 200)
+            self.assertEqual("cancel_requested", rejected.json()["status"])
+
+
+def questionnaire(*, accepts: bool = True) -> dict:
+    return {
+        "short_term_trend": "bullish",
+        "medium_term_trend": "bullish",
+        "invalidation_source": "structure",
+        "limit_reason": "pullback",
+        "emotion_state": "calm",
+        "accepts_one_percent_risk": accepts,
+        "confirms_lot_not_fixed": True,
+        "competing_exposure": False,
+        "comment": "test",
+    }
+
+
+if __name__ == "__main__":
+    unittest.main()

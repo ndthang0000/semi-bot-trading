@@ -303,6 +303,38 @@ CREATE TABLE IF NOT EXISTS execution_requests (
 CREATE INDEX IF NOT EXISTS idx_execution_requests_lookup
 ON execution_requests(symbol, status, created_at);
 
+CREATE TABLE IF NOT EXISTS manual_ai_plans (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    account_label TEXT,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    execution_state TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    take_profit REAL NOT NULL,
+    risk_pct REAL NOT NULL DEFAULT 1.0,
+    risk_reward REAL NOT NULL,
+    expires_at TEXT NOT NULL,
+    partial_take_profit_json TEXT NOT NULL DEFAULT '{}',
+    cancel_conditions_json TEXT NOT NULL DEFAULT '[]',
+    questionnaire_json TEXT NOT NULL DEFAULT '{}',
+    context_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    raw_payload_json TEXT NOT NULL DEFAULT '{}',
+    source TEXT NOT NULL DEFAULT 'ai_import',
+    trade_idea_id TEXT,
+    execution_request_id TEXT,
+    approved_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(trade_idea_id) REFERENCES trade_ideas(id),
+    FOREIGN KEY(execution_request_id) REFERENCES execution_requests(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manual_ai_plans_lookup
+ON manual_ai_plans(account_label, symbol, status, created_at);
+
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,

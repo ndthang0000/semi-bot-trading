@@ -34,6 +34,81 @@ class AccountCloseAllRequest(BaseModel):
     include_manual_positions: bool = False
 
 
+ManualAiSide = Literal["buy", "sell"]
+ManualAiExecutionState = Literal["primary", "watch_only"]
+ManualAiCancelType = Literal[
+    "m5_close_below",
+    "m5_close_above",
+    "m15_close_below",
+    "m15_close_above",
+    "news_blackout_started",
+    "price_reached_target_without_fill",
+]
+
+
+class ManualAiPartialTakeProfit(BaseModel):
+    enabled: bool = True
+    trigger_r: float = Field(default=1.0, ge=0.75, le=1.5)
+    close_fraction: float = Field(default=0.5, ge=0.25, le=0.5)
+    move_stop_to: Literal["breakeven", "unchanged"] = "breakeven"
+    breakeven_buffer: float = Field(default=0, ge=0, le=10)
+
+
+class ManualAiCancelCondition(BaseModel):
+    type: ManualAiCancelType
+    price: float | None = None
+
+
+class ManualAiCandidate(BaseModel):
+    client_id: str = Field(min_length=1, max_length=100)
+    priority: int = Field(ge=1, le=3)
+    execution_state: ManualAiExecutionState
+    side: ManualAiSide
+    order_type: Literal["limit"] = "limit"
+    entry_price: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    take_profit: float = Field(gt=0)
+    risk_pct: float = Field(default=1.0, ge=1.0, le=1.0)
+    risk_reward: float | None = Field(default=None, ge=0)
+    expires_in_minutes: int = Field(ge=5, le=1_440)
+    partial_take_profit: ManualAiPartialTakeProfit = Field(default_factory=ManualAiPartialTakeProfit)
+    cancel_conditions: list[ManualAiCancelCondition] = Field(default_factory=list, max_length=8)
+    entry_reason: str = Field(min_length=1, max_length=2_000)
+    stop_reason: str = Field(min_length=1, max_length=2_000)
+    target_reason: str = Field(min_length=1, max_length=2_000)
+    confidence: float = Field(ge=0, le=1)
+
+
+class ManualAiPlanImportRequest(BaseModel):
+    schema_version: Literal[1]
+    as_of: str
+    symbol: str = "XAUUSD"
+    playbook: Literal["manual_ai_v1"]
+    analysis_timeframes: dict[str, str]
+    market_context: dict[str, Any] = Field(default_factory=dict)
+    candidates: list[ManualAiCandidate] = Field(min_length=1, max_length=3)
+
+
+class ManualAiQuestionnaire(BaseModel):
+    short_term_trend: Literal["bullish", "bearish", "neutral"]
+    medium_term_trend: Literal["bullish", "bearish", "neutral"]
+    invalidation_source: Literal["structure", "liquidity_extreme", "volatility_buffer"]
+    limit_reason: Literal["pullback", "retest", "discount_premium", "liquidity_reaction"]
+    emotion_state: Literal["calm", "fomo", "revenge", "uncertain"]
+    accepts_one_percent_risk: bool
+    confirms_lot_not_fixed: bool
+    competing_exposure: bool = False
+    comment: str = Field(default="", max_length=2_000)
+
+
+class ManualAiApproveRequest(BaseModel):
+    # `account_label` remains accepted for older clients. The chart UI sends
+    # `account_labels` so one approved plan can be fanned out to every worker.
+    account_label: str | None = Field(default=None, min_length=1, max_length=100)
+    account_labels: list[str] = Field(default_factory=list, max_length=20)
+    questionnaire: ManualAiQuestionnaire
+
+
 class ZoneOverrideRequest(BaseModel):
     price_low: float
     price_high: float

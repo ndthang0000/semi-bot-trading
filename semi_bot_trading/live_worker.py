@@ -502,6 +502,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         if env.live_sync_candles:
             sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
+            process_manual_ai_plans(conn, config, env, client, broker_symbol, now)
+        if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
             if ftmo_news_guard is None:
                 manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
@@ -758,7 +760,8 @@ def _expire_news_regimes(conn: Connection, config: AppConfig, now: datetime) -> 
 
 def sync_mt5_candles(conn: Connection, config: AppConfig, client: MT5BrokerClient, broker_symbol: str) -> None:
     # broker_symbol is resolved once at startup and passed in — no redundant MT5 call.
-    for timeframe, count in ((config.bias.timeframe, 800), (config.strategy.timeframe, 1200)):
+    timeframe_counts = {config.bias.timeframe: 800, config.strategy.timeframe: 1200, "M5": 1800}
+    for timeframe, count in timeframe_counts.items():
         candles = client.copy_rates(broker_symbol, config.symbol, timeframe, count)
         # The last candle from MT5 is the still-forming live candle; exclude it from
         # the closed-candle store.  When MT5 returns ≤1 candle (unexpected) treat
@@ -1024,6 +1027,269 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
         )
 
 
+def process_manual_ai_plans(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    now: datetime,
+) -> None:
+    """Advance approved Manual AI drafts without trusting client-provided lot size."""
+    rows = conn.execute(
+        """
+        SELECT * FROM manual_ai_plans
+        WHERE account_label = ? AND symbol = ?
+          AND status IN ('approved', 'arming', 'armed', 'filled', 'cancel_requested')
+        ORDER BY created_at ASC
+        """,
+        (env.account_label, config.symbol),
+    ).fetchall()
+    if not rows:
+        return
+
+    now_iso = now.isoformat()
+    for row in rows:
+        plan_id = str(row["id"])
+        trade_idea_id = row["trade_idea_id"]
+        plan_status = str(row["status"])
+        linked_order = None
+        if trade_idea_id:
+            linked_order = conn.execute(
+                "SELECT id, status FROM trade_orders WHERE trade_idea_id = ? AND account_label = ? ORDER BY created_at DESC LIMIT 1",
+                (trade_idea_id, env.account_label),
+            ).fetchone()
+        request = None
+        if row["execution_request_id"]:
+            request = conn.execute(
+                "SELECT broker_order_id FROM execution_requests WHERE id = ?",
+                (row["execution_request_id"],),
+            ).fetchone()
+        ticket = str(request["broker_order_id"] or "") if request else ""
+
+        # A limit-order acknowledgement is not a fill acknowledgement. Reconcile
+        # the exact broker ticket on every poll and never infer cancellation merely
+        # because the ticket is absent from the open-position list.
+        if linked_order is not None and str(linked_order["status"]) == "pending_fill" and ticket:
+            broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket)
+            if broker_state == "filled":
+                conn.execute(
+                    "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                    (now_iso, linked_order["id"]),
+                )
+                plan_status = "filled"
+                conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+                conn.commit()
+            elif broker_state == "cancelled":
+                expires_at = datetime.fromisoformat(str(row["expires_at"]))
+                plan_status = "expired" if expires_at <= now else "cancelled"
+                conn.execute(
+                    "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                    (now_iso, now_iso, linked_order["id"]),
+                )
+                conn.execute("UPDATE manual_ai_plans SET status = ?, updated_at = ? WHERE id = ?", (plan_status, now_iso, plan_id))
+                conn.commit()
+
+        if linked_order is not None:
+            order_status = str(linked_order["status"])
+            mapped = {"pending_fill": "armed", "filled": "filled", "closed": "closed", "cancelled": "cancelled"}.get(order_status)
+            if mapped and plan_status not in {"filled", "expired", "cancelled"} and mapped != plan_status:
+                conn.execute("UPDATE manual_ai_plans SET status = ?, updated_at = ? WHERE id = ?", (mapped, now_iso, plan_id))
+                plan_status = mapped
+                conn.commit()
+
+        if plan_status == "cancel_requested":
+            broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
+            if broker_state == "filled":
+                if linked_order is not None:
+                    conn.execute(
+                        "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                        (now_iso, linked_order["id"]),
+                    )
+                conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+                conn.commit()
+                continue
+            if broker_state == "pending":
+                try:
+                    client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Manual AI cancel")
+                except Exception as exc:
+                    logger.warning("Manual AI cancel failed plan=%s: %s", plan_id, exc)
+                    continue
+            elif broker_state is None:
+                # MT5 can expose history one poll later. Keep the request pending;
+                # guessing here could mark an already-filled live position cancelled.
+                continue
+            conn.execute("UPDATE manual_ai_plans SET status = 'cancelled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+            if trade_idea_id:
+                conn.execute(
+                    "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE trade_idea_id = ? AND status = 'pending_fill'",
+                    (now_iso, now_iso, trade_idea_id),
+                )
+            conn.commit()
+            continue
+
+        if plan_status not in {"approved", "armed"}:
+            continue
+        expires_at = datetime.fromisoformat(str(row["expires_at"]))
+        if expires_at <= now:
+            if plan_status == "armed":
+                broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
+                if broker_state == "filled":
+                    if linked_order is not None:
+                        conn.execute(
+                            "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                            (now_iso, linked_order["id"]),
+                        )
+                    conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+                    conn.commit()
+                    continue
+                if broker_state == "pending":
+                    try:
+                        client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Manual AI expired")
+                    except Exception as exc:
+                        logger.warning("Manual AI expiry cancel failed plan=%s: %s", plan_id, exc)
+                        continue
+                elif broker_state is None:
+                    continue
+                if linked_order is not None:
+                    conn.execute(
+                        "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                        (now_iso, now_iso, linked_order["id"]),
+                    )
+            conn.execute("UPDATE manual_ai_plans SET status = 'expired', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+            conn.commit()
+            continue
+
+        # M5 is a hard execution dependency for this short-horizon playbook.
+        latest_m5 = conn.execute(
+            "SELECT close_time, close FROM candles WHERE symbol = ? AND timeframe = 'M5' ORDER BY open_time DESC LIMIT 1",
+            (config.symbol,),
+        ).fetchone()
+        if latest_m5 is None:
+            continue
+        latest_m5_close = datetime.fromisoformat(str(latest_m5["close_time"]))
+        if now - latest_m5_close > timedelta(minutes=15):
+            continue
+
+        cancel_conditions = json.loads(row["cancel_conditions_json"] or "[]")
+        latest_m15 = conn.execute(
+            "SELECT close FROM candles WHERE symbol = ? AND timeframe = 'M15' ORDER BY open_time DESC LIMIT 1",
+            (config.symbol,),
+        ).fetchone()
+        current_price = float(client.current_price_for_side(broker_symbol, "buy" if row["side"] == "buy" else "sell"))
+        cancelled_reason: str | None = None
+        for condition in cancel_conditions:
+            condition_type = str(condition.get("type") or "")
+            condition_price = condition.get("price")
+            close_value = float(latest_m5["close"]) if condition_type.startswith("m5_") else float(latest_m15["close"]) if latest_m15 else None
+            if condition_type.endswith("close_below") and condition_price is not None and close_value is not None and close_value < float(condition_price):
+                cancelled_reason = condition_type
+            elif condition_type.endswith("close_above") and condition_price is not None and close_value is not None and close_value > float(condition_price):
+                cancelled_reason = condition_type
+            elif condition_type == "price_reached_target_without_fill":
+                if (row["side"] == "buy" and current_price >= float(row["take_profit"])) or (row["side"] == "sell" and current_price <= float(row["take_profit"])):
+                    cancelled_reason = condition_type
+            elif condition_type == "news_blackout_started" and active_news_blackout(conn, now):
+                cancelled_reason = condition_type
+            if cancelled_reason:
+                break
+        if cancelled_reason:
+            if plan_status == "armed":
+                broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
+                if broker_state == "filled":
+                    if linked_order is not None:
+                        conn.execute(
+                            "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                            (now_iso, linked_order["id"]),
+                        )
+                    conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+                    conn.commit()
+                    continue
+                if broker_state == "pending":
+                    try:
+                        client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment=f"Manual AI {cancelled_reason}")
+                    except Exception as exc:
+                        logger.warning("Manual AI invalidation cancel failed plan=%s: %s", plan_id, exc)
+                        continue
+                elif broker_state is None:
+                    continue
+                if linked_order is not None:
+                    conn.execute(
+                        "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                        (now_iso, now_iso, linked_order["id"]),
+                    )
+            conn.execute("UPDATE manual_ai_plans SET status = 'cancelled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
+            conn.commit()
+            continue
+
+        if plan_status == "armed":
+            continue
+
+        traded_today = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM trade_ideas JOIN trade_orders ON trade_orders.trade_idea_id = trade_ideas.id
+            WHERE trade_ideas.playbook = 'manual_ai_v1' AND trade_orders.account_label = ?
+              AND substr(trade_orders.created_at, 1, 10) = ?
+            """,
+            (env.account_label, now.date().isoformat()),
+        ).fetchone()
+        if traded_today and int(traded_today["count"]) >= 2:
+            continue
+        try:
+            open_bot_positions, pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
+        except AttributeError:
+            open_bot_positions, pending_bot_orders = 0, 0
+        if open_bot_positions > 0 or pending_bot_orders > 0:
+            # Reserve account/symbol risk for the already-live bot exposure.
+            continue
+
+        partial = json.loads(row["partial_take_profit_json"] or "{}")
+        candidate = {
+            "id": plan_id,
+            "playbook": "manual_ai_v1",
+            "status": "eligible",
+            "score": 1.0,
+            "direction": "long" if row["side"] == "buy" else "short",
+            "entry": float(row["entry_price"]),
+            "stop_loss": float(row["stop_loss"]),
+            "take_profit": [float(row["take_profit"])],
+            "risk_reward": float(row["risk_reward"]),
+            "expires_at": row["expires_at"],
+            "metadata": {
+                "order_type": "limit",
+                "entry_model": "manual_ai_limit",
+                "partial_take_profit": partial,
+                "cancel_conditions": cancel_conditions,
+            },
+        }
+        maybe_execute_candidates(
+            conn,
+            config,
+            env,
+            client,
+            [candidate],
+            broker_symbol,
+            risk_pct_override=1.0,
+        )
+        idea_id = live_trade_idea_id(plan_id, account_label=env.account_label)
+        execution = conn.execute(
+            "SELECT id, status FROM execution_requests WHERE trade_idea_id = ? ORDER BY created_at DESC LIMIT 1",
+            (idea_id,),
+        ).fetchone()
+        if execution is not None:
+            plan_status = "armed" if execution["status"] == "sent" else "rejected" if execution["status"] == "failed" else "arming"
+            conn.execute(
+                """
+                UPDATE manual_ai_plans
+                SET status = ?, trade_idea_id = ?, execution_request_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (plan_status, idea_id, execution["id"], now_iso, plan_id),
+            )
+            conn.commit()
+
+
 def maybe_execute_candidates(
     conn: Connection,
     config: AppConfig,
@@ -1031,6 +1297,7 @@ def maybe_execute_candidates(
     client: MT5BrokerClient,
     candidates: list[dict[str, Any]],
     broker_symbol: str,
+    risk_pct_override: float | None = None,
 ) -> None:
     if not account_execution_is_enabled(conn, env):
         return
@@ -1110,7 +1377,12 @@ def maybe_execute_candidates(
         )
         return
     # Risk check: compute lot size and verify daily loss limit
-    risk_manager = build_risk_manager(client, env.account_profile, env.risk_per_trade_pct, env.account_balance_scale)
+    risk_manager = build_risk_manager(
+        client,
+        env.account_profile,
+        env.risk_per_trade_pct if risk_pct_override is None else risk_pct_override,
+        env.account_balance_scale,
+    )
     assessment = risk_manager.assess_trade(
         conn=conn,
         symbol=config.symbol,
@@ -1467,7 +1739,7 @@ def execute_candidate(
     broker_symbol: str,
     lot_size: float | None = None,
     pricing_plan: ExecutionPricingPlan | None = None,
-) -> None:
+) -> dict[str, str] | None:
     if not account_execution_is_enabled(conn, env):
         return
     # lot_size from risk manager takes precedence; fall back to env fixed volume
@@ -1633,6 +1905,9 @@ def execute_candidate(
         trade_metadata["account_profile"] = env.account_profile
         trade_metadata["broker_symbol"] = broker_symbol
         partial_enabled, partial_trigger_r = account_partial_take_profit_settings(conn, env)
+        candidate_metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        candidate_partial = candidate_metadata.get("partial_take_profit")
+        locked_partial = candidate_partial if isinstance(candidate_partial, dict) else None
         trade_metadata.update(
             _partial_take_profit_metadata(
                 env=env,
@@ -1641,8 +1916,12 @@ def execute_candidate(
                 stop_loss=exec_stop,
                 take_profit=exec_take_profit[0],
                 quantity=volume,
-                enabled=partial_enabled,
-                trigger_r=partial_trigger_r,
+                enabled=bool(locked_partial.get("enabled")) if locked_partial is not None else partial_enabled,
+                trigger_r=float(locked_partial.get("trigger_r", partial_trigger_r)) if locked_partial is not None else partial_trigger_r,
+                fraction=float(locked_partial.get("close_fraction", env.partial_take_profit_fraction)) if locked_partial is not None else None,
+                breakeven_buffer=float(locked_partial.get("breakeven_buffer", env.partial_take_profit_be_buffer)) if locked_partial is not None else None,
+                move_stop_to=str(locked_partial.get("move_stop_to", "breakeven")) if locked_partial is not None else "breakeven",
+                locked=locked_partial is not None,
             )
         )
         conn.execute(
@@ -1695,6 +1974,7 @@ def execute_candidate(
             },
             dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",
         )
+        return {"trade_idea_id": idea_id, "execution_request_id": request_id, "trade_order_id": order_id}
     except Exception as exc:
         conn.execute(
             """
@@ -1727,18 +2007,22 @@ def _partial_take_profit_metadata(
     quantity: float,
     enabled: bool | None = None,
     trigger_r: float | None = None,
+    fraction: float | None = None,
+    breakeven_buffer: float | None = None,
+    move_stop_to: str = "breakeven",
+    locked: bool = False,
 ) -> dict[str, Any]:
     risk = abs(entry_price - stop_loss)
     resolved_enabled = bool(env.partial_take_profit_enabled if enabled is None else enabled)
     resolved_enabled = bool(resolved_enabled and risk > 0 and quantity > 0)
-    fraction = min(max(float(env.partial_take_profit_fraction), 0.0), 1.0)
+    resolved_fraction = min(max(float(env.partial_take_profit_fraction if fraction is None else fraction), 0.0), 1.0)
     resolved_trigger_r = min(max(float(env.partial_take_profit_r if trigger_r is None else trigger_r), 0.5), 2.0)
     if side == "buy":
         trigger_price = entry_price + risk * resolved_trigger_r
-        breakeven_stop = entry_price + float(env.partial_take_profit_be_buffer)
+        breakeven_stop = entry_price + float(env.partial_take_profit_be_buffer if breakeven_buffer is None else breakeven_buffer)
     else:
         trigger_price = entry_price - risk * resolved_trigger_r
-        breakeven_stop = entry_price - float(env.partial_take_profit_be_buffer)
+        breakeven_stop = entry_price - float(env.partial_take_profit_be_buffer if breakeven_buffer is None else breakeven_buffer)
     return {
         "initial_stop_loss": stop_loss,
         "initial_quantity": quantity,
@@ -1746,8 +2030,10 @@ def _partial_take_profit_metadata(
             "enabled": resolved_enabled,
             "trigger_r": resolved_trigger_r,
             "trigger_price": round(trigger_price, 5),
-            "fraction": fraction,
+            "fraction": resolved_fraction,
             "breakeven_stop": round(breakeven_stop, 5),
+            "move_stop_to": move_stop_to,
+            "locked": locked,
             "final_take_profit": take_profit,
             "done": False,
         },
@@ -1792,7 +2078,7 @@ def manage_open_trade_partial_take_profit(
         plan = metadata.get("partial_take_profit")
         if not isinstance(plan, dict):
             continue
-        if not plan.get("done"):
+        if not plan.get("done") and not plan.get("locked"):
             initial_stop = float(metadata.get("initial_stop_loss") or row["stop_loss"])
             entry = float(row["entry_price"])
             trigger_price = (
@@ -1836,9 +2122,10 @@ def manage_open_trade_partial_take_profit(
             continue
         be_stop = float(plan.get("breakeven_stop") or entry)
         final_tp = float(plan.get("final_take_profit") or (json.loads(row["take_profit_json"] or "[]") or [0])[0])
+        move_to_breakeven = plan.get("move_stop_to", "breakeven") == "breakeven"
         ticket = str(position["ticket"])
         if plan.get("done"):
-            if plan.get("breakeven_applied"):
+            if not move_to_breakeven or plan.get("breakeven_applied"):
                 continue
             modify_result, modify_error = _try_apply_break_even(
                 client,
@@ -1913,14 +2200,17 @@ def manage_open_trade_partial_take_profit(
                     dedupe_key=f"partial-tp-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
                 )
                 continue
-        modify_result, modify_error = _try_apply_break_even(
-            client,
-            broker_symbol=broker_symbol,
-            position_ticket=ticket,
-            stop_loss=be_stop,
-            take_profit=final_tp,
-            magic=env.mt5_magic,
-        )
+        modify_result: dict[str, Any] | None = None
+        modify_error: str | None = None
+        if move_to_breakeven:
+            modify_result, modify_error = _try_apply_break_even(
+                client,
+                broker_symbol=broker_symbol,
+                position_ticket=ticket,
+                stop_loss=be_stop,
+                take_profit=final_tp,
+                magic=env.mt5_magic,
+            )
         if modify_error is not None:
             queue_alert(
                 conn,
@@ -1940,7 +2230,7 @@ def manage_open_trade_partial_take_profit(
                 "closed_volume": close_volume,
                 "remaining_volume_estimate": round(max(position_volume - close_volume, 0.0), 4),
                 "close_price": current_close_price,
-                "breakeven_applied": modify_error is None,
+                "breakeven_applied": move_to_breakeven and modify_error is None,
                 "close_result": close_result,
                 "modify_result": modify_result,
                 "modify_error": modify_error,
@@ -1948,15 +2238,25 @@ def manage_open_trade_partial_take_profit(
             }
         )
         metadata["partial_take_profit"] = plan
-        metadata["stop_management_state"] = "partial_taken_be" if modify_error is None else "partial_taken_be_failed"
-        metadata["current_stop_loss"] = be_stop
+        if not move_to_breakeven:
+            metadata["stop_management_state"] = "partial_taken_sl_unchanged"
+            metadata["current_stop_loss"] = float(row["stop_loss"])
+            persisted_stop_loss = float(row["stop_loss"])
+        elif modify_error is None:
+            metadata["stop_management_state"] = "partial_taken_be"
+            metadata["current_stop_loss"] = be_stop
+            persisted_stop_loss = be_stop
+        else:
+            metadata["stop_management_state"] = "partial_taken_be_failed"
+            metadata["current_stop_loss"] = float(row["stop_loss"])
+            persisted_stop_loss = float(row["stop_loss"])
         conn.execute(
             """
             UPDATE trade_orders
             SET stop_loss = ?, metadata_json = ?, updated_at = ?
             WHERE id = ?
             """,
-            (be_stop if modify_error is None else row["stop_loss"], json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
+            (persisted_stop_loss, json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
         )
         queue_alert(
             conn,

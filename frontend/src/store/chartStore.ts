@@ -30,6 +30,7 @@ export type InspectorTab = "zones" | "setups" | "trades";
 export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibilityKey[]; structure: boolean }> = {
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
+  manual_ai_v1: { zones: [], structure: true },
 };
 
 type ChartState = {
@@ -218,6 +219,7 @@ export const useChartStore = create<ChartState>()(
 function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> {
   const requiredZoneTypes = requiredZoneTypesForPlaybooks(state.selectedPlaybooks);
   const requiresStructure = requiresStructureForPlaybooks(state.selectedPlaybooks);
+  const manualAiOnly = state.selectedPlaybooks.length === 1 && state.selectedPlaybooks[0] === "manual_ai_v1";
   if (requiredZoneTypes.size === 0 && !requiresStructure) {
     return {
       selectedPlaybooks: state.selectedPlaybooks,
@@ -229,7 +231,7 @@ function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> 
   });
   return {
     selectedPlaybooks: state.selectedPlaybooks,
-    showZones: requiredZoneTypes.size > 0 ? true : state.showZones,
+    showZones: manualAiOnly ? false : requiredZoneTypes.size > 0 ? true : state.showZones,
     zoneTypeVisibility,
     showStructure: requiresStructure ? true : state.showStructure,
   };
