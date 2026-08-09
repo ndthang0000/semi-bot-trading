@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .candles import Candle
 from .timeframes import timeframe_delta
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -211,20 +215,68 @@ class MT5BrokerClient:
             "type_time": self.mt5.ORDER_TIME_GTC,
             "type_filling": self.order_filling_mode(request.broker_symbol),
         }
+        uses_broker_expiration = False
+        parsed_expiry: datetime | None = None
         if request.expires_at:
             expires_at = datetime.fromisoformat(request.expires_at.replace("Z", "+00:00"))
-            if expires_at.tzinfo is not None:
-                expires_at = expires_at.astimezone(UTC)
-            payload["type_time"] = self.mt5.ORDER_TIME_SPECIFIED
-            payload["expiration"] = int(expires_at.timestamp())
+            if expires_at.tzinfo is None:
+                raise ValueError("expires_at must include a timezone offset")
+            expires_at = expires_at.astimezone(UTC)
+            if expires_at <= datetime.now(UTC) + timedelta(seconds=30):
+                raise ValueError("expires_at must be at least 30 seconds in the future")
+            parsed_expiry = expires_at
+            if self._supports_specified_expiration(request.broker_symbol):
+                payload["type_time"] = self.mt5.ORDER_TIME_SPECIFIED
+                payload["expiration"] = int(expires_at.timestamp())
+                uses_broker_expiration = True
         result = self.mt5.order_send(payload)
         if result is None:
             raise RuntimeError(f"MT5 order_send failed: {self.mt5.last_error()}")
         data = result._asdict()
         retcode = int(data.get("retcode", -1))
+        invalid_expiration = int(getattr(self.mt5, "TRADE_RETCODE_INVALID_EXPIRATION", 10022))
+        fallback_is_safe = (
+            parsed_expiry is not None
+            and parsed_expiry > datetime.now(UTC) + timedelta(seconds=30)
+            and not data.get("order")
+            and not data.get("deal")
+        )
+        if uses_broker_expiration and retcode == invalid_expiration and fallback_is_safe:
+            # Some brokers advertise ORDER_TIME_SPECIFIED for a symbol but still
+            # reject short/intraday expirations. The live worker retains the
+            # absolute expires_at and cancels the known pending ticket itself,
+            # so retrying the rejected request once as GTC preserves the plan
+            # timeout without risking a duplicate broker order.
+            fallback_payload = dict(payload)
+            fallback_payload["type_time"] = self.mt5.ORDER_TIME_GTC
+            fallback_payload.pop("expiration", None)
+            logger.warning(
+                "MT5 rejected specified expiration for %s; retrying pending order as GTC",
+                request.broker_symbol,
+            )
+            result = self.mt5.order_send(fallback_payload)
+            if result is None:
+                raise RuntimeError(f"MT5 order_send GTC fallback failed: {self.mt5.last_error()}")
+            data = result._asdict()
+            data["expiration_fallback"] = "gtc"
+            retcode = int(data.get("retcode", -1))
         if retcode not in {self.mt5.TRADE_RETCODE_DONE, self.mt5.TRADE_RETCODE_PLACED}:
             raise RuntimeError(f"MT5 limit order rejected retcode={retcode}: {data}")
         return data
+
+    def _supports_specified_expiration(self, broker_symbol: str) -> bool:
+        """Return whether the broker symbol allows an exact pending-order expiry.
+
+        MT5 exposes expiration modes as a bitmask. If the terminal cannot expose
+        that property, optimistically try the specified mode; the order-send
+        fallback above still handles a broker-side 10022 rejection safely.
+        """
+        info = self.mt5.symbol_info(broker_symbol)
+        raw_mode = getattr(info, "expiration_mode", None) if info is not None else None
+        if not isinstance(raw_mode, (int, float)):
+            return True
+        specified_flag = int(getattr(self.mt5, "SYMBOL_EXPIRATION_SPECIFIED", 4))
+        return bool(int(raw_mode) & specified_flag)
 
     def get_account_info(self) -> dict[str, Any]:
         """Return key account metrics: balance, equity, margin, free_margin, profit."""

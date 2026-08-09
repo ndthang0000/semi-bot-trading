@@ -5,7 +5,12 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from semi_bot_trading.mt5_client import MT5BrokerClient, MT5Credentials, mt5_server_timestamp_to_utc
+from semi_bot_trading.mt5_client import (
+    MT5BrokerClient,
+    MT5Credentials,
+    MT5OrderRequest,
+    mt5_server_timestamp_to_utc,
+)
 
 
 class MT5TimestampNormalizationTest(unittest.TestCase):
@@ -162,6 +167,108 @@ class MT5BotOwnershipTest(unittest.TestCase):
 
         self.assertEqual(2, len(results))
         self.assertEqual([11, 22], [call.args[0]["position"] for call in mt5.order_send.call_args_list])
+
+
+class MT5LimitOrderExpirationTest(unittest.TestCase):
+    def _client(self, *, expiration_mode: int) -> tuple[MT5BrokerClient, MagicMock]:
+        mt5 = MagicMock()
+        mt5.TRADE_ACTION_PENDING = 5
+        mt5.ORDER_TYPE_BUY_LIMIT = 2
+        mt5.ORDER_TYPE_SELL_LIMIT = 3
+        mt5.ORDER_TIME_GTC = 0
+        mt5.ORDER_TIME_SPECIFIED = 2
+        mt5.SYMBOL_EXPIRATION_SPECIFIED = 4
+        mt5.TRADE_RETCODE_DONE = 10009
+        mt5.TRADE_RETCODE_PLACED = 10008
+        mt5.TRADE_RETCODE_INVALID_EXPIRATION = 10022
+        mt5.symbol_info.return_value = SimpleNamespace(visible=True, expiration_mode=expiration_mode)
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.ensure_symbol = MagicMock()
+        client.order_filling_mode = MagicMock(return_value=0)
+        return client, mt5
+
+    @staticmethod
+    def _request() -> MT5OrderRequest:
+        return MT5OrderRequest(
+            broker_symbol="XAUUSD",
+            side="buy",
+            volume=0.57,
+            entry_price=4341.8,
+            stop_loss=4324.5,
+            take_profit=4370.5,
+            comment="manual_ai_v1 test",
+            magic=260720,
+            expires_at="2099-08-07T15:54:54+00:00",
+        )
+
+    def test_uses_specified_expiration_when_symbol_supports_it(self) -> None:
+        client, mt5 = self._client(expiration_mode=4)
+        result = MagicMock()
+        result._asdict.return_value = {"retcode": 10009, "order": 123}
+        mt5.order_send.return_value = result
+
+        client.place_limit_order(self._request())
+
+        payload = mt5.order_send.call_args.args[0]
+        self.assertEqual(2, payload["type_time"])
+        self.assertEqual(int(datetime(2099, 8, 7, 15, 54, 54, tzinfo=UTC).timestamp()), payload["expiration"])
+
+    def test_uses_gtc_when_symbol_does_not_support_specified_expiration(self) -> None:
+        client, mt5 = self._client(expiration_mode=1)
+        result = MagicMock()
+        result._asdict.return_value = {"retcode": 10009, "order": 123}
+        mt5.order_send.return_value = result
+
+        client.place_limit_order(self._request())
+
+        payload = mt5.order_send.call_args.args[0]
+        self.assertEqual(0, payload["type_time"])
+        self.assertNotIn("expiration", payload)
+        mt5.order_send.assert_called_once()
+
+    def test_retries_invalid_specified_expiration_once_as_gtc(self) -> None:
+        client, mt5 = self._client(expiration_mode=4)
+        rejected = MagicMock()
+        rejected._asdict.return_value = {"retcode": 10022, "order": 0, "deal": 0}
+        placed = MagicMock()
+        placed._asdict.return_value = {"retcode": 10009, "order": 456}
+        mt5.order_send.side_effect = [rejected, placed]
+
+        data = client.place_limit_order(self._request())
+
+        self.assertEqual(2, mt5.order_send.call_count)
+        first_payload = mt5.order_send.call_args_list[0].args[0]
+        second_payload = mt5.order_send.call_args_list[1].args[0]
+        self.assertEqual(2, first_payload["type_time"])
+        self.assertIn("expiration", first_payload)
+        self.assertEqual(0, second_payload["type_time"])
+        self.assertNotIn("expiration", second_payload)
+        self.assertEqual("gtc", data["expiration_fallback"])
+
+    def test_does_not_retry_other_broker_rejections(self) -> None:
+        client, mt5 = self._client(expiration_mode=4)
+        rejected = MagicMock()
+        rejected._asdict.return_value = {"retcode": 10016, "order": 0, "deal": 0}
+        mt5.order_send.return_value = rejected
+
+        with self.assertRaisesRegex(RuntimeError, "retcode=10016"):
+            client.place_limit_order(self._request())
+
+        mt5.order_send.assert_called_once()
+
+    def test_does_not_fallback_to_gtc_after_plan_expired(self) -> None:
+        client, mt5 = self._client(expiration_mode=4)
+        rejected = MagicMock()
+        rejected._asdict.return_value = {"retcode": 10022, "order": 0, "deal": 0}
+        mt5.order_send.return_value = rejected
+        request = self._request()
+        request = MT5OrderRequest(**{**request.__dict__, "expires_at": "2020-01-01T00:00:00+00:00"})
+
+        with self.assertRaisesRegex(ValueError, "at least 30 seconds"):
+            client.place_limit_order(request)
+
+        mt5.order_send.assert_not_called()
 
 
 if __name__ == "__main__":
