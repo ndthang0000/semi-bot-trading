@@ -530,7 +530,11 @@ export function buildScaleAnchorData(candles: CandleDatum[], events: NewsEvent[]
   const halfRange = Math.max(high - last.close, last.close - low, minimumHalfRange) * 1.08;
   const previousTime = candles.at(-2)?.time ?? ((last.time - 1) as CandleDatum["time"]);
   const intervalSeconds = inferCandleIntervalSeconds(candles);
-  const futureEnd = futureAxisEndTime(Number(last.time), intervalSeconds, events);
+  // Keep the synthetic series bounded by bars, not wall-clock news horizon.
+  // A seven-day news event creates only 168 empty points on H1, but 2,016 on
+  // M5. Lightweight Charts may then auto-shift the visible range to those
+  // points after setData(), leaving the current candles off-screen.
+  const futureEnd = futureAxisEndTime(Number(last.time), intervalSeconds);
   const anchorTimes = new Set<number>([Number(previousTime), Number(last.time)]);
 
   for (let time = Number(last.time) + intervalSeconds; time <= futureEnd; time += intervalSeconds) {
@@ -765,13 +769,6 @@ function inferCandleIntervalSeconds(candles: CandleDatum[]): number {
   return intervals[Math.floor(intervals.length / 2)];
 }
 
-function futureAxisEndTime(lastTime: number, intervalSeconds: number, events: NewsEvent[]): number {
-  const defaultEnd = lastTime + RIGHT_OFFSET_BARS * intervalSeconds;
-  const horizonEnd = lastTime + NEWS_AXIS_HORIZON_HOURS * 3600;
-  const latestNewsTime = events.reduce((latest, event) => {
-    const timestamp = Number(toUnixTime(event.scheduled_at));
-    if (!Number.isFinite(timestamp) || timestamp <= lastTime || timestamp > horizonEnd) return latest;
-    return Math.max(latest, timestamp);
-  }, defaultEnd);
-  return Math.min(Math.max(defaultEnd, latestNewsTime + 6 * 3600), horizonEnd);
+function futureAxisEndTime(lastTime: number, intervalSeconds: number): number {
+  return lastTime + RIGHT_OFFSET_BARS * intervalSeconds;
 }

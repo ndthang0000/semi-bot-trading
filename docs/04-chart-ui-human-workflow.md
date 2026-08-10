@@ -49,6 +49,9 @@ Riêng trang Chart dùng mobile shell tới breakpoint dưới `1024px`, bao g�
   mở dạng bottom sheet phủ lên chart, không resize hoặc đổi viewport chart.
 - Mobile mặc định ưu tiên important zones, giới hạn mật độ nến/label và không
   kéo future news whitespace quá xa làm nến hiện tại bị dồn sang trái.
+- Trên mọi viewport, synthetic time-axis anchor chỉ được kéo tối đa 18 bar theo
+  timeframe hiện tại. Tin tương lai xa không được biến thành hàng trăm/hàng
+  nghìn bar rỗng khi chuyển từ H1 sang M15/M5.
 - Zone resize handle có vùng chạm lớn hơn desktop; marker có hit area mở rộng
   nhưng giữ visual nhỏ để không che nến.
 
