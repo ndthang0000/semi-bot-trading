@@ -86,7 +86,8 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
                 logger.exception("Live iteration error — retrying next cycle")
             if once:
                 return
-            time.sleep(_seconds_until_next_poll(env.poll_at_seconds, fallback_seconds=env.poll_seconds))
+            wait_seconds = _seconds_until_next_poll(env.poll_at_seconds, fallback_seconds=env.poll_seconds)
+            _wait_with_manual_trade_guard(config, env, client, broker_symbol, wait_seconds)
     finally:
         client.shutdown()
 
@@ -109,6 +110,33 @@ def _seconds_until_next_poll(poll_at_seconds: tuple[int, ...], *, fallback_secon
             return max((target - now).total_seconds(), 0.1)
     target = (now + timedelta(minutes=1)).replace(second=marks[0], microsecond=0)
     return max((target - now).total_seconds(), 0.1)
+
+
+def _wait_with_manual_trade_guard(
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    wait_seconds: float,
+) -> None:
+    """Run the discipline guard at its own cadence between strategy polls.
+
+    Calls remain sequential on the same MT5 client. This avoids concurrent
+    MetaTrader5 access while keeping manual-trade enforcement near one second.
+    """
+    deadline = time.monotonic() + max(wait_seconds, 0.0)
+    guard_seconds = max(float(env.manual_trade_guard_seconds), 0.25)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(guard_seconds, remaining))
+        if time.monotonic() >= deadline:
+            return
+        try:
+            run_manual_trade_guard_iteration(config, env, client, broker_symbol)
+        except Exception:
+            logger.exception("Manual trading lock guard failed for %s", env.account_label)
 
 
 def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
@@ -395,6 +423,233 @@ def account_partial_take_profit_settings(conn: Connection, env: RuntimeEnv) -> t
     return enabled, min(max(trigger_r, 0.5), 2.0)
 
 
+def run_manual_trade_guard_iteration(
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> bool:
+    """Run one fast manual-trading-lock pass and promptly flush its alerts."""
+    if not broker_symbol:
+        return False
+    with closing(connect(config.database)) as conn:
+        acted = process_manual_trading_lock(conn, config, env, client, broker_symbol)
+    if acted:
+        with closing(connect(config.database)) as conn:
+            send_pending_telegram_alerts(
+                conn,
+                token=env.telegram_token,
+                chat_id=env.telegram_chat_id,
+                environment=env.environment,
+            )
+    return acted
+
+
+def process_manual_trading_lock(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> bool:
+    """Cancel/close only new MT5 manual exposure while preserving bot orders.
+
+    Manual MT5 trades use magic=0. Existing manual tickets are snapshotted when
+    the lock becomes effective and are grandfathered until the user disables
+    the lock. Non-zero magic numbers, including this bot's magic, are untouched.
+    """
+    row = conn.execute(
+        """
+        SELECT manual_lock_requested_enabled, manual_lock_effective_enabled,
+               manual_lock_baseline_positions_json, manual_lock_baseline_orders_json,
+               manual_lock_requested_at
+        FROM account_execution_controls
+        WHERE account_label = ?
+        """,
+        (env.account_label,),
+    ).fetchone()
+    if row is None:
+        return False
+    if not bool(row["manual_lock_requested_enabled"]):
+        if bool(row["manual_lock_effective_enabled"]):
+            conn.execute(
+                """
+                UPDATE account_execution_controls
+                SET manual_lock_effective_enabled = 0,
+                    manual_lock_baseline_positions_json = '[]',
+                    manual_lock_baseline_orders_json = '[]',
+                    manual_lock_acknowledged_at = ?, manual_lock_last_error = NULL,
+                    updated_at = ?
+                WHERE account_label = ?
+                """,
+                (utc_now_iso(), utc_now_iso(), env.account_label),
+            )
+            conn.commit()
+        return False
+
+    now = utc_now_iso()
+    try:
+        positions = [
+            position
+            for position in client.get_open_positions(broker_symbol)
+            if int(position.get("magic", 0) or 0) == 0
+        ]
+        orders = [
+            order
+            for order in client.get_pending_orders(broker_symbol)
+            if int(order.get("magic", 0) or 0) == 0
+        ]
+    except Exception as exc:
+        conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_last_error = ?, updated_at = ?
+            WHERE account_label = ?
+            """,
+            (str(exc)[:1000], now, env.account_label),
+        )
+        conn.commit()
+        raise
+
+    position_by_ticket = {str(item["ticket"]): item for item in positions}
+    order_by_ticket = {str(item["ticket"]): item for item in orders}
+    if not bool(row["manual_lock_effective_enabled"]):
+        baseline_positions = sorted(position_by_ticket)
+        baseline_orders = sorted(order_by_ticket)
+        conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_effective_enabled = 1,
+                manual_lock_baseline_positions_json = ?, manual_lock_baseline_orders_json = ?,
+                manual_lock_acknowledged_at = ?, manual_lock_last_error = NULL,
+                updated_at = ?
+            WHERE account_label = ? AND manual_lock_requested_enabled = 1
+            """,
+            (json.dumps(baseline_positions), json.dumps(baseline_orders), now, now, env.account_label),
+        )
+        conn.commit()
+        queue_alert(
+            conn,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="important",
+            entity_ids=[],
+            payload={
+                "title": "Manual trading lock enabled",
+                "account": env.account_label,
+                "reason": [
+                    f"Guard cadence: {env.manual_trade_guard_seconds:g}s",
+                    f"Grandfathered manual positions: {len(baseline_positions)}",
+                    f"Grandfathered manual pending orders: {len(baseline_orders)}",
+                ],
+            },
+            dedupe_key=f"manual-lock-enabled:{env.account_label}:{row['manual_lock_requested_at'] or now}",
+        )
+        return True
+
+    baseline_positions = _ticket_set(row["manual_lock_baseline_positions_json"])
+    baseline_orders = _ticket_set(row["manual_lock_baseline_orders_json"])
+    violating_orders = [item for ticket, item in order_by_ticket.items() if ticket not in baseline_orders]
+    violating_positions = [
+        item
+        for ticket, item in position_by_ticket.items()
+        if ticket not in baseline_positions and ticket not in baseline_orders
+    ]
+    acted = False
+    errors: list[str] = []
+
+    for order in violating_orders:
+        ticket = str(order["ticket"])
+        try:
+            client.cancel_pending_order(
+                broker_symbol,
+                order_ticket=ticket,
+                comment="Manual trading lock",
+            )
+            acted = True
+            _queue_manual_lock_action_alert(conn, config, env, "cancelled", "pending order", ticket, order)
+        except Exception as exc:
+            errors.append(f"pending {ticket}: {exc}")
+            _queue_manual_lock_action_alert(conn, config, env, "failed to cancel", "pending order", ticket, order, exc)
+
+    for position in violating_positions:
+        ticket = str(position["ticket"])
+        try:
+            client.close_position(
+                broker_symbol,
+                position_ticket=ticket,
+                side=str(position["side"]),
+                volume=float(position["volume"]),
+                magic=env.mt5_magic,
+                comment="Manual trading lock",
+            )
+            acted = True
+            _queue_manual_lock_action_alert(conn, config, env, "closed", "position", ticket, position)
+        except Exception as exc:
+            errors.append(f"position {ticket}: {exc}")
+            _queue_manual_lock_action_alert(conn, config, env, "failed to close", "position", ticket, position, exc)
+
+    if violating_orders or violating_positions:
+        conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_last_action_at = ?, manual_lock_last_error = ?, updated_at = ?
+            WHERE account_label = ?
+            """,
+            (now, "; ".join(errors)[:1000] if errors else None, now, env.account_label),
+        )
+        conn.commit()
+    return acted or bool(errors)
+
+
+def _ticket_set(raw: str | None) -> set[str]:
+    try:
+        parsed = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(parsed, list):
+        return set()
+    return {str(ticket) for ticket in parsed}
+
+
+def _queue_manual_lock_action_alert(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    action: str,
+    exposure_type: str,
+    ticket: str,
+    exposure: dict[str, Any],
+    error: Exception | None = None,
+) -> None:
+    details = [
+        f"Account: {env.account_label}",
+        f"Ticket: {ticket}",
+        f"Magic: {int(exposure.get('magic', 0) or 0)}",
+    ]
+    if exposure_type == "position":
+        details.append(f"Side/volume: {exposure.get('side')} {exposure.get('volume')}")
+    else:
+        details.append(f"Volume/price: {exposure.get('volume')} @ {exposure.get('price_open')}")
+    if error is not None:
+        details.append(f"Error: {error}")
+    queue_alert(
+        conn,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="critical" if error is not None else "important",
+        entity_ids=[ticket],
+        payload={
+            "title": f"Manual {exposure_type} {action} by discipline lock",
+            "account": env.account_label,
+            "reason": details,
+        },
+        dedupe_key=f"manual-lock:{env.account_label}:{exposure_type}:{ticket}:{action}",
+    )
+
+
 def process_account_execution_commands(
     conn: Connection,
     config: AppConfig,
@@ -494,6 +749,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         # init_db is called once at startup in run_live_worker; skip here.
         snapshot_account(conn, env, client)
         refresh_account_execution_control(conn, env, client, broker_symbol)
+        if broker_symbol:
+            process_manual_trading_lock(conn, config, env, client, broker_symbol)
         ftmo_news_guard = ftmo_news_guard_state(conn, env, now)
         if broker_symbol and ftmo_news_guard is None:
             process_account_execution_commands(conn, config, env, client, broker_symbol)

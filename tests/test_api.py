@@ -76,7 +76,15 @@ class ApiTest(unittest.TestCase):
                     "/api/accounts/FTMO%20100K/partial-take-profit",
                     json={"enabled": True, "trigger_r": 1.0},
                 )
+                manual_lock = client.patch(
+                    "/api/accounts/FTMO%20100K/manual-trading-lock",
+                    json={"enabled": True, "reason": "discipline"},
+                )
                 listing_after_partial = client.get("/api/accounts")
+                manual_unlock = client.patch(
+                    "/api/accounts/FTMO%20100K/manual-trading-lock",
+                    json={"enabled": False},
+                )
                 close_all = client.post(
                     "/api/accounts/FTMO%20100K/close-all",
                     json={"idempotency_key": "close-ftmo-once", "include_manual_positions": True},
@@ -105,6 +113,12 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(200, partial.status_code)
         self.assertEqual(1.0, partial.json()["partial_take_profit"]["trigger_r"])
         self.assertEqual(1.0, listing_after_partial.json()["accounts"][0]["partial_take_profit"]["trigger_r"])
+        self.assertEqual(200, manual_lock.status_code)
+        self.assertTrue(manual_lock.json()["requested_enabled"])
+        self.assertTrue(listing_after_partial.json()["accounts"][0]["manual_trading_lock"]["requested_enabled"])
+        self.assertFalse(listing_after_partial.json()["accounts"][0]["manual_trading_lock"]["effective_enabled"])
+        self.assertEqual(200, manual_unlock.status_code)
+        self.assertFalse(manual_unlock.json()["requested_enabled"])
         self.assertEqual(202, close_all.status_code)
         self.assertTrue(close_all.json()["include_manual_positions"])
         self.assertEqual(close_all.json()["command_id"], duplicate.json()["command_id"])

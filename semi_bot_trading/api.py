@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .api_models import (
     AccountCloseAllRequest,
     AccountExecutionControlRequest,
+    AccountManualTradingLockRequest,
     AccountPartialTakeProfitRequest,
     ContextOverrideRequest,
     LoginRequest,
@@ -460,7 +461,11 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        d.daily_profit, d.daily_profit_pct, d.initial_balance, d.baseline_source,
                        c.requested_enabled, c.effective_enabled, c.hard_enabled, c.worker_status,
                        c.open_bot_positions, c.pending_bot_orders, c.heartbeat_at,
-                       c.partial_take_profit_enabled, c.partial_take_profit_r
+                       c.partial_take_profit_enabled, c.partial_take_profit_r,
+                       c.manual_lock_requested_enabled, c.manual_lock_effective_enabled,
+                       c.manual_lock_baseline_positions_json, c.manual_lock_baseline_orders_json,
+                       c.manual_lock_requested_at, c.manual_lock_acknowledged_at,
+                       c.manual_lock_last_action_at, c.manual_lock_last_error
                 FROM account_snapshots a
                 LEFT JOIN account_daily_metrics d
                   ON d.account_label = a.account_label
@@ -508,6 +513,16 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                         "enabled": True if row["partial_take_profit_enabled"] is None else bool(row["partial_take_profit_enabled"]),
                         "trigger_r": float(row["partial_take_profit_r"] or 1.25),
                     },
+                    "manual_trading_lock": {
+                        "requested_enabled": bool(row["manual_lock_requested_enabled"]),
+                        "effective_enabled": bool(row["manual_lock_effective_enabled"]),
+                        "baseline_position_count": len(json_loads(row["manual_lock_baseline_positions_json"], [])),
+                        "baseline_order_count": len(json_loads(row["manual_lock_baseline_orders_json"], [])),
+                        "requested_at": row["manual_lock_requested_at"],
+                        "acknowledged_at": row["manual_lock_acknowledged_at"],
+                        "last_action_at": row["manual_lock_last_action_at"],
+                        "last_error": row["manual_lock_last_error"],
+                    },
                 }
                 for row in rows
             ]
@@ -546,6 +561,45 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             )
             conn.commit()
         return {"label": account_label, "requested_enabled": request.enabled, "status": "pending_worker_ack"}
+
+    @app.patch("/api/accounts/{account_label}/manual-trading-lock")
+    def update_account_manual_trading_lock(
+        account_label: str,
+        request: AccountManualTradingLockRequest,
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        with connect(config.database) as conn:
+            row = conn.execute(
+                "SELECT heartbeat_at FROM account_execution_controls WHERE account_label = ?",
+                (account_label,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Account worker has not registered yet")
+            if request.enabled:
+                heartbeat = datetime.fromisoformat(row["heartbeat_at"]) if row["heartbeat_at"] else None
+                fresh = heartbeat is not None and now - heartbeat.astimezone(UTC) <= timedelta(seconds=90)
+                if not fresh:
+                    raise HTTPException(status_code=409, detail="Worker is offline or its heartbeat is stale")
+            conn.execute(
+                """
+                UPDATE account_execution_controls
+                SET manual_lock_requested_enabled = ?, manual_lock_effective_enabled = 0,
+                    manual_lock_baseline_positions_json = '[]', manual_lock_baseline_orders_json = '[]',
+                    manual_lock_requested_at = ?, manual_lock_acknowledged_at = NULL,
+                    manual_lock_last_error = NULL, requested_by = ?, updated_at = ?
+                WHERE account_label = ?
+                """,
+                (int(request.enabled), now_iso, username, now_iso, account_label),
+            )
+            conn.commit()
+        return {
+            "label": account_label,
+            "requested_enabled": request.enabled,
+            "effective_enabled": False,
+            "status": "pending_worker_ack" if request.enabled else "disabled",
+        }
 
     @app.patch("/api/accounts/{account_label}/partial-take-profit")
     def update_account_partial_take_profit(

@@ -67,6 +67,7 @@ class RuntimeEnv:
     ftmo_news_buffer_minutes: int = 5
     ftmo_news_calendar_max_age_hours: int = 36
     ftmo_news_flatten_enabled: bool = True
+    manual_trade_guard_seconds: float = 1.0
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -135,6 +136,7 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         ftmo_news_buffer_minutes=env_int("FTMO_NEWS_BUFFER_MINUTES", 5) or 5,
         ftmo_news_calendar_max_age_hours=env_int("FTMO_NEWS_CALENDAR_MAX_AGE_HOURS", 36) or 36,
         ftmo_news_flatten_enabled=env_bool("FTMO_NEWS_FLATTEN_ENABLED", True),
+        manual_trade_guard_seconds=max(env_float("MANUAL_TRADE_GUARD_SECONDS", 1.0) or 1.0, 0.25),
     )
 
 

@@ -422,6 +422,14 @@ CREATE TABLE IF NOT EXISTS account_execution_controls (
     pending_bot_orders  INTEGER NOT NULL DEFAULT 0,
     partial_take_profit_enabled INTEGER,
     partial_take_profit_r REAL,
+    manual_lock_requested_enabled INTEGER NOT NULL DEFAULT 0,
+    manual_lock_effective_enabled INTEGER NOT NULL DEFAULT 0,
+    manual_lock_baseline_positions_json TEXT NOT NULL DEFAULT '[]',
+    manual_lock_baseline_orders_json TEXT NOT NULL DEFAULT '[]',
+    manual_lock_requested_at TEXT,
+    manual_lock_acknowledged_at TEXT,
+    manual_lock_last_action_at TEXT,
+    manual_lock_last_error TEXT,
     requested_by        TEXT,
     requested_at        TEXT,
     acknowledged_at     TEXT,
@@ -516,6 +524,14 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "account_execution_commands", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "account_execution_controls", "partial_take_profit_enabled", "INTEGER")
     ensure_column(conn, "account_execution_controls", "partial_take_profit_r", "REAL")
+    ensure_column(conn, "account_execution_controls", "manual_lock_requested_enabled", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "account_execution_controls", "manual_lock_effective_enabled", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "account_execution_controls", "manual_lock_baseline_positions_json", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column(conn, "account_execution_controls", "manual_lock_baseline_orders_json", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column(conn, "account_execution_controls", "manual_lock_requested_at", "TEXT")
+    ensure_column(conn, "account_execution_controls", "manual_lock_acknowledged_at", "TEXT")
+    ensure_column(conn, "account_execution_controls", "manual_lock_last_action_at", "TEXT")
+    ensure_column(conn, "account_execution_controls", "manual_lock_last_error", "TEXT")
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)

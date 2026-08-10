@@ -483,6 +483,7 @@ class MT5BrokerClient:
             result.append(
                 {
                     "ticket": str(position.ticket),
+                    "magic": int(getattr(position, "magic", 0) or 0),
                     "side": side,
                     "volume": float(position.volume),
                     "price_open": float(position.price_open),
@@ -491,6 +492,43 @@ class MT5BrokerClient:
                 }
             )
         return result
+
+    def get_pending_orders(self, broker_symbol: str) -> list[dict[str, Any]]:
+        """Return active pending orders with ownership metadata."""
+        self.ensure_symbol(broker_symbol)
+        orders = self.mt5.orders_get(symbol=broker_symbol)
+        if not orders:
+            return []
+        return [
+            {
+                "ticket": str(order.ticket),
+                "magic": int(getattr(order, "magic", 0) or 0),
+                "volume": float(getattr(order, "volume_current", 0.0) or getattr(order, "volume_initial", 0.0) or 0.0),
+                "price_open": float(getattr(order, "price_open", 0.0) or 0.0),
+                "type": int(getattr(order, "type", -1)),
+            }
+            for order in orders
+        ]
+
+    def close_position(
+        self,
+        broker_symbol: str,
+        *,
+        position_ticket: str,
+        side: str,
+        volume: float,
+        magic: int,
+        comment: str = "close position",
+    ) -> dict[str, Any]:
+        """Close one exact position ticket at market."""
+        return self.close_partial_position(
+            broker_symbol,
+            position_ticket=position_ticket,
+            side=side,
+            volume=volume,
+            magic=magic,
+            comment=comment,
+        )
 
     def close_partial_position(
         self,

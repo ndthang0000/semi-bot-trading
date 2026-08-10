@@ -78,6 +78,13 @@ Bật auto execution cho live worker real account:
 .\scripts\start-dev.ps1 -WithWorker -EnableExecution -ApiEnv .env.api -WorkerEnv .env.exness
 ```
 
+Manual Trading Lock dùng cùng live worker nhưng kiểm tra manual exposure theo
+nhịp nhanh riêng. Mặc định là một giây và có thể chỉnh trong worker env:
+
+```text
+MANUAL_TRADE_GUARD_SECONDS=1.0
+```
+
 Mở UI:
 
 ```text
