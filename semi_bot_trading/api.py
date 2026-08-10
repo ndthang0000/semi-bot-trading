@@ -1781,7 +1781,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
     ) -> dict[str, Any]:
         answers = request.questionnaire
         if not answers.accepts_one_percent_risk or not answers.confirms_lot_not_fixed:
-            raise HTTPException(status_code=422, detail="Approval requires accepting 1% risk and lot sizing from structural SL")
+            raise HTTPException(
+                status_code=422,
+                detail="Approval requires accepting account-profile risk and lot sizing from structural SL",
+            )
         if answers.emotion_state != "calm":
             raise HTTPException(status_code=422, detail="Manual AI approval requires emotion_state=calm")
         if answers.competing_exposure:
@@ -1807,21 +1810,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 conn.commit()
                 raise HTTPException(status_code=409, detail="Manual AI plan has expired")
             placeholders = ",".join("?" for _ in account_labels)
-            active_rows = conn.execute(
-                f"""
-                SELECT DISTINCT account_label FROM manual_ai_plans
-                WHERE account_label IN ({placeholders}) AND symbol = ?
-                  AND status IN ('approved', 'arming', 'armed', 'filled') AND id <> ?
-                ORDER BY account_label
-                """,
-                (*account_labels, row["symbol"], plan_id),
-            ).fetchall()
-            if active_rows:
-                conflicts = ", ".join(str(item["account_label"]) for item in active_rows)
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Cancel the active Manual AI plan first for: {conflicts}",
-                )
             questionnaire_json = json.dumps(answers.model_dump(mode="json"), sort_keys=True)
             primary_account = account_labels[0]
             conn.execute(

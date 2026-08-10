@@ -1482,23 +1482,13 @@ def process_manual_ai_plans(
         if plan_status == "armed":
             continue
 
-        traded_today = conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM trade_ideas JOIN trade_orders ON trade_orders.trade_idea_id = trade_ideas.id
-            WHERE trade_ideas.playbook = 'manual_ai_v1' AND trade_orders.account_label = ?
-              AND substr(trade_orders.created_at, 1, 10) = ?
-            """,
-            (env.account_label, now.date().isoformat()),
-        ).fetchone()
-        if traded_today and int(traded_today["count"]) >= 2:
-            continue
         try:
-            open_bot_positions, pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
+            open_bot_positions, _pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
         except AttributeError:
-            open_bot_positions, pending_bot_orders = 0, 0
-        if open_bot_positions > 0 or pending_bot_orders > 0:
-            # Reserve account/symbol risk for the already-live bot exposure.
+            open_bot_positions = 0
+        if open_bot_positions > 0:
+            # Pending Manual AI limits may coexist. Once one becomes a live
+            # position, reserve the account/symbol risk for that exposure.
             continue
 
         partial = json.loads(row["partial_take_profit_json"] or "{}")
@@ -1527,7 +1517,7 @@ def process_manual_ai_plans(
             client,
             [candidate],
             broker_symbol,
-            risk_pct_override=1.0,
+            risk_pct_override=manual_ai_risk_pct(env.account_profile),
         )
         idea_id = live_trade_idea_id(plan_id, account_label=env.account_label)
         execution = conn.execute(
@@ -1674,6 +1664,13 @@ def maybe_execute_candidates(
         lot_size=assessment.lot_size,
         pricing_plan=pricing_plan,
     )
+
+
+def manual_ai_risk_pct(account_profile: str) -> float:
+    """Return the playbook-specific risk for a Manual AI order."""
+    if account_profile in {"ftmo_challenge", "the5ers"}:
+        return 0.75
+    return 1.5
 
 
 def maybe_ftmo_news_flatten(

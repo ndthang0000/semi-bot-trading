@@ -9,7 +9,7 @@ from tests.helpers import TemporaryDirectory
 from tests.test_api import authenticated_test_client, seed_candles, write_test_config
 
 
-def envelope(*, rr: float = 2.0, execution_state: str = "primary") -> dict:
+def envelope(*, rr: float = 2.0, execution_state: str = "primary", client_id: str = "manual-ai-test-1") -> dict:
     now = datetime.now(UTC)
     return {
         "schema_version": 1,
@@ -20,7 +20,7 @@ def envelope(*, rr: float = 2.0, execution_state: str = "primary") -> dict:
         "market_context": {"h1_bias": "bullish"},
         "candidates": [
             {
-                "client_id": "manual-ai-test-1",
+                "client_id": client_id,
                 "priority": 1,
                 "execution_state": execution_state,
                 "side": "buy",
@@ -148,6 +148,47 @@ class ManualAiApiTest(unittest.TestCase):
                     ).fetchall()
                 }
             self.assertEqual(statuses, {"cancelled", "cancel_requested"})
+
+    def test_multiple_active_limit_plans_can_be_approved_for_the_same_workers(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            labels = ["FTMO 100K", "Exness Personal"]
+
+            first = client.post(
+                "/api/manual-ai/plans/import",
+                json=envelope(client_id="manual-ai-first"),
+            ).json()["plans"][0]
+            second = client.post(
+                "/api/manual-ai/plans/import",
+                json=envelope(client_id="manual-ai-second"),
+            ).json()["plans"][0]
+
+            for plan in (first, second):
+                approved = client.post(
+                    f"/api/manual-ai/plans/{plan['id']}/approve",
+                    json={"account_labels": labels, "questionnaire": questionnaire()},
+                )
+                self.assertEqual(approved.status_code, 200, approved.text)
+
+            with connect(db_path) as conn:
+                active = conn.execute(
+                    """
+                    SELECT account_label, COUNT(*) AS count
+                    FROM manual_ai_plans
+                    WHERE status = 'approved'
+                    GROUP BY account_label
+                    ORDER BY account_label
+                    """
+                ).fetchall()
+            self.assertEqual({row["account_label"]: row["count"] for row in active}, {
+                "Exness Personal": 2,
+                "FTMO 100K": 2,
+            })
 
     def test_rejecting_an_armed_plan_requests_broker_cancel(self) -> None:
         with TemporaryDirectory() as temp_dir:

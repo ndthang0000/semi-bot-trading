@@ -100,6 +100,8 @@ class ManualAiQuestionnaire(BaseModel):
     invalidation_source: Literal["structure", "liquidity_extreme", "volatility_buffer"]
     limit_reason: Literal["pullback", "retest", "discount_premium", "liquidity_reaction"]
     emotion_state: Literal["calm", "fomo", "revenge", "uncertain"]
+    # Legacy wire name kept so older deployed frontends remain compatible.
+    # Execution sizing uses the selected worker's account profile, not 1%.
     accepts_one_percent_risk: bool
     confirms_lot_not_fixed: bool
     competing_exposure: bool = False

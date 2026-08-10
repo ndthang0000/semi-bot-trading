@@ -85,12 +85,15 @@ questionnaire trước khi bot có thể sử dụng.
 đọc entry discipline, sau đó paste JSON do `plan-xauusd-manual-ai` tạo hoặc nhập
 giá thủ công. Hai đường đều normalize về cùng contract API và luôn tạo `draft`.
 
-Backend tự tính lại RR từ entry/SL/TP, chỉ nhận XAUUSD limit plan với đúng 1%
-risk và RR 1.5–2.5, không nhận lot từ browser hay AI JSON. Approval yêu cầu
-questionnaire và mỗi account/symbol chỉ có một primary plan đang active. UI lấy
+Backend tự tính lại RR từ entry/SL/TP, chỉ nhận XAUUSD limit plan với RR 1.5–2.5
+và không nhận lot từ browser hay AI JSON. Approval yêu cầu questionnaire; một
+account/symbol có thể giữ nhiều primary limit plan đang active. UI lấy
 account label từ `/api/accounts`, mặc định chọn toàn bộ worker đã được dashboard
 phát hiện; backend fan-out thành một plan riêng cho từng account để mỗi worker tự
-tính đúng 1% risk. Live worker yêu cầu M5 fresh, kiểm tra lại
+tính mức risk riêng của Manual AI (quỹ 0.75%, tài khoản thường 1.5%), thấp hơn
+risk mặc định của các playbook khác (quỹ 1%, tài khoản thường 2%). Các pending limit có
+thể cùng tồn tại; khi đã có position bot đang mở, worker không arm thêm limit mới.
+Live worker yêu cầu M5 fresh, kiểm tra lại
 execution/news/weekend/spread/risk, tính
 lot từ structural SL, giữ partial config riêng của lệnh và gửi expiry sang MT5.
 UI/JSON nhận `expires_in_minutes` (5–1440 phút); backend quy đổi từ `as_of`
@@ -123,7 +126,9 @@ theo timezone của trình duyệt. Setup chỉ xuất hiện khi filter có
 thời bật Manual AI và refresh chart. Khi broker mới nhận limit,
 `trade_orders.status=pending_fill` không được vẽ như một trade vì setup đã đại
 diện cho pending order. Khi order thực sự fill, pending setup biến mất và trade
-overlay chuẩn mới xuất hiện. Replay không hiển thị draft/live Manual AI hiện tại
+overlay chuẩn mới xuất hiện. Limit hết hạn hoặc bị hủy trước fill cũng không được
+đưa trở lại trade layer; lịch sử chỉ vẽ Manual AI trade đã `filled`/`closed`.
+Replay không hiển thị draft/live Manual AI hiện tại
 để tránh look-ahead.
 
 Manual AI không khóa bất kỳ price-zone layer nào; requirement duy nhất là

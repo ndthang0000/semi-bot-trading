@@ -756,7 +756,7 @@ def load_chart_trades(
           AND trade_orders.opened_at IS NOT NULL
           AND NOT (
               trade_ideas.playbook = 'manual_ai_v1'
-              AND trade_orders.status = 'pending_fill'
+              AND trade_orders.status NOT IN ('filled', 'closed')
           )
           AND trade_orders.opened_at <= ?
           AND (trade_orders.closed_at IS NULL OR trade_orders.closed_at >= ?)

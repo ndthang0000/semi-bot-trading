@@ -19,7 +19,8 @@ Risk Engine kiểm tra trước khi executor nhận request.
 
 Rule MVP:
 
-- Max risk per trade: 1%.
+- Risk mặc định theo account profile: tài khoản quỹ 1%, tài khoản thường 2%.
+- Riêng Manual AI dùng mức thấp hơn: tài khoản quỹ 0.75%, tài khoản thường 1.5%.
 - Max total open risk.
 - Max daily loss: 5%.
 - Max trades per day: 10.
@@ -36,7 +37,10 @@ Ví dụ:
 
 ```yaml
 risk_policy:
-  max_risk_per_trade_pct: 1.0
+  prop_firm_risk_per_trade_pct: 1.0
+  personal_risk_per_trade_pct: 2.0
+  manual_ai_prop_firm_risk_per_trade_pct: 0.75
+  manual_ai_personal_risk_per_trade_pct: 1.5
   max_daily_loss_pct: 5.0
   max_trades_per_day: 10
   max_open_positions_per_symbol: 1
