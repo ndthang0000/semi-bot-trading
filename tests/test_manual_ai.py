@@ -77,7 +77,7 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertEqual(setup["status"], "waiting_confirmation")
             self.assertEqual(setup["metadata"]["manual_ai_plan_status"], "draft")
             safety_chart = client.get("/api/chart?symbol=XAUUSD&timeframe=H1&limit=20&playbooks=zone_reaction_v2")
-            self.assertEqual(len(safety_chart.json()["layers"]["setup_candidates"]), 1)
+            self.assertEqual(safety_chart.json()["layers"]["setup_candidates"], [])
 
             blocked = client.post(
                 f"/api/manual-ai/plans/{plan['id']}/approve",

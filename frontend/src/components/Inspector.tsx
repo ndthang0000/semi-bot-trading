@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
 import { cancelManualAiPlan, rejectManualAiPlan } from "../api/manualAi";
 import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tradeHistoryFilters";
-import { compactTime, price } from "../lib/time";
+import { compactTime, localDateTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
 import type { ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, TradeOrder, ZoneTypeVisibility } from "../types";
 import { TradeDetails } from "./inspector/TradeDetails";
@@ -728,6 +728,11 @@ function SetupCard({
           <span>Entry {price(candidate.entry)}</span>
           <span>SL {price(candidate.stop_loss)}</span>
           {candidate.take_profit[0] ? <span>TP {price(candidate.take_profit[0])}</span> : null}
+        </div>
+      ) : null}
+      {candidate.expires_at ? (
+        <div className="mt-1 text-[11px] font-medium text-amber-300/90">
+          Hết hạn {localDateTime(candidate.expires_at)}
         </div>
       ) : null}
       {trigger ? (

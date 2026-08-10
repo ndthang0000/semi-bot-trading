@@ -117,11 +117,14 @@ reset toàn bộ draft; màn hình thành công cũng có action `Thêm lệnh m
 
 Manual AI plan chưa fill (`draft`, `approved`, `arming`, `armed`) được đưa vào
 `setup_candidates` của realtime chart và vẽ cùng geometry Entry/SL/TP như trade
-overlay, với border vàng nét đứt. Primary pending setup là safety overlay nên
-vẫn hiện kể cả filter playbook đang tắt; import đồng thời bật Manual AI và
-refresh chart. Khi order fill, pending setup biến mất; `trade_orders` live tiếp
-tục hiển thị bằng trade overlay chuẩn hiện có. Replay không hiển thị draft/live
-Manual AI hiện tại để tránh look-ahead.
+overlay, với border vàng nét đứt. Card setup hiển thị thời điểm limit hết hạn
+theo timezone của trình duyệt. Setup chỉ xuất hiện khi filter có
+`manual_ai_v1`; chọn playbook khác không được lẫn setup Manual AI. Import đồng
+thời bật Manual AI và refresh chart. Khi broker mới nhận limit,
+`trade_orders.status=pending_fill` không được vẽ như một trade vì setup đã đại
+diện cho pending order. Khi order thực sự fill, pending setup biến mất và trade
+overlay chuẩn mới xuất hiện. Replay không hiển thị draft/live Manual AI hiện tại
+để tránh look-ahead.
 
 Manual AI không khóa bất kỳ price-zone layer nào; requirement duy nhất là
 `Structure + ZigZag`. Khi Manual AI là playbook duy nhất, UI tự ẩn price zones.
