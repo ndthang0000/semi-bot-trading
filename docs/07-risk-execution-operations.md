@@ -410,6 +410,17 @@ closes bot positions whose MT5 magic number matches that worker. Its confirmatio
 modal has an opt-in checkbox to include manual/human positions for the symbol;
 that checkbox is off by default. Manual pending orders are always left untouched.
 
+Account Dashboard also exposes a per-account `Manual Trading Lock`. This control
+does not disable bot execution. When enabled, the worker snapshots existing
+XAUUSD manual positions and pending orders (`magic=0`) as a grandfathered
+baseline, then checks for new manual exposure every
+`MANUAL_TRADE_GUARD_SECONDS` (default `1.0`). New manual pending orders are
+cancelled and new manual positions are closed at market; bot magic and other
+non-zero EA magic numbers are untouched. MT5 cannot intercept a human click
+before broker acceptance, so a manual market position may incur spread/slippage
+before the guard closes it. The fast guard and 15-second strategy cycle share
+one MT5 client and run sequentially to avoid concurrent terminal calls.
+
 Exness cent accounts should use `ACCOUNT_PROFILE=personal_cent` or explicitly
 set `ACCOUNT_BALANCE_SCALE=0.01` when MT5 reports USD-equivalent balance in USC
 units, for example 1000 USD displayed as 100000 USC.

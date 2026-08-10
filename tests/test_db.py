@@ -26,6 +26,10 @@ class DbMigrationTest(unittest.TestCase):
 
         self.assertIn("partial_take_profit_enabled", columns)
         self.assertIn("partial_take_profit_r", columns)
+        self.assertIn("manual_lock_requested_enabled", columns)
+        self.assertIn("manual_lock_effective_enabled", columns)
+        self.assertIn("manual_lock_baseline_positions_json", columns)
+        self.assertIn("manual_lock_baseline_orders_json", columns)
 
     def test_account_label_indexes_are_created_after_legacy_columns_migrate(self) -> None:
         with TemporaryDirectory() as temp_dir:

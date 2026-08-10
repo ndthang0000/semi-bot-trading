@@ -749,6 +749,16 @@ interface AccountSnapshot {
     pending_bot_orders: number;
     heartbeat_at: string | null;
   };
+  manual_trading_lock: {
+    requested_enabled: boolean;
+    effective_enabled: boolean;
+    baseline_position_count: number;
+    baseline_order_count: number;
+    requested_at: string | null;
+    acknowledged_at: string | null;
+    last_action_at: string | null;
+    last_error: string | null;
+  };
 }
 
 async function fetchAccounts(): Promise<AccountSnapshot[]> {
@@ -778,6 +788,21 @@ async function updateExecution(label: string, enabled: boolean): Promise<void> {
   }
 }
 
+async function updateManualTradingLock(label: string, enabled: boolean): Promise<void> {
+  const res = await authFetch(`/api/accounts/${encodeURIComponent(label)}/manual-trading-lock`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      enabled,
+      reason: enabled ? "Account Dashboard discipline lock" : "Account Dashboard discipline unlock",
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? "Could not update manual trading lock");
+  }
+}
+
 async function closeAllPositions(label: string, includeManualPositions: boolean): Promise<void> {
   const res = await authFetch(`/api/accounts/${encodeURIComponent(label)}/close-all`, {
     method: "POST",
@@ -799,6 +824,7 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
   const cur = acc.currency;
   const queryClient = useQueryClient();
   const [confirmClose, setConfirmClose] = useState(false);
+  const [manualLockTarget, setManualLockTarget] = useState<boolean | null>(null);
   const [includeManualPositions, setIncludeManualPositions] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const dailyProfit = acc.daily?.profit ?? 0;
@@ -807,6 +833,15 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
   const toggleMutation = useMutation({
     mutationFn: (enabled: boolean) => updateExecution(acc.label, enabled),
     onSuccess: () => {
+      setActionError(null);
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
+  const manualLockMutation = useMutation({
+    mutationFn: (enabled: boolean) => updateManualTradingLock(acc.label, enabled),
+    onSuccess: () => {
+      setManualLockTarget(null);
       setActionError(null);
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
@@ -851,6 +886,30 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
               <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${acc.execution.effective_enabled ? "left-3.5" : "left-0.5"}`} />
             </span>
             Bot {acc.execution.effective_enabled ? "ON" : "OFF"}
+          </button>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={acc.manual_trading_lock.effective_enabled}
+            aria-label={`Manual trading lock for ${acc.label}`}
+            disabled={manualLockMutation.isPending}
+            onClick={() => setManualLockTarget(!acc.manual_trading_lock.requested_enabled)}
+            className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+              acc.manual_trading_lock.effective_enabled
+                ? "border-red-400/60 bg-red-500/15 text-red-200"
+                : acc.manual_trading_lock.requested_enabled
+                  ? "border-yellow-400/50 bg-yellow-500/10 text-yellow-200"
+                  : "border-ink-600 bg-ink-950 text-slate-500"
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <span className={`relative h-4 w-7 rounded-full ${acc.manual_trading_lock.requested_enabled ? "bg-red-500" : "bg-ink-600"}`}>
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${acc.manual_trading_lock.requested_enabled ? "left-3.5" : "left-0.5"}`} />
+            </span>
+            {acc.manual_trading_lock.effective_enabled
+              ? "Manual LOCKED"
+              : acc.manual_trading_lock.requested_enabled
+                ? "Lock arming"
+                : "Manual open"}
           </button>
         </div>
       </div>
@@ -928,6 +987,43 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
         </button>
       </div>
       {actionError ? <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">{actionError}</div> : null}
+      {acc.manual_trading_lock.last_error ? (
+        <div className="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">
+          Manual lock error: {acc.manual_trading_lock.last_error}
+        </div>
+      ) : null}
+
+      {manualLockTarget !== null ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className={`w-full max-w-md rounded-xl border bg-ink-900 p-5 shadow-2xl ${manualLockTarget ? "border-red-500/40" : "border-yellow-500/35"}`}>
+            <h2 className="text-base font-semibold text-slate-100">
+              {manualLockTarget ? "Enable Manual Trading Lock?" : "Unlock manual trading?"}
+            </h2>
+            {manualLockTarget ? (
+              <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-400">
+                <p>New XAUUSD trades placed manually with magic 0 will be cancelled or closed by the worker, normally within about one second.</p>
+                <p>Bot orders and positions keep running normally. Existing manual exposure will be recorded and left untouched.</p>
+                <p className="font-semibold text-red-200">A market position may pay spread or slippage before the guard can close it.</p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm leading-relaxed text-slate-400">
+                New manual orders will no longer be blocked. Bot execution remains unchanged.
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setManualLockTarget(null)} className="rounded-md border border-ink-600 px-3 py-2 text-sm text-slate-300">Cancel</button>
+              <button
+                type="button"
+                disabled={manualLockMutation.isPending}
+                onClick={() => manualLockMutation.mutate(manualLockTarget)}
+                className={`rounded-md px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 ${manualLockTarget ? "bg-red-600" : "bg-yellow-600"}`}
+              >
+                {manualLockMutation.isPending ? "Saving..." : manualLockTarget ? "Enable discipline lock" : "Unlock manual trading"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {confirmClose ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

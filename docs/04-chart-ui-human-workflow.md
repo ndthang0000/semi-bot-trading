@@ -95,6 +95,10 @@ execution/news/weekend/spread/risk, tính
 lot từ structural SL, giữ partial config riêng của lệnh và gửi expiry sang MT5.
 UI/JSON nhận `expires_in_minutes` (5–1440 phút); backend quy đổi từ `as_of`
 thành timestamp tuyệt đối trước khi lưu.
+MT5 adapter kiểm tra `SYMBOL_EXPIRATION_MODE` trước khi dùng expiry chính xác.
+Nếu broker không hỗ trợ hoặc từ chối `ORDER_TIME_SPECIFIED` bằng retcode `10022`,
+adapter gửi lại đúng một lần dưới dạng GTC; worker vẫn giữ timestamp tuyệt đối
+trong database và chủ động hủy đúng pending-order ticket khi plan hết hạn.
 Manual AI chỉ cho phép mở wizard tại `Realtime · Latest`; Replay và cửa sổ
 chart lịch sử khóa entry point để giá quá khứ không thể tạo nhầm kế hoạch LIVE.
 `Cancel limit` hủy cả nhóm plan: draft/approved được dừng ngay; plan đang armed

@@ -28,6 +28,11 @@ class AccountPartialTakeProfitRequest(BaseModel):
     trigger_r: float = Field(ge=0.5, le=2.0)
 
 
+class AccountManualTradingLockRequest(BaseModel):
+    enabled: bool
+    reason: str = Field(default="", max_length=500)
+
+
 class AccountCloseAllRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
     idempotency_key: str | None = Field(default=None, max_length=100)

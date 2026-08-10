@@ -35,6 +35,7 @@ from semi_bot_trading.live_worker import (
     _ftmo_day_window,
     _resolved_initial_balance,
     _seconds_until_next_poll,
+    _wait_with_manual_trade_guard,
     build_execution_pricing_plan,
     candidates_after_live_fvg_trade_count,
     execute_candidate,
@@ -48,6 +49,7 @@ from semi_bot_trading.live_worker import (
     maybe_ftmo_news_flatten,
     maybe_weekend_flatten,
     maybe_execute_candidates,
+    process_manual_trading_lock,
     process_manual_ai_plans,
     run_live_iteration,
     sync_closed_positions,
@@ -200,6 +202,132 @@ def _fake_risk_manager(allowed: bool = True, lot_size: float = 0.01, reason: str
     assessment.reason = reason
     rm.assess_trade.return_value = assessment
     return rm
+
+
+class TestManualTradingLock(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temp_dir = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._temp_dir.name)
+        self._config = replace(load_config(), database=self._db_path)
+        self._env = _make_env(account_label="Test", mt5_magic=260612)
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO account_execution_controls (
+                account_label, requested_enabled, effective_enabled, hard_enabled,
+                manual_lock_requested_enabled, manual_lock_effective_enabled,
+                manual_lock_requested_at, heartbeat_at, updated_at
+            ) VALUES ('Test', 1, 1, 1, 1, 0, ?, ?, ?)
+            """,
+            (now, now, now),
+        )
+        self._conn.commit()
+
+    def tearDown(self) -> None:
+        self._conn.close()
+        self._temp_dir.cleanup()
+
+    def test_baselines_existing_manual_exposure_then_blocks_only_new_magic_zero(self) -> None:
+        client = MagicMock()
+        client.get_open_positions.return_value = [
+            {"ticket": "old-position", "magic": 0, "side": "buy", "volume": 0.1},
+            {"ticket": "bot-position", "magic": 260612, "side": "buy", "volume": 0.1},
+            {"ticket": "other-ea-position", "magic": 42, "side": "sell", "volume": 0.1},
+        ]
+        client.get_pending_orders.return_value = [
+            {"ticket": "old-order", "magic": 0, "volume": 0.1, "price_open": 4000.0},
+            {"ticket": "bot-order", "magic": 260612, "volume": 0.1, "price_open": 4000.0},
+        ]
+
+        armed = process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+
+        self.assertTrue(armed)
+        client.cancel_pending_order.assert_not_called()
+        client.close_position.assert_not_called()
+        row = self._conn.execute(
+            "SELECT * FROM account_execution_controls WHERE account_label = 'Test'"
+        ).fetchone()
+        self.assertTrue(row["manual_lock_effective_enabled"])
+        self.assertEqual(["old-position"], json.loads(row["manual_lock_baseline_positions_json"]))
+        self.assertEqual(["old-order"], json.loads(row["manual_lock_baseline_orders_json"]))
+
+        # The grandfathered pending ticket may become a position; preserve it.
+        client.get_open_positions.return_value = [
+            {"ticket": "old-position", "magic": 0, "side": "buy", "volume": 0.1},
+            {"ticket": "old-order", "magic": 0, "side": "buy", "volume": 0.1},
+            {"ticket": "new-position", "magic": 0, "side": "sell", "volume": 0.2},
+            {"ticket": "bot-position", "magic": 260612, "side": "buy", "volume": 0.1},
+        ]
+        client.get_pending_orders.return_value = [
+            {"ticket": "new-order", "magic": 0, "volume": 0.3, "price_open": 4100.0},
+            {"ticket": "bot-order", "magic": 260612, "volume": 0.1, "price_open": 4000.0},
+        ]
+
+        acted = process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+
+        self.assertTrue(acted)
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm", order_ticket="new-order", comment="Manual trading lock"
+        )
+        client.close_position.assert_called_once_with(
+            "XAUUSDm",
+            position_ticket="new-position",
+            side="sell",
+            volume=0.2,
+            magic=260612,
+            comment="Manual trading lock",
+        )
+
+    def test_disabling_lock_clears_baseline_without_touching_mt5(self) -> None:
+        self._conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_requested_enabled = 0, manual_lock_effective_enabled = 1,
+                manual_lock_baseline_positions_json = '["old-position"]',
+                manual_lock_baseline_orders_json = '["old-order"]'
+            WHERE account_label = 'Test'
+            """
+        )
+        self._conn.commit()
+        client = MagicMock()
+
+        acted = process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+
+        self.assertFalse(acted)
+        client.get_open_positions.assert_not_called()
+        row = self._conn.execute(
+            "SELECT * FROM account_execution_controls WHERE account_label = 'Test'"
+        ).fetchone()
+        self.assertFalse(row["manual_lock_effective_enabled"])
+        self.assertEqual([], json.loads(row["manual_lock_baseline_positions_json"]))
+        self.assertEqual([], json.loads(row["manual_lock_baseline_orders_json"]))
+
+    def test_wait_runs_fast_guard_between_strategy_polls(self) -> None:
+        clock = [0.0]
+
+        def fake_sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch("semi_bot_trading.live_worker.time.monotonic", side_effect=lambda: clock[0]),
+            patch("semi_bot_trading.live_worker.time.sleep", side_effect=fake_sleep),
+            patch("semi_bot_trading.live_worker.run_manual_trade_guard_iteration") as guard,
+        ):
+            _wait_with_manual_trade_guard(
+                self._config,
+                self._env,
+                MagicMock(),
+                "XAUUSDm",
+                wait_seconds=3.2,
+            )
+
+        self.assertEqual(3, guard.call_count)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
