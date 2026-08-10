@@ -480,7 +480,20 @@ Không nên build chart engine từ đầu ở MVP.
 - Có list entity bên cạnh để chọn nếu vùng overlap.
 - Hotkey toàn app: `1` Chart, `2` Dashboard, `3` Journal, `4` Weekly Journal, `5` Calm và `?` mở bảng hướng dẫn.
 - Hotkey riêng khi ở Chart: `T` chuyển H1/M15, `V` bật/tắt trade overlays và `R` reload dữ liệu tương đương nút Reload trên toolbar.
+- Drawing toolbar nằm nổi bên trong chart, kéo thả bằng grip và nhớ vị trí trên thiết bị. `M` mở Measure, `N` tạo Note, `H` tạo Horizontal Line, `F` tạo Fib Retracement, `Shift+F` tạo Fib OTE, `Alt+C` copy giá và `Esc` về Cursor. `V` tiếp tục dành cho bật/tắt trade overlays.
 - Hotkey không kích hoạt khi focus vào input, textarea, select hoặc contenteditable; khóa Weekly Review vẫn áp dụng khi điều hướng bằng phím.
+
+## Human chart drawings
+
+- Note, Fib và Horizontal Line được lưu trong `chart_drawings`, tách biệt hoàn toàn với `price_zones`, setup và trade engine.
+- Drawing lưu anchor theo `time + price`, không lưu pixel, để vẫn đúng vị trí khi zoom, resize hoặc đổi màn hình.
+- Measure và Copy Price là công cụ tạm thời, không tạo dữ liệu trong database.
+- Measure dùng hai click: click điểm bắt đầu, rê để preview, click điểm kết thúc; sau đó UI tự trở về Cursor.
+- Copy Price hiển thị price guide nét đứt theo con trỏ trước khi click copy.
+- Note có thể kéo tới vị trí mới; frontend lưu lại anchor `time + price` qua PATCH API sau khi thả.
+- Fib chuẩn kéo từ điểm đầu impulse tới điểm cuối impulse. Với nhịp tăng kéo low → high, nhịp giảm kéo high → low. Fib OTE làm nổi vùng hồi 0.62–0.79.
+- Drawing có optimistic `revision`; API trả `409` nếu một tab khác đã sửa hoặc xóa bản mới hơn.
+- Mặc định drawing mới hiển thị trên H1, M15 và M5. Xóa là soft-delete để không làm mất dấu dữ liệu ngoài ý muốn.
 
 ## Cần mock sớm
 

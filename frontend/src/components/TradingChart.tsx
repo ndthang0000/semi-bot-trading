@@ -11,6 +11,8 @@ import {
 import { ArrowDown, ArrowUp, Newspaper } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
+import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
+import { isEditableHotkeyTarget } from "../lib/appHotkeys";
 import { toUnixTime } from "../lib/time";
 import { isMobileChartWidth, visibleChartBars } from "../lib/mobileChart";
 import { useChartStore } from "../store/chartStore";
@@ -55,6 +57,8 @@ import {
 } from "./chart/chartCore";
 import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
+import { ChartDrawingLayer, type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
+import { ChartDrawingToolbar } from "./chart/ChartDrawingToolbar";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import {
   clampNumber,
@@ -71,6 +75,9 @@ import {
 } from "./chart/tradeOverlay";
 import type {
   AddEntityKind,
+  ChartDrawing,
+  ChartDrawingAnchor,
+  ChartDrawingTool,
   ChartPayload,
   M15TriggerOverlay,
   PriceZone,
@@ -83,10 +90,12 @@ import type {
 
 type TradingChartProps = {
   payload: ChartPayload;
+  drawings?: ChartDrawing[];
   spread?: SpreadSummary | null;
   newsData?: NewsResponse | null;
   onEntityCreated: () => void;
   onZonePersisted?: (zone: PriceZone) => void;
+  onDrawingsChanged?: () => void;
 };
 
 type ManualDrawState = {
@@ -99,7 +108,7 @@ const MIN_ZONE_HEIGHT = 0.01;
 const MIN_ZONE_DURATION_SECONDS = 60;
 
 
-export function TradingChart({ payload, spread, newsData, onEntityCreated, onZonePersisted }: TradingChartProps) {
+export function TradingChart({ payload, drawings = [], spread, newsData, onEntityCreated, onZonePersisted, onDrawingsChanged }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -129,6 +138,15 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
   const [drawPreviewZone, setDrawPreviewZone] = useState<PriceZone | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  const [drawingTool, setDrawingTool] = useState<ChartDrawingTool>("cursor");
+  const [renderedDrawings, setRenderedDrawings] = useState<RenderedChartDrawing[]>([]);
+  const [measurePreview, setMeasurePreview] = useState<MeasurePreview | null>(null);
+  const [copyPriceGuide, setCopyPriceGuide] = useState<PriceGuide | null>(null);
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+  const [drawingPlotWidth, setDrawingPlotWidth] = useState(0);
+  const [drawingMessage, setDrawingMessage] = useState<string | null>(null);
+  const [pendingNote, setPendingNote] = useState<{ anchor: ChartDrawingAnchor; x: number; y: number } | null>(null);
+  const [noteContent, setNoteContent] = useState("");
   const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean; chartHeight: number } | null>(null);
   const [pointerY, setPointerY] = useState<number | null>(null);
   const scheduledRecalcRef = useRef<number | null>(null);
@@ -137,6 +155,10 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const draftZoneRef = useRef<PriceZone | null>(null);
   const zoneDragRef = useRef<ZoneDragState | null>(null);
   const manualDrawRef = useRef<ManualDrawState | null>(null);
+  const drawingInteractionRef = useRef<{ tool: "fib_standard" | "fib_ote"; start: DrawingPoint } | null>(null);
+  const measureStartRef = useRef<DrawingPoint | null>(null);
+  const drawingMoveRef = useRef<{ drawing: ChartDrawing; startX: number; startY: number; moved: boolean } | null>(null);
+  const drawingDraftAnchorRef = useRef<{ id: string; anchor: ChartDrawingAnchor } | null>(null);
   const payloadRef = useRef(payload);
   const showZonesRef = useRef(showZones);
   const zoneTypeVisibilityRef = useRef(zoneTypeVisibility);
@@ -148,6 +170,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   const onEntityCreatedRef = useRef(onEntityCreated);
   const onZonePersistedRef = useRef(onZonePersisted);
   const newsDataRef = useRef(newsData);
+  const drawingsRef = useRef(drawings);
   const handledZoneFocusRequestRef = useRef<number | null>(null);
   const handledTradeFocusRequestRef = useRef<number | null>(null);
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
@@ -192,6 +215,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   onEntityCreatedRef.current = onEntityCreated;
   onZonePersistedRef.current = onZonePersisted;
   newsDataRef.current = newsData;
+  drawingsRef.current = drawings;
   drawPreviewZoneRef.current = drawPreviewZone;
   candleDataRef.current = candleData;
 
@@ -302,6 +326,18 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
       return [{ trigger, x, y }];
     });
     const newsMarkers = buildNewsTimelineMarkers(newsDataRef.current?.events ?? [], toUnixTime(lastCandle.time), plotWidth, height, timeScale);
+    const chartDrawings = drawingsRef.current.flatMap((drawing) => {
+      const draftAnchor = drawingDraftAnchorRef.current?.id === drawing.id ? drawingDraftAnchorRef.current.anchor : null;
+      const effectiveAnchors = draftAnchor ? [draftAnchor, ...drawing.anchors.slice(1)] : drawing.anchors;
+      const points = effectiveAnchors.flatMap((anchor) => {
+        const x = interpolateChartX(timeScale, toUnixTime(anchor.time), candleDataRef.current);
+        const y = series.priceToCoordinate(anchor.price);
+        if (x === null || y === null) return [];
+        return [{ x, y, price: anchor.price, time: anchor.time }];
+      });
+      if (points.length !== effectiveAnchors.length) return [];
+      return [{ drawing, points }];
+    });
 
     setZoneBoxes(zones);
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
@@ -310,6 +346,8 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     setSetupBoxes(manualAiSetups);
     setM15TriggerMarkers(m15Triggers);
     setNewsTimelineMarkers(newsMarkers);
+    setRenderedDrawings(chartDrawings);
+    setDrawingPlotWidth(plotWidth);
 
     const priceY = series.priceToCoordinate(lastCandle.close);
     if (typeof priceY === "number" && priceY >= 0 && priceY <= height) {
@@ -366,6 +404,242 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     const time = chart.timeScale().coordinateToTime(coordinate);
     return chartTimeToUnix(time) ?? projectedTimeFromCoordinate(chart, candleDataRef.current, coordinate);
   }, []);
+
+  const drawingPointFromPointer = useCallback((clientX: number, clientY: number): DrawingPoint | null => {
+    const container = containerRef.current;
+    const price = priceFromClientY(clientY);
+    const time = timeFromClientX(clientX);
+    if (!container || price === null || time === null) return null;
+    const rect = container.getBoundingClientRect();
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+      price: roundPrice(price),
+      time: unixToIso(time),
+    };
+  }, [priceFromClientY, timeFromClientX]);
+
+  const changeDrawingTool = useCallback((tool: ChartDrawingTool) => {
+    setAddEntityKind(null);
+    setDrawingTool(tool);
+    setSelectedDrawingId(null);
+    setDrawingMessage(null);
+    setMeasurePreview(null);
+    setCopyPriceGuide(null);
+    measureStartRef.current = null;
+    drawingInteractionRef.current = null;
+  }, [setAddEntityKind]);
+
+  const persistDrawing = useCallback(async (
+    drawingType: "note" | "fib_retracement" | "horizontal_line",
+    anchors: ChartDrawingAnchor[],
+    properties: Record<string, unknown> = {},
+    content: string | null = null,
+  ) => {
+    try {
+      const created = await createChartDrawing({
+        symbol: payloadRef.current.symbol,
+        drawing_type: drawingType,
+        origin_timeframe: payloadRef.current.timeframe,
+        visible_timeframes: ["H1", "M15", "M5"],
+        anchors,
+        properties,
+        content,
+      });
+      setSelectedDrawingId(created.id);
+      setDrawingTool("cursor");
+      setDrawingMessage("Đã lưu drawing.");
+      onDrawingsChanged?.();
+    } catch (error) {
+      setDrawError(error instanceof Error ? error.message : "Could not save chart drawing.");
+    }
+  }, [onDrawingsChanged]);
+
+  const beginChartDrawing = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drawingTool === "cursor") return;
+    const point = drawingPointFromPointer(event.clientX, event.clientY);
+    if (!point) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedDrawingId(null);
+    setDrawError(null);
+
+    if (drawingTool === "copy_price") {
+      void navigator.clipboard.writeText(point.price.toFixed(2)).then(() => {
+        setDrawingMessage(`Đã copy ${point.price.toFixed(2)}`);
+        setDrawingTool("cursor");
+        setCopyPriceGuide(null);
+      }).catch(() => setDrawError("Browser không cho phép copy giá."));
+      return;
+    }
+    if (drawingTool === "horizontal_line") {
+      void persistDrawing("horizontal_line", [{ time: point.time, price: point.price }]);
+      return;
+    }
+    if (drawingTool === "note") {
+      setPendingNote({ anchor: { time: point.time, price: point.price }, x: point.x, y: point.y });
+      setNoteContent("");
+      return;
+    }
+    if (drawingTool === "measure") {
+      const start = measureStartRef.current;
+      if (!start) {
+        measureStartRef.current = point;
+        setMeasurePreview({ start: point, end: point });
+      } else {
+        measureStartRef.current = null;
+        setMeasurePreview({ start, end: point });
+        setDrawingTool("cursor");
+        setDrawingMessage("Đo xong · đã trở về con trỏ.");
+      }
+      return;
+    }
+    drawingInteractionRef.current = { tool: drawingTool, start: point };
+    setMeasurePreview({ start: point, end: point });
+  }, [drawingPointFromPointer, drawingTool, persistDrawing]);
+
+  const handleDrawingHover = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const point = drawingPointFromPointer(event.clientX, event.clientY);
+    if (!point) return;
+    if (drawingTool === "copy_price") {
+      setCopyPriceGuide({ y: point.y, price: point.price });
+    } else if (drawingTool === "measure" && measureStartRef.current) {
+      setMeasurePreview({ start: measureStartRef.current, end: point });
+    }
+  }, [drawingPointFromPointer, drawingTool]);
+
+  useEffect(() => {
+    const cancel = () => {
+      drawingInteractionRef.current = null;
+    };
+    const move = (event: PointerEvent) => {
+      const interaction = drawingInteractionRef.current;
+      if (!interaction) return;
+      const point = drawingPointFromPointer(event.clientX, event.clientY);
+      if (!point) return;
+      event.preventDefault();
+      setMeasurePreview({ start: interaction.start, end: point });
+    };
+    const finish = (event: PointerEvent) => {
+      const interaction = drawingInteractionRef.current;
+      if (!interaction) return;
+      drawingInteractionRef.current = null;
+      const point = drawingPointFromPointer(event.clientX, event.clientY);
+      if (!point) return;
+      const variant = interaction.tool === "fib_ote" ? "ote" : "standard";
+      setMeasurePreview(null);
+      void persistDrawing(
+        "fib_retracement",
+        [
+          { time: interaction.start.time, price: interaction.start.price },
+          { time: point.time, price: point.price },
+        ],
+        { variant },
+      );
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("blur", cancel);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("blur", cancel);
+    };
+  }, [drawingPointFromPointer, persistDrawing]);
+
+  const removeDrawing = useCallback(async (drawing: ChartDrawing) => {
+    try {
+      await deleteChartDrawing(drawing);
+      setSelectedDrawingId(null);
+      onDrawingsChanged?.();
+    } catch (error) {
+      setDrawError(error instanceof Error ? error.message : "Could not delete chart drawing.");
+    }
+  }, [onDrawingsChanged]);
+
+  const beginMoveDrawing = useCallback((event: ReactPointerEvent<HTMLButtonElement>, drawing: ChartDrawing) => {
+    if (drawing.locked || drawing.drawing_type !== "note") return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedDrawingId(drawing.id);
+    drawingMoveRef.current = { drawing, startX: event.clientX, startY: event.clientY, moved: false };
+  }, []);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const moving = drawingMoveRef.current;
+      if (!moving) return;
+      if (!moving.moved && Math.hypot(event.clientX - moving.startX, event.clientY - moving.startY) < 4) return;
+      moving.moved = true;
+      const point = drawingPointFromPointer(event.clientX, event.clientY);
+      if (!point) return;
+      event.preventDefault();
+      drawingDraftAnchorRef.current = { id: moving.drawing.id, anchor: { time: point.time, price: point.price } };
+      scheduleOverlayRecalc();
+    };
+    const finish = (event: PointerEvent) => {
+      const moving = drawingMoveRef.current;
+      if (!moving) return;
+      drawingMoveRef.current = null;
+      if (!moving.moved) return;
+      const point = drawingPointFromPointer(event.clientX, event.clientY);
+      if (!point) {
+        drawingDraftAnchorRef.current = null;
+        scheduleOverlayRecalc();
+        return;
+      }
+      void updateChartDrawing(moving.drawing, { anchors: [{ time: point.time, price: point.price }] })
+        .then(() => {
+          setDrawingMessage("Đã di chuyển note.");
+          onDrawingsChanged?.();
+        })
+        .catch((error) => setDrawError(error instanceof Error ? error.message : "Could not move note."))
+        .finally(() => {
+          drawingDraftAnchorRef.current = null;
+          scheduleOverlayRecalc();
+        });
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+    };
+  }, [drawingPointFromPointer, onDrawingsChanged, scheduleOverlayRecalc]);
+
+  useEffect(() => {
+    const hotkeys = (event: KeyboardEvent) => {
+      if (isEditableHotkeyTarget(event.target) || event.repeat) return;
+      const key = event.key.toLowerCase();
+      let tool: ChartDrawingTool | null = null;
+      if (event.altKey && key === "c") tool = "copy_price";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "m") tool = "measure";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "n") tool = "note";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "f") tool = event.shiftKey ? "fib_ote" : "fib_standard";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "h") tool = "horizontal_line";
+      else if (event.key === "Escape") tool = "cursor";
+      if (tool) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setPendingNote(null);
+        changeDrawingTool(tool);
+      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedDrawingId) {
+        const drawing = drawingsRef.current.find((item) => item.id === selectedDrawingId);
+        if (drawing) {
+          event.preventDefault();
+          void removeDrawing(drawing);
+        }
+      }
+    };
+    window.addEventListener("keydown", hotkeys, true);
+    return () => window.removeEventListener("keydown", hotkeys, true);
+  }, [changeDrawingTool, removeDrawing, selectedDrawingId]);
+
+  useEffect(() => {
+    if (!drawingMessage) return;
+    const id = window.setTimeout(() => setDrawingMessage(null), 2200);
+    return () => window.clearTimeout(id);
+  }, [drawingMessage]);
 
   const updateDraftZone = useCallback(
     (zone: PriceZone, options: { preserveViewport?: boolean } = {}) => {
@@ -635,6 +909,8 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
     if (addEntityKindRef.current) return;
     lockCurrentViewport(chartRef.current, lockedViewportRef);
     draftZoneRef.current = null;
+    measureStartRef.current = null;
+    setMeasurePreview(null);
     setSelected(null);
     restoreLockedViewport(chartRef.current, lockedViewportRef);
     scheduleOverlayRecalc();
@@ -685,7 +961,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
   useEffect(() => {
     payloadRef.current = payload;
     scheduleOverlayRecalc();
-  }, [importantZonesOnly, maxVisibleZones, payload, scheduleOverlayRecalc, showStructure, showZones, tradeVisibilityMode]);
+  }, [drawings, importantZonesOnly, maxVisibleZones, payload, scheduleOverlayRecalc, showStructure, showZones, tradeVisibilityMode]);
 
   useEffect(() => {
     zigzagSeriesRef.current?.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructure));
@@ -1052,6 +1328,76 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
         className="absolute inset-0"
         onClick={clearSelection}
       />
+      <ChartDrawingLayer
+        drawings={renderedDrawings}
+        measure={measurePreview}
+        priceGuide={copyPriceGuide}
+        plotWidth={drawingPlotWidth}
+        selectedId={selectedDrawingId}
+        onDelete={(drawing) => void removeDrawing(drawing)}
+        onMoveStart={beginMoveDrawing}
+        onSelect={(drawing) => {
+          setSelectedDrawingId(drawing.id);
+          setSelected(null);
+        }}
+      />
+      {drawingTool !== "cursor" && !pendingNote ? (
+        <div
+          className="absolute inset-0 z-[60] cursor-crosshair"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={beginChartDrawing}
+          onPointerMove={handleDrawingHover}
+          onPointerLeave={() => {
+            if (drawingTool === "copy_price") setCopyPriceGuide(null);
+          }}
+        />
+      ) : null}
+      <ChartDrawingToolbar activeTool={drawingTool} onToolChange={changeDrawingTool} />
+      {drawingTool !== "cursor" && !pendingNote ? (
+        <div className="pointer-events-none absolute left-4 top-4 z-[65] rounded-lg border border-cyan-400/35 bg-ink-900/92 px-3 py-2 text-xs text-cyan-100 shadow-lg">
+          {drawingTool === "measure"
+            ? measureStartRef.current ? "Click điểm kết thúc để hoàn thành phép đo" : "Click điểm bắt đầu phép đo"
+            : drawingTool === "fib_standard"
+              ? "Kéo từ swing bắt đầu đến swing kết thúc để vẽ Fibonacci"
+              : drawingTool === "fib_ote"
+                ? "Kéo theo nhịp impulse; vùng vàng 0.62–0.79 là OTE"
+                : "Click một mức giá trên chart"}
+          <span className="ml-2 text-slate-500">Esc để hủy</span>
+        </div>
+      ) : null}
+      {pendingNote ? (
+        <form
+          className="absolute z-[80] w-72 rounded-xl border border-amber-300/35 bg-[#17150e]/98 p-3 shadow-2xl"
+          style={{ left: Math.min(pendingNote.x + 8, Math.max(8, (containerRef.current?.clientWidth ?? 320) - 296)), top: Math.max(8, pendingNote.y - 12) }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            const content = noteContent.trim();
+            if (!content) return;
+            void persistDrawing("note", [pendingNote.anchor], {}, content);
+            setPendingNote(null);
+            setNoteContent("");
+          }}
+        >
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-amber-200">Ghi chú tại {pendingNote.anchor.price.toFixed(2)}</label>
+          <textarea
+            autoFocus
+            className="min-h-24 w-full resize-y rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-300/60"
+            maxLength={2000}
+            placeholder="Nhập nhận định, điều kiện hoặc lưu ý..."
+            value={noteContent}
+            onChange={(event) => setNoteContent(event.target.value)}
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <button className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-white/5" type="button" onClick={() => { setPendingNote(null); changeDrawingTool("cursor"); }}>Hủy</button>
+            <button className="rounded-lg bg-amber-300 px-3 py-1.5 text-xs font-bold text-amber-950 disabled:opacity-40" disabled={!noteContent.trim()} type="submit">Lưu note</button>
+          </div>
+        </form>
+      ) : null}
+      {drawingMessage ? (
+        <div className="pointer-events-none absolute bottom-16 left-1/2 z-[75] -translate-x-1/2 rounded-lg border border-emerald-400/35 bg-emerald-950/95 px-3 py-2 text-xs text-emerald-100 shadow-lg">
+          {drawingMessage}
+        </div>
+      ) : null}
       {addEntityKind ? (
         <div
           className="absolute inset-0 z-40 cursor-crosshair"

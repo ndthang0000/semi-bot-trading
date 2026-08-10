@@ -492,6 +492,29 @@ CREATE TABLE IF NOT EXISTS spread_snapshots (
 CREATE INDEX IF NOT EXISTS idx_spread_snapshots_symbol_time
 ON spread_snapshots(symbol, snapshot_at);
 
+-- Human chart annotations are deliberately isolated from price_zones and
+-- strategy entities. They are visual research aids and must never arm trades.
+CREATE TABLE IF NOT EXISTS chart_drawings (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    drawing_type TEXT NOT NULL,
+    origin_timeframe TEXT NOT NULL,
+    visible_timeframes_json TEXT NOT NULL DEFAULT '["H1","M15","M5"]',
+    anchors_json TEXT NOT NULL,
+    properties_json TEXT NOT NULL DEFAULT '{}',
+    content TEXT,
+    locked INTEGER NOT NULL DEFAULT 0,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_chart_drawings_lookup
+ON chart_drawings(symbol, deleted_at, updated_at);
+
 """
 
 

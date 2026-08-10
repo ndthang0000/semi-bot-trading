@@ -1,5 +1,30 @@
 export type Timeframe = "M5" | "M15" | "H1";
 
+export type ChartDrawingType = "note" | "fib_retracement" | "horizontal_line";
+export type ChartDrawingTool = "cursor" | "measure" | "note" | "fib_standard" | "fib_ote" | "horizontal_line" | "copy_price";
+
+export type ChartDrawingAnchor = {
+  time: string;
+  price: number;
+};
+
+export type ChartDrawing = {
+  id: string;
+  symbol: string;
+  drawing_type: ChartDrawingType;
+  origin_timeframe: Timeframe;
+  visible_timeframes: Timeframe[];
+  anchors: ChartDrawingAnchor[];
+  properties: Record<string, unknown>;
+  content: string | null;
+  locked: boolean;
+  hidden: boolean;
+  revision: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ZoneVisibilityKey =
   | "support"
   | "resistance"

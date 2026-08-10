@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchChartPayload, fetchReplayTimeline, fetchSpreadSummary } from "../api/chart";
+import { fetchChartDrawings } from "../api/chartDrawings";
 import { ContextStrip } from "../components/ContextStrip";
 import { Inspector } from "../components/Inspector";
 import { ReplayControls } from "../components/ReplayControls";
@@ -55,6 +56,13 @@ export function ChartPage({ newsData }: ChartPageProps) {
     refetchOnWindowFocus: autoRefreshActive,
     staleTime: 10_000,
     enabled: !isReplayRoute || (replayStart !== null && replayAt !== null),
+  });
+
+  const drawingsQuery = useQuery({
+    queryKey: ["chart-drawings", symbol, timeframe],
+    queryFn: () => fetchChartDrawings(symbol, timeframe),
+    staleTime: 10_000,
+    enabled: !isReplayRoute,
   });
 
   const refreshChart = useCallback(() => {
@@ -185,10 +193,12 @@ export function ChartPage({ newsData }: ChartPageProps) {
           ) : chartQuery.data ? (
             <TradingChart
               payload={chartQuery.data}
+              drawings={drawingsQuery.data ?? []}
               spread={spreadQuery.data ?? null}
               newsData={newsData}
               onEntityCreated={refreshChart}
               onZonePersisted={handleZonePersisted}
+              onDrawingsChanged={() => void drawingsQuery.refetch()}
             />
           ) : (
             <div className="grid place-items-center bg-ink-950 text-sm text-slate-500">Loading chart...</div>

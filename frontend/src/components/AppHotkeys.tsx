@@ -30,6 +30,9 @@ const SHORTCUT_GROUPS = [
       ["V", "Bật/tắt trade overlays"],
       ["P / Shift+P", "Playbook kế tiếp / trước"],
       ["R", "Reload dữ liệu chart"],
+      ["M / N / H", "Thước đo / Note / Đường giá"],
+      ["F / Shift+F", "Fibonacci / OTE"],
+      ["Alt+C", "Copy giá từ chart"],
     ],
   },
   {

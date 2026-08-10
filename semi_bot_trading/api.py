@@ -18,6 +18,8 @@ from .api_models import (
     AccountExecutionControlRequest,
     AccountManualTradingLockRequest,
     AccountPartialTakeProfitRequest,
+    ChartDrawingCreateRequest,
+    ChartDrawingUpdateRequest,
     ContextOverrideRequest,
     LoginRequest,
     LogoutRequest,
@@ -117,6 +119,40 @@ def zones_are_duplicates(candidate: Any, existing: Any) -> bool:
     center_distance = abs((candidate_low + candidate_high) / 2 - (existing_low + existing_high) / 2)
     exact = abs(candidate_low - existing_low) <= 0.01 and abs(candidate_high - existing_high) <= 0.01
     return exact or overlap_smaller >= 0.70 or center_distance <= max(candidate_width, existing_width) * 0.65
+
+
+def validate_chart_drawing(request: ChartDrawingCreateRequest | ChartDrawingUpdateRequest, drawing_type: str) -> None:
+    anchors = request.anchors
+    if anchors is None:
+        return
+    expected = 2 if drawing_type == "fib_retracement" else 1
+    if len(anchors) != expected:
+        raise HTTPException(status_code=422, detail=f"{drawing_type} requires exactly {expected} anchor(s)")
+    for index, anchor in enumerate(anchors):
+        require_timezone_aware_iso(anchor.time, f"anchors[{index}].time")
+    if drawing_type == "fib_retracement" and anchors[0].time == anchors[1].time and anchors[0].price == anchors[1].price:
+        raise HTTPException(status_code=422, detail="Fib anchors must not be identical")
+    if drawing_type == "note" and isinstance(request, ChartDrawingCreateRequest) and not (request.content or "").strip():
+        raise HTTPException(status_code=422, detail="Note content must not be empty")
+
+
+def chart_drawing_row_to_api(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "symbol": row["symbol"],
+        "drawing_type": row["drawing_type"],
+        "origin_timeframe": row["origin_timeframe"],
+        "visible_timeframes": json_loads(row["visible_timeframes_json"], []),
+        "anchors": json_loads(row["anchors_json"], []),
+        "properties": json_loads(row["properties_json"], {}),
+        "content": row["content"],
+        "locked": bool(row["locked"]),
+        "hidden": bool(row["hidden"]),
+        "revision": int(row["revision"]),
+        "created_by": row["created_by"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
@@ -1912,6 +1948,128 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
     @app.post("/api/manual-ai/plans/{plan_id}/cancel")
     def cancel_manual_ai_plan(plan_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
         return transition_manual_ai_plan(plan_id, "cancelled")
+
+    @app.get("/api/chart-drawings")
+    def list_chart_drawings(
+        symbol: str = Query(default=config.symbol),
+        timeframe: str | None = Query(default=None),
+        include_hidden: bool = Query(default=False),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        if timeframe is not None and timeframe not in {"M5", "M15", "H1"}:
+            raise HTTPException(status_code=422, detail="timeframe must be M5, M15, or H1")
+        with connect(config.database) as conn:
+            init_db(conn)
+            rows = conn.execute(
+                "SELECT * FROM chart_drawings WHERE symbol = ? AND deleted_at IS NULL ORDER BY updated_at ASC",
+                (symbol,),
+            ).fetchall()
+        drawings = [chart_drawing_row_to_api(row) for row in rows]
+        if timeframe is not None:
+            drawings = [item for item in drawings if timeframe in item["visible_timeframes"]]
+        if not include_hidden:
+            drawings = [item for item in drawings if not item["hidden"]]
+        return {"drawings": drawings}
+
+    @app.post("/api/chart-drawings", status_code=201)
+    def create_chart_drawing(
+        request: ChartDrawingCreateRequest = Body(...),
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        validate_chart_drawing(request, request.drawing_type)
+        now = utc_now_iso()
+        drawing_id = str(uuid.uuid4())
+        visible_timeframes = list(dict.fromkeys(request.visible_timeframes))
+        with connect(config.database) as conn:
+            init_db(conn)
+            conn.execute(
+                """
+                INSERT INTO chart_drawings (
+                    id, symbol, drawing_type, origin_timeframe, visible_timeframes_json,
+                    anchors_json, properties_json, content, locked, hidden, revision,
+                    created_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                """,
+                (
+                    drawing_id,
+                    request.symbol,
+                    request.drawing_type,
+                    request.origin_timeframe,
+                    json.dumps(visible_timeframes),
+                    json.dumps([anchor.model_dump() for anchor in request.anchors]),
+                    json.dumps(request.properties),
+                    (request.content or "").strip() or None,
+                    int(request.locked),
+                    int(request.hidden),
+                    username,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM chart_drawings WHERE id = ?", (drawing_id,)).fetchone()
+        return chart_drawing_row_to_api(row)
+
+    @app.patch("/api/chart-drawings/{drawing_id}")
+    def update_chart_drawing(
+        drawing_id: str,
+        request: ChartDrawingUpdateRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute(
+                "SELECT * FROM chart_drawings WHERE id = ? AND deleted_at IS NULL",
+                (drawing_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Chart drawing not found: {drawing_id}")
+            if int(row["revision"]) != request.revision:
+                raise HTTPException(status_code=409, detail="Chart drawing was changed by another session")
+            validate_chart_drawing(request, row["drawing_type"])
+            visible = request.visible_timeframes if request.visible_timeframes is not None else json_loads(row["visible_timeframes_json"], [])
+            anchors = [anchor.model_dump() for anchor in request.anchors] if request.anchors is not None else json_loads(row["anchors_json"], [])
+            properties = request.properties if request.properties is not None else json_loads(row["properties_json"], {})
+            content = request.content if "content" in request.model_fields_set else row["content"]
+            locked = request.locked if request.locked is not None else bool(row["locked"])
+            hidden = request.hidden if request.hidden is not None else bool(row["hidden"])
+            conn.execute(
+                """
+                UPDATE chart_drawings
+                SET visible_timeframes_json = ?, anchors_json = ?, properties_json = ?,
+                    content = ?, locked = ?, hidden = ?, revision = revision + 1, updated_at = ?
+                WHERE id = ? AND revision = ?
+                """,
+                (
+                    json.dumps(list(dict.fromkeys(visible))), json.dumps(anchors), json.dumps(properties),
+                    content, int(locked), int(hidden), now, drawing_id, request.revision,
+                ),
+            )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM chart_drawings WHERE id = ?", (drawing_id,)).fetchone()
+        return chart_drawing_row_to_api(updated)
+
+    @app.delete("/api/chart-drawings/{drawing_id}")
+    def delete_chart_drawing(
+        drawing_id: str,
+        revision: int = Query(ge=1),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            cursor = conn.execute(
+                "UPDATE chart_drawings SET deleted_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND deleted_at IS NULL",
+                (now, now, drawing_id, revision),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                exists = conn.execute("SELECT revision FROM chart_drawings WHERE id = ? AND deleted_at IS NULL", (drawing_id,)).fetchone()
+                if exists is None:
+                    raise HTTPException(status_code=404, detail=f"Chart drawing not found: {drawing_id}")
+                raise HTTPException(status_code=409, detail="Chart drawing was changed by another session")
+        return {"id": drawing_id, "deleted": True}
 
     @app.post("/api/zones")
     def create_zone(request: ZoneCreateRequest = Body(...), _: str = Depends(require_auth)) -> dict[str, Any]:
