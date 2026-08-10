@@ -88,7 +88,7 @@ questionnaire trước khi bot có thể sử dụng.
 đọc entry discipline, sau đó paste JSON do `plan-xauusd-manual-ai` tạo hoặc nhập
 giá thủ công. Hai đường đều normalize về cùng contract API và luôn tạo `draft`.
 
-Backend tự tính lại RR từ entry/SL/TP, chỉ nhận XAUUSD limit plan với RR 1.5–2.5
+Backend tự tính lại RR từ entry/SL/TP, chỉ nhận XAUUSD limit plan với RR 1.5–4.0
 và không nhận lot từ browser hay AI JSON. Approval yêu cầu questionnaire; một
 account/symbol có thể giữ nhiều primary limit plan đang active. UI lấy
 account label từ `/api/accounts`, mặc định chọn toàn bộ worker đã được dashboard
@@ -117,7 +117,8 @@ broker cancel/expiry mới đóng trạng thái DB. Expiry và cancel condition 
 áp dụng sau khi order đã armed; worker chỉ ghi cancelled sau khi broker xác nhận
 order không còn pending, tránh nhầm một position vừa fill thành order đã hủy.
 Manual input dùng hai nút BUY/SELL tương phản, hiển thị current chart price và
-khoảng SL theo cả đơn vị giá lẫn XAUUSD pip (`1 pip = 0.01`). UI chặn limit nằm
+khoảng SL theo cả đơn vị giá lẫn XAUUSD pip (`1 pip = 0.1`, nên 7 giá = 70 pip),
+hiển thị R:R tức thời và có preset TP 1.5R/2.5R/3R. UI chặn limit nằm
 sai phía current price hoặc SL nằm sai phía entry. Đóng wizard sau approval sẽ
 reset toàn bộ draft; màn hình thành công cũng có action `Thêm lệnh mới`.
 

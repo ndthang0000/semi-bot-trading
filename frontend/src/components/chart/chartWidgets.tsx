@@ -11,7 +11,18 @@ export type NewsTimelineMarker = {
   chartHeight: number;
 };
 
-const TIMEFRAME_SECONDS: Record<string, number> = { M15: 900, H1: 3600 };
+const TIMEFRAME_SECONDS: Record<string, number> = { M5: 300, M15: 900, H1: 3600 };
+
+export function candleSecondsForTimeframe(timeframe: string): number {
+  return TIMEFRAME_SECONDS[timeframe] ?? 3600;
+}
+
+export function remainingCandleSeconds(timeframe: string, nowMs = Date.now()): number {
+  const tfSecs = candleSecondsForTimeframe(timeframe);
+  const nowSecs = Math.floor(nowMs / 1000);
+  const remaining = tfSecs - (nowSecs % tfSecs);
+  return remaining === tfSecs ? 0 : remaining;
+}
 
 export function CandleCountdown({
   timeframe,
@@ -30,13 +41,8 @@ export function CandleCountdown({
   pointerY: number | null;
   spread?: SpreadSummary | null;
 }) {
-  const tfSecs = TIMEFRAME_SECONDS[timeframe] ?? 3600;
-
-  const calc = () => {
-    const nowSecs = Math.floor(Date.now() / 1000);
-    const rem = tfSecs - (nowSecs % tfSecs);
-    return rem === tfSecs ? 0 : rem;
-  };
+  const tfSecs = candleSecondsForTimeframe(timeframe);
+  const calc = () => remainingCandleSeconds(timeframe);
 
   const [secs, setSecs] = useState(calc);
 

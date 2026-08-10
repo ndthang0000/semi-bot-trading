@@ -222,10 +222,10 @@ def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tupl
         risk = abs(candidate.entry_price - candidate.stop_loss)
         reward = abs(candidate.take_profit - candidate.entry_price)
         risk_reward = reward / risk
-        if not 1.5 <= risk_reward <= 2.5:
+        if not 1.5 <= risk_reward <= 4.0:
             raise HTTPException(
                 status_code=422,
-                detail=f"candidates[{index}] risk/reward must be between 1.5 and 2.5; calculated={risk_reward:.3f}",
+                detail=f"candidates[{index}] risk/reward must be between 1.5 and 4.0; calculated={risk_reward:.3f}",
             )
         for condition_index, condition in enumerate(candidate.cancel_conditions):
             if condition.type.endswith(("below", "above")) and condition.price is None:

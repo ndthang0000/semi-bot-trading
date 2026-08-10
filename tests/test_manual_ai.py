@@ -103,6 +103,19 @@ class ManualAiApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             client = authenticated_test_client(root, config_path)
             self.assertEqual(client.post("/api/manual-ai/plans/import", json=envelope(rr=1.0)).status_code, 422)
+            accepted_max = client.post(
+                "/api/manual-ai/plans/import",
+                json=envelope(rr=4.0, client_id="manual-ai-max-rr"),
+            )
+            self.assertEqual(accepted_max.status_code, 200, accepted_max.text)
+            self.assertEqual(4.0, accepted_max.json()["plans"][0]["risk_reward"])
+            self.assertEqual(
+                422,
+                client.post(
+                    "/api/manual-ai/plans/import",
+                    json=envelope(rr=4.01, client_id="manual-ai-over-max-rr"),
+                ).status_code,
+            )
             self.assertEqual(client.post("/api/manual-ai/plans/import", json=envelope(execution_state="watch_only")).status_code, 422)
 
     def test_approval_fans_out_to_workers_and_cancel_stops_the_whole_group(self) -> None:

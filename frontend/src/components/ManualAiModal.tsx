@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, Bot, CheckCircle2, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Bot, Check, CheckCircle2, Copy, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { approveManualAiPlan, fetchManualAiWorkers, importManualAiPlans, type ManualAiPlan, type ManualAiWorker } from "../api/manualAi";
 import { useChartStore } from "../store/chartStore";
@@ -6,7 +6,10 @@ import { useChartStore } from "../store/chartStore";
 type Props = { currentPrice: number | null; open: boolean; onChanged: () => void; onClose: () => void };
 type Mode = "import" | "manual";
 
-const XAUUSD_PIP_SIZE = 0.01;
+const XAUUSD_PIP_SIZE = 0.1;
+const MANUAL_AI_MIN_RR = 1.5;
+const MANUAL_AI_MAX_RR = 4;
+const QUICK_RR_OPTIONS = [1.5, 2.5, 3] as const;
 
 const inputClass = "h-10 rounded-lg border border-ink-600 bg-ink-950 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400";
 
@@ -35,6 +38,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [approved, setApproved] = useState<ManualAiPlan | null>(null);
+  const [copiedCurrentPrice, setCopiedCurrentPrice] = useState(false);
 
   const primary = useMemo(() => plans.find((plan) => plan.execution_state === "primary") ?? null, [plans]);
   const stopMetrics = useMemo(() => {
@@ -43,13 +47,34 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
     if (!Number.isFinite(entryPrice) || !Number.isFinite(stopPrice) || !entry.trim() || !stop.trim()) return null;
     const priceDistance = Math.abs(entryPrice - stopPrice);
     const validSide = side === "buy" ? stopPrice < entryPrice : stopPrice > entryPrice;
-    return { pips: priceDistance / XAUUSD_PIP_SIZE, priceDistance, validSide };
+    return { pips: xauusdPipsForDistance(priceDistance), priceDistance, validSide };
   }, [entry, side, stop]);
   const limitPlacementValid = useMemo(() => {
     const entryPrice = Number(entry);
     if (typeof currentPrice !== "number" || !Number.isFinite(entryPrice) || !entry.trim()) return null;
     return side === "buy" ? entryPrice < currentPrice : entryPrice > currentPrice;
   }, [currentPrice, entry, side]);
+  const riskReward = useMemo(() => {
+    const entryPrice = Number(entry);
+    const stopPrice = Number(stop);
+    const targetPrice = Number(target);
+    if (![entryPrice, stopPrice, targetPrice].every(Number.isFinite) || !entry.trim() || !stop.trim() || !target.trim()) return null;
+    const risk = Math.abs(entryPrice - stopPrice);
+    if (risk <= 0) return null;
+    const validTarget = side === "buy" ? targetPrice > entryPrice : targetPrice < entryPrice;
+    return { value: Math.abs(targetPrice - entryPrice) / risk, validTarget };
+  }, [entry, side, stop, target]);
+  const riskRewardValid = riskReward !== null
+    && riskReward.validTarget
+    && riskReward.value >= MANUAL_AI_MIN_RR
+    && riskReward.value <= MANUAL_AI_MAX_RR;
+
+  const applyQuickRiskReward = (rr: number) => {
+    const entryPrice = Number(entry);
+    const stopPrice = Number(stop);
+    if (!Number.isFinite(entryPrice) || !Number.isFinite(stopPrice) || !stopMetrics?.validSide) return;
+    setTarget(manualAiTargetForRiskReward(side, entryPrice, stopPrice, rr).toFixed(2));
+  };
 
   const resetForm = () => {
     setReadGuide(false);
@@ -74,12 +99,29 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
     setBusy(false);
     setError("");
     setApproved(null);
+    setCopiedCurrentPrice(false);
   };
 
   const closeModal = () => {
     resetForm();
     onClose();
   };
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeModal();
+    };
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => window.removeEventListener("keydown", closeOnEscape, true);
+  }, [open, workers]);
+  useEffect(() => {
+    if (!copiedCurrentPrice) return;
+    const timer = window.setTimeout(() => setCopiedCurrentPrice(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [copiedCurrentPrice]);
   useEffect(() => {
     if (!open) return;
     let active = true;
@@ -184,7 +226,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
         <div className="grid gap-5 p-5">
           <section className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-4 text-sm leading-relaxed text-slate-300">
             <div className="font-semibold text-amber-200">Quy trình bắt buộc trước khi vào lệnh</div>
-            <ol className="mt-2 list-decimal space-y-1 pl-5"><li>Entry phải là limit ở pullback/retest, không đuổi giá.</li><li>Đặt SL theo invalidation cấu trúc trước; tuyệt đối không cố định lot.</li><li>RR backend tính lại phải từ 1.5 đến 2.5.</li><li>Plan luôn là draft; chỉ worker được tính lot và gửi MT5 sau khi bạn approve.</li></ol>
+            <ol className="mt-2 list-decimal space-y-1 pl-5"><li>Entry phải là limit ở pullback/retest, không đuổi giá.</li><li>Đặt SL theo invalidation cấu trúc trước; tuyệt đối không cố định lot.</li><li>RR backend tính lại phải từ 1.5 đến 4.0.</li><li>Plan luôn là draft; chỉ worker được tính lot và gửi MT5 sau khi bạn approve.</li></ol>
             <label className="mt-3 flex items-center gap-2 font-medium text-slate-100"><input checked={readGuide} className="h-4 w-4 accent-cyan-400" type="checkbox" onChange={(event) => setReadGuide(event.target.checked)} />Tôi đã đọc và hiểu quy trình</label>
           </section>
 
@@ -216,29 +258,58 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 rounded-xl border border-ink-700 bg-ink-950/70 p-3 sm:grid-cols-3">
-                  <Metric label="Current price" value={typeof currentPrice === "number" ? currentPrice.toFixed(2) : "--"} />
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-ink-700 bg-ink-950/70 p-3 sm:grid-cols-4">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Current price</div>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span className="text-sm font-bold tabular-nums text-slate-100">{typeof currentPrice === "number" ? currentPrice.toFixed(2) : "--"}</span>
+                      <button
+                        aria-label="Copy current price"
+                        className="grid h-6 w-6 place-items-center rounded-md text-slate-500 hover:bg-cyan-400/10 hover:text-cyan-200 disabled:opacity-30"
+                        disabled={typeof currentPrice !== "number"}
+                        title="Copy current price"
+                        type="button"
+                        onClick={() => {
+                          if (typeof currentPrice !== "number") return;
+                          void navigator.clipboard.writeText(currentPrice.toFixed(2))
+                            .then(() => setCopiedCurrentPrice(true))
+                            .catch(() => setError("Browser không cho phép copy current price."));
+                        }}
+                      >
+                        {copiedCurrentPrice ? <Check size={13} /> : <Copy size={13} />}
+                      </button>
+                    </div>
+                  </div>
                   <Metric label="SL distance" value={stopMetrics ? `${stopMetrics.priceDistance.toFixed(2)} giá` : "--"} />
                   <Metric
-                    className="col-span-2 sm:col-span-1"
                     label="SL pips"
                     tone={stopMetrics ? (stopMetrics.validSide ? "good" : "bad") : "neutral"}
                     value={stopMetrics ? `${Math.round(stopMetrics.pips).toLocaleString()} pips` : "--"}
                   />
+                  <Metric
+                    label="Risk : Reward"
+                    tone={riskReward ? (riskRewardValid ? "good" : "bad") : "neutral"}
+                    value={riskReward ? `1 : ${riskReward.value.toFixed(2)}` : "--"}
+                  />
                 </div>
                 {limitPlacementValid === false ? <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">{side === "buy" ? "BUY LIMIT cần Entry thấp hơn current price." : "SELL LIMIT cần Entry cao hơn current price."}</div> : null}
                 {stopMetrics && !stopMetrics.validSide ? <div className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">SL sai phía: BUY cần SL dưới Entry, SELL cần SL trên Entry.</div> : null}
+                {riskReward && !riskReward.validTarget ? <div className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">TP sai phía: BUY cần TP trên Entry, SELL cần TP dưới Entry.</div> : null}
+                {riskReward && riskReward.validTarget && !riskRewardValid ? <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">Manual AI yêu cầu R:R từ 1.5 đến 4.0.</div> : null}
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1 text-xs text-slate-400">Entry<input className={inputClass} inputMode="decimal" value={entry} onChange={(event) => setEntry(event.target.value)} /></label>
                   <label className="grid gap-1 text-xs text-slate-400">Structural SL<input className={inputClass} inputMode="decimal" value={stop} onChange={(event) => setStop(event.target.value)} /></label>
-                  <label className="grid gap-1 text-xs text-slate-400">Take profit<input className={inputClass} inputMode="decimal" value={target} onChange={(event) => setTarget(event.target.value)} /></label>
+                  <label className="grid gap-1 text-xs text-slate-400">
+                    <span className="flex items-center justify-between gap-2"><span>Take profit</span><span className="flex gap-1">{QUICK_RR_OPTIONS.map((rr) => <button key={rr} className="rounded border border-ink-600 bg-ink-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-200 hover:border-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-35" disabled={!stopMetrics?.validSide} type="button" onClick={() => applyQuickRiskReward(rr)}>{rr}R</button>)}</span></span>
+                    <input className={inputClass} inputMode="decimal" value={target} onChange={(event) => setTarget(event.target.value)} />
+                  </label>
                   <label className="grid gap-1 text-xs text-slate-400">Expire sau (phút)<input className={inputClass} min={5} max={1440} step={5} type="number" value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(event.target.value)} /></label>
                   <label className="grid gap-1 text-xs text-slate-400 sm:col-span-2">Entry reason<input className={inputClass} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
                 </div>
               </div>
             )}
-            <button className="h-11 rounded-xl bg-cyan-400 font-bold text-ink-950 disabled:opacity-40" disabled={!readGuide || busy || (mode === "import" ? !json.trim() : !entry || !stop || !target || stopMetrics?.validSide === false || limitPlacementValid === false || Number(expiresInMinutes) < 5 || Number(expiresInMinutes) > 1440)} type="button" onClick={submitDraft}>{busy ? "Validating…" : "Validate & create draft"}</button>
+            <button className="h-11 rounded-xl bg-cyan-400 font-bold text-ink-950 disabled:opacity-40" disabled={!readGuide || busy || (mode === "import" ? !json.trim() : !entry || !stop || !target || stopMetrics?.validSide === false || limitPlacementValid === false || !riskRewardValid || Number(expiresInMinutes) < 5 || Number(expiresInMinutes) > 1440)} type="button" onClick={submitDraft}>{busy ? "Validating…" : "Validate & create draft"}</button>
           </> : null}
 
           {primary && !approved ? <section className="grid gap-4 rounded-xl border border-cyan-400/25 bg-cyan-400/5 p-4"><div><div className="font-semibold text-cyan-100">Draft đã validate</div><div className="mt-2 grid gap-2">{plans.map((plan) => <div key={plan.id} className="rounded-lg border border-ink-700 bg-ink-950/60 p-2 text-sm tabular-nums text-slate-300"><span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${plan.execution_state === "primary" ? "bg-cyan-400/15 text-cyan-200" : "bg-slate-700 text-slate-400"}`}>{plan.execution_state}</span>{plan.side.toUpperCase()} limit {plan.entry_price} · SL {plan.stop_loss} · TP {plan.take_profit} · {plan.risk_reward.toFixed(2)}R · {plan.expires_in_minutes} phút</div>)}</div></div><div className="grid gap-2"><div><div className="text-xs font-medium text-slate-300">Worker nhận lệnh</div><div className="mt-0.5 text-[11px] text-slate-500">Mỗi worker tính lot theo profile: tài khoản quỹ 0.75%, tài khoản thường 1.5%.</div></div>{workers.length ? <div className="grid gap-2 rounded-lg border border-ink-700 bg-ink-950/50 p-3">{workers.map((worker) => <label key={worker.label} className="flex items-center justify-between gap-3 text-sm text-slate-200"><span className="flex items-center gap-2"><input checked={selectedWorkerLabels.includes(worker.label)} className="accent-cyan-400" type="checkbox" onChange={(event) => setSelectedWorkerLabels((current) => event.target.checked ? [...current, worker.label] : current.filter((label) => label !== worker.label))} />{worker.label}</span><span className={worker.execution.worker_status === "online" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>{worker.execution.worker_status}</span></label>)}</div> : <div className="rounded-lg border border-amber-400/25 bg-amber-400/5 p-3 text-xs text-amber-200">Chưa tìm thấy worker nào. Hãy kiểm tra worker heartbeat trên Account Dashboard.</div>}</div><div className="grid gap-3 sm:grid-cols-2"><QuestionSelect label="Short-term trend" value={shortTrend} onChange={setShortTrend} options={["bullish", "bearish", "neutral"]} /><QuestionSelect label="Medium-term trend" value={mediumTrend} onChange={setMediumTrend} options={["bullish", "bearish", "neutral"]} /><QuestionSelect label="Nguồn invalidation" value={invalidationSource} onChange={setInvalidationSource} options={["structure", "liquidity_extreme", "volatility_buffer"]} /><QuestionSelect label="Lý do dùng limit" value={limitReason} onChange={setLimitReason} options={["pullback", "retest", "discount_premium", "liquidity_reaction"]} /><QuestionSelect label="Trạng thái cảm xúc" value={emotionState} onChange={setEmotionState} options={["calm", "uncertain", "fomo", "revenge"]} /></div><div className="grid gap-2 text-sm text-slate-200"><label className="flex gap-2"><input checked={acceptRisk} className="accent-cyan-400" type="checkbox" onChange={(event) => setAcceptRisk(event.target.checked)} />Tôi chấp nhận risk theo profile từng worker (quỹ 0.75% · thường 1.5%).</label><label className="flex gap-2"><input checked={dynamicLot} className="accent-cyan-400" type="checkbox" onChange={(event) => setDynamicLot(event.target.checked)} />Tôi không cố định lot; từng worker tính lot từ SL.</label><label className="flex gap-2"><input checked={competingExposure} className="accent-rose-400" type="checkbox" onChange={(event) => setCompetingExposure(event.target.checked)} />Có worker đang có exposure XAUUSD cạnh tranh.</label></div>{emotionState !== "calm" ? <p className="text-xs text-amber-200">Chỉ trạng thái calm mới được approve; hãy tạm dừng nếu đang FOMO, revenge hoặc chưa chắc chắn.</p> : null}<button className="h-11 rounded-xl bg-emerald-400 font-bold text-ink-950 disabled:opacity-40" disabled={busy || emotionState !== "calm" || !acceptRisk || !dynamicLot || competingExposure || selectedWorkerLabels.length === 0} type="button" onClick={approve}>{busy ? "Approving…" : `Approve & arm ${selectedWorkerLabels.length} worker`}</button></section> : null}
@@ -257,4 +328,13 @@ function QuestionSelect({ label, onChange, options, value }: { label: string; on
 function Metric({ className = "", label, tone = "neutral", value }: { className?: string; label: string; tone?: "neutral" | "good" | "bad"; value: string }) {
   const valueClass = tone === "good" ? "text-emerald-200" : tone === "bad" ? "text-rose-200" : "text-slate-100";
   return <div className={className}><div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</div><div className={`mt-1 text-sm font-bold tabular-nums ${valueClass}`}>{value}</div></div>;
+}
+
+export function xauusdPipsForDistance(priceDistance: number): number {
+  return Math.abs(priceDistance) / XAUUSD_PIP_SIZE;
+}
+
+export function manualAiTargetForRiskReward(side: "buy" | "sell", entry: number, stop: number, riskReward: number): number {
+  const reward = Math.abs(entry - stop) * riskReward;
+  return side === "buy" ? entry + reward : entry - reward;
 }
