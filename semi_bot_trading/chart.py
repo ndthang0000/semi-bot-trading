@@ -19,10 +19,13 @@ MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS = 500
 def load_manual_ai_setup_candidates(
     conn: Connection,
     symbol: str,
-    _allowed_playbooks: set[str] | None,
+    allowed_playbooks: set[str] | None,
     as_of: str,
 ) -> list[dict[str, Any]]:
     """Expose unfilled Manual AI plans through the normal setup layer."""
+    if allowed_playbooks is not None and "manual_ai_v1" not in allowed_playbooks:
+        return []
+
     rows = conn.execute(
         """
         SELECT * FROM manual_ai_plans
@@ -751,6 +754,10 @@ def load_chart_trades(
         LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
         WHERE trade_orders.symbol = ?
           AND trade_orders.opened_at IS NOT NULL
+          AND NOT (
+              trade_ideas.playbook = 'manual_ai_v1'
+              AND trade_orders.status = 'pending_fill'
+          )
           AND trade_orders.opened_at <= ?
           AND (trade_orders.closed_at IS NULL OR trade_orders.closed_at >= ?)
           {playbook_clause}

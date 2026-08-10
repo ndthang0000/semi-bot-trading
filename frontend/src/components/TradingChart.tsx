@@ -1250,7 +1250,7 @@ export function TradingChart({ payload, spread, newsData, onEntityCreated, onZon
           return (
             <button
               key={`manual-ai:${candidate.id}`}
-              className="pointer-events-auto absolute z-[34] overflow-hidden border-2 border-dashed border-yellow-300/90 bg-transparent text-left shadow-[0_0_12px_rgba(250,204,21,0.3)] transition hover:brightness-125"
+              className="pointer-events-auto absolute z-[34] overflow-hidden border border-dashed border-yellow-300/80 bg-transparent text-left shadow-[0_0_6px_rgba(250,204,21,0.18)] transition hover:brightness-125"
               style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
               title={`${label}\nEntry ${candidate.entry} · SL ${candidate.stop_loss} · TP ${candidate.take_profit[0]}\nExpires ${candidate.expires_at ?? "--"}`}
               type="button"

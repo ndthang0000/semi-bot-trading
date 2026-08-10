@@ -14,6 +14,7 @@ from semi_bot_trading.chart import (
     build_m15_signal_snapshot,
     build_m15_trigger_overlays,
     filter_traded_setup_candidates,
+    load_chart_trades,
 )
 from semi_bot_trading.db import connect, init_db
 
@@ -111,6 +112,32 @@ class ChartPayloadTest(unittest.TestCase):
 
         self.assertEqual([candidate], exness_filtered)
         self.assertEqual([], ftmo_filtered)
+
+    def test_pending_limit_is_not_a_chart_trade_until_filled(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_live_order(conn, status="pending_fill", zone_id="z1", playbook="manual_ai_v1")
+                pending_trades = load_chart_trades(
+                    conn,
+                    "XAUUSD",
+                    "2025-12-31T00:00:00+00:00",
+                    "2026-01-02T00:00:00+00:00",
+                    allowed_playbooks={"manual_ai_v1"},
+                )
+                conn.execute("UPDATE trade_orders SET status = 'filled' WHERE id = 'order-1'")
+                filled_trades = load_chart_trades(
+                    conn,
+                    "XAUUSD",
+                    "2025-12-31T00:00:00+00:00",
+                    "2026-01-02T00:00:00+00:00",
+                    allowed_playbooks={"manual_ai_v1"},
+                )
+
+        self.assertEqual(pending_trades, [])
+        self.assertEqual(len(filled_trades), 1)
+        self.assertEqual(filled_trades[0]["status"], "filled")
 
     def test_live_strategy_candle_is_opt_in_for_setup_evaluation(self) -> None:
         captured_lengths: list[int] = []
@@ -354,7 +381,13 @@ def seed_live_candle(conn) -> None:
     conn.commit()
 
 
-def seed_live_order(conn, status: str, zone_id: str, account_label: str = "Default") -> None:
+def seed_live_order(
+    conn,
+    status: str,
+    zone_id: str,
+    account_label: str = "Default",
+    playbook: str = "zone_reaction_v2",
+) -> None:
     candidate = {"id": "candidate-old", "primary_zone_id": zone_id}
     conn.execute(
         """
@@ -364,11 +397,11 @@ def seed_live_order(conn, status: str, zone_id: str, account_label: str = "Defau
             suggested_stop_loss, suggested_take_profit_json, risk_reward,
             created_at, expires_at
         )
-        VALUES ('idea-1', 'XAUUSD', 'long', 'zone_reaction_v2', 'approved',
+        VALUES ('idea-1', 'XAUUSD', 'long', ?, 'approved',
                 ?, '[]', ?, 100, 95, '[110]', 2.0,
                 '2026-01-01T00:00:00+00:00', NULL)
         """,
-        (zone_id, json.dumps({"candidate": candidate})),
+        (playbook, zone_id, json.dumps({"candidate": candidate})),
     )
     conn.execute(
         """
