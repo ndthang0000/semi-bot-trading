@@ -45,6 +45,7 @@ from semi_bot_trading.live_worker import (
     live_candidate_already_executed,
     live_fvg_trade_count_for_zone,
     live_trade_count_today,
+    manual_ai_risk_pct,
     manage_open_trade_partial_take_profit,
     maybe_ftmo_news_flatten,
     maybe_weekend_flatten,
@@ -988,6 +989,63 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
         self.assertEqual("cancelled", plan["status"])
         self.assertEqual("cancelled", order["status"])
+
+    def test_approved_plans_can_arm_while_other_bot_limits_are_pending(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        upsert_candles(
+            self._conn,
+            [
+                Candle(
+                    symbol="XAUUSD",
+                    timeframe="M5",
+                    open_time=now - timedelta(minutes=5),
+                    close_time=now,
+                    open=3000.0,
+                    high=3002.0,
+                    low=2998.0,
+                    close=3000.0,
+                    volume=100,
+                    source="test",
+                )
+            ],
+        )
+        for index in (1, 2):
+            self._conn.execute(
+                """
+                INSERT INTO manual_ai_plans (
+                    id, client_id, account_label, symbol, side, status, execution_state,
+                    entry_price, stop_loss, take_profit, risk_pct, risk_reward, expires_at,
+                    cancel_conditions_json, created_at, updated_at
+                ) VALUES (?, ?, 'Test', 'XAUUSD', 'buy', 'approved', 'primary',
+                          ?, ?, ?, 1.0, 2.0, ?, '[]', ?, ?)
+                """,
+                (
+                    f"manual-plan-{index}",
+                    f"manual-client-{index}",
+                    3000.0 - index,
+                    2980.0 - index,
+                    3040.0 - index,
+                    (now + timedelta(minutes=30)).isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+        self._conn.commit()
+        client = _fake_client(current_price=3000.0)
+        client.bot_order_counts.return_value = (0, 1)
+
+        with patch("semi_bot_trading.live_worker.maybe_execute_candidates") as execute:
+            process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        self.assertEqual(2, execute.call_count)
+        for call_args in execute.call_args_list:
+            self.assertEqual({"risk_pct_override": 1.5}, call_args.kwargs)
+
+    def test_manual_ai_uses_lower_risk_by_account_type(self):
+        self.assertEqual(0.75, manual_ai_risk_pct("ftmo_challenge"))
+        self.assertEqual(0.75, manual_ai_risk_pct("the5ers"))
+        self.assertEqual(1.5, manual_ai_risk_pct("personal"))
+        self.assertEqual(1.5, manual_ai_risk_pct("personal_cent"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

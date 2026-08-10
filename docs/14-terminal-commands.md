@@ -717,8 +717,12 @@ FTMO_NEWS_FLATTEN_ENABLED=true
 LIVE_SYNC_CANDLES=false
 LIVE_RUN_DETECTORS=false
 EXECUTION_ENABLED=false
-RISK_PER_TRADE_PCT=0.25
+RISK_PER_TRADE_PCT=1.0
 ```
+
+`RISK_PER_TRADE_PCT` là mức mặc định cho các playbook thông thường. Manual AI
+luôn dùng policy riêng thấp hơn: `0.75%` cho account quỹ và `1.5%` cho account
+cá nhân.
 
 `MT5_SERVER_UTC_OFFSET_HOURS` normalizes broker-server wall-clock timestamps
 before candles and closed deals are stored as UTC. Keep it at `0` when MT5

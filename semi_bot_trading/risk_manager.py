@@ -37,14 +37,14 @@ class AccountProfile:
 PROFILES: dict[str, AccountProfile] = {
     "personal": AccountProfile(
         name="Personal",
-        risk_per_trade_pct=1.0,
+        risk_per_trade_pct=2.0,
         max_daily_loss_pct=6.0,
         max_total_drawdown_pct=20.0,
         max_trades_per_day=10,
     ),
     "personal_cent": AccountProfile(
         name="Personal Cent",
-        risk_per_trade_pct=1.0,
+        risk_per_trade_pct=2.0,
         max_daily_loss_pct=6.0,
         max_total_drawdown_pct=20.0,
         max_trades_per_day=10,
@@ -59,7 +59,7 @@ PROFILES: dict[str, AccountProfile] = {
     ),
     "the5ers": AccountProfile(
         name="The5ers",
-        risk_per_trade_pct=0.5,
+        risk_per_trade_pct=1.0,
         max_daily_loss_pct=4.0,
         max_total_drawdown_pct=8.0,
         max_trades_per_day=5,

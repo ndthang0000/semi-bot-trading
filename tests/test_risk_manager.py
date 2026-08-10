@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from semi_bot_trading.db import connect, init_db
-from semi_bot_trading.risk_manager import build_risk_manager
+from semi_bot_trading.risk_manager import PROFILES, build_risk_manager
 from tests.helpers import TemporaryDirectory
 
 
@@ -74,6 +74,14 @@ class FtmoDailyEquityRiskGuardTest(unittest.TestCase):
 
         self.assertFalse(result.allowed)
         self.assertIn("metric is unavailable", result.reason)
+
+
+class AccountProfileRiskDefaultsTest(unittest.TestCase):
+    def test_prop_firm_and_personal_profiles_use_expected_risk(self) -> None:
+        self.assertEqual(1.0, PROFILES["ftmo_challenge"].risk_per_trade_pct)
+        self.assertEqual(1.0, PROFILES["the5ers"].risk_per_trade_pct)
+        self.assertEqual(2.0, PROFILES["personal"].risk_per_trade_pct)
+        self.assertEqual(2.0, PROFILES["personal_cent"].risk_per_trade_pct)
 
 
 if __name__ == "__main__":

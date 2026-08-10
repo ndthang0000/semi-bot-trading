@@ -113,13 +113,23 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual([candidate], exness_filtered)
         self.assertEqual([], ftmo_filtered)
 
-    def test_pending_limit_is_not_a_chart_trade_until_filled(self) -> None:
+    def test_unfilled_manual_ai_limit_is_never_a_chart_trade(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
             with closing(connect(db_path)) as conn:
                 init_db(conn)
                 seed_live_order(conn, status="pending_fill", zone_id="z1", playbook="manual_ai_v1")
                 pending_trades = load_chart_trades(
+                    conn,
+                    "XAUUSD",
+                    "2025-12-31T00:00:00+00:00",
+                    "2026-01-02T00:00:00+00:00",
+                    allowed_playbooks={"manual_ai_v1"},
+                )
+                conn.execute(
+                    "UPDATE trade_orders SET status = 'cancelled', closed_at = '2026-01-01T02:00:00+00:00' WHERE id = 'order-1'"
+                )
+                cancelled_trades = load_chart_trades(
                     conn,
                     "XAUUSD",
                     "2025-12-31T00:00:00+00:00",
@@ -136,6 +146,7 @@ class ChartPayloadTest(unittest.TestCase):
                 )
 
         self.assertEqual(pending_trades, [])
+        self.assertEqual(cancelled_trades, [])
         self.assertEqual(len(filled_trades), 1)
         self.assertEqual(filled_trades[0]["status"], "filled")
 

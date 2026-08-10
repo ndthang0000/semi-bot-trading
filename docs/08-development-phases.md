@@ -248,7 +248,9 @@ Technical tasks:
 - Implement range mean reversion playbook sau.
 - Snapshot context when creating trade idea.
 - Track trade lifecycle in replay/backtest mode.
-- Apply risk defaults: 1% risk, max daily loss 5%, max 10 trades/day, min RR 1:2.
+- Apply account-profile risk defaults (1% prop firm, 2% personal), max daily
+  loss 5%, max 10 trades/day, min RR 1:2. Manual AI uses its lower dedicated
+  policy (0.75% prop firm, 1.5% personal).
 
 Exit criteria:
 
