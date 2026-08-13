@@ -97,6 +97,7 @@ def build_setup_candidates(
                 macro_trend_value=macro_trend_value,
                 stop_fallback_atr=context_atr,
                 stop_fallback_atr_timeframe=context_atr_timeframe,
+                context_candles=context_candles,
             )
             if carried:
                 candidates.extend(carried)
@@ -119,6 +120,7 @@ def build_setup_candidates(
                 macro_trend=macro_trend_value,
                 stop_fallback_atr=context_atr,
                 stop_fallback_atr_timeframe=context_atr_timeframe,
+                context_candles=context_candles,
             )
         )
 
@@ -195,6 +197,7 @@ def _carry_forward_zone_reaction_v2(
     macro_trend_value: str,
     stop_fallback_atr: float,
     stop_fallback_atr_timeframe: str,
+    context_candles: list[dict[str, Any]] | None,
 ) -> list[SetupCandidate]:
     """Keep a fresh signal visible briefly after price leaves the zone."""
     lookback = max(int(config.waiting_candles), 0)
@@ -226,6 +229,7 @@ def _carry_forward_zone_reaction_v2(
             macro_trend=macro_trend_value,
             stop_fallback_atr=stop_fallback_atr,
             stop_fallback_atr_timeframe=stop_fallback_atr_timeframe,
+            context_candles=context_candles,
         )
         visible_candidates = [
             replace(

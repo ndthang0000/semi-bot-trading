@@ -17,7 +17,6 @@ from .helpers import (
     inside_zone_close_position,
     internal_reject_window_metadata,
     parse_utc_datetime,
-    pinbar_rejection_metadata,
     reaction,
     reaction_v2,
     trigger_points_for_direction,
@@ -56,7 +55,6 @@ def classify_zone_reaction_v2(
     low = float(last["low"])
     high = float(last["high"])
     close = float(last["close"])
-    open_ = float(last["open"])
     zone_low = float(zone["price_low"])
     zone_high = float(zone["price_high"])
     touched = high >= zone_low and low <= zone_high
@@ -64,30 +62,26 @@ def classify_zone_reaction_v2(
     if expected not in {"long", "short"}:
         return reaction("far", None, touched, last, [], 0.0)
 
-    body = candle_body(last)
-    avg_body = average_body(candles, config.zone_reaction_v2_reject_avg_body_period)
-    body_ratio = body / avg_body if avg_body > 0 else 0.0
-    # Persist the exact rolling baseline used by the runtime decision so a
-    # future trade report does not need to reconstruct it from mutable candles.
-    body_strength_metadata = {
-        "reaction_avg_body": round(avg_body, 5),
-        "reaction_body_avg_ratio": round(body_ratio, 4),
+    average_period = max(config.zone_reaction_v2_reject_avg_body_period, 1)
+    baseline_candles = candles[:-1][-average_period:]
+    baseline_ready = len(baseline_candles) == average_period
+    avg_body = average_body(baseline_candles, average_period) if baseline_ready else 0.0
+    rejection_size = close - low if expected == "long" else high - close
+    rejection_ratio = rejection_size / avg_body if avg_body > 0 else 0.0
+    recovery_threshold = config.zone_reaction_v2_reject_recovery_min_avg_body_ratio
+    recovery_metadata = {
+        "reaction_trigger_method": "close_extreme_recovery",
+        "reaction_rejection_size": round(rejection_size, 5),
+        "reaction_rejection_avg_ratio": round(rejection_ratio, 4),
+        "reaction_rejection_min_ratio": recovery_threshold,
+        "reaction_avg_body": round(avg_body, 5) if baseline_ready else None,
+        "reaction_avg_body_period": average_period,
+        "reaction_avg_body_sample_count": len(baseline_candles),
+        "reaction_avg_body_ready": baseline_ready,
     }
-    strong_reject = body >= avg_body * config.zone_reaction_v2_reject_body_min_ratio
+    strong_recovery = baseline_ready and rejection_ratio >= recovery_threshold
     fakeout_limit = atr * config.zone_reaction_v2_fakeout_max_atr
     buffer = atr * config.breakout_buffer_atr_multiplier
-    previous_avg_body = average_body(candles[:-1], config.zone_reaction_v2_reject_avg_body_period)
-    confirmed_wick_reject = confirmed_wick_rejection(zone, candles, previous_avg_body, config, expected)
-    if confirmed_wick_reject is not None:
-        return reaction_v2(
-            "reject",
-            expected,
-            True,
-            last,
-            [f"Confirmed {expected} wick rejection from zone."],
-            buffer,
-            {**confirmed_wick_reject, **body_strength_metadata},
-        )
 
     if expected == "long":
         penetration = max(zone_low - low, 0.0)
@@ -105,47 +99,15 @@ def classify_zone_reaction_v2(
                     "fakeout_reaction_depth_atr": round(reaction_depth / max(atr, 0.00001), 4),
                 },
             )
-        if touched and close > zone_high and close > open_ and strong_reject:
+        if touched and close > zone_high and strong_recovery:
             return reaction_v2(
                 "reject",
                 "long",
                 True,
                 last,
-                ["Strong bullish rejection from zone."],
+                ["Bullish close-to-low recovery rejected the zone."],
                 buffer,
-                body_strength_metadata,
-            )
-        pinbar_metadata = (
-            pinbar_rejection_metadata(
-                last, "long",
-                config.zone_reaction_v2_reject_pinbar_wick_body_ratio,
-                config.zone_reaction_v2_reject_pinbar_min_wick_ratio,
-                avg_body=avg_body,
-                body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
-            )
-            if config.zone_reaction_v2_reject_pinbar_enabled
-            else None
-        )
-        if low <= zone_high and close > zone_high and pinbar_metadata is not None:
-            return reaction_v2(
-                "reject",
-                "long",
-                True,
-                last,
-                ["Bullish pinbar rejection at zone."],
-                buffer,
-                {**body_strength_metadata, **pinbar_metadata},
-            )
-        wick_reject = wick_rejection_metadata(last, "long", zone_low, zone_high, avg_body, config)
-        if wick_reject is not None:
-            return reaction_v2(
-                "waiting_bos",
-                "long",
-                True,
-                last,
-                ["Bullish wick rejection needs confirmation."],
-                buffer,
-                wick_reject,
+                recovery_metadata,
             )
     else:
         penetration = max(high - zone_high, 0.0)
@@ -163,47 +125,15 @@ def classify_zone_reaction_v2(
                     "fakeout_reaction_depth_atr": round(reaction_depth / max(atr, 0.00001), 4),
                 },
             )
-        if touched and close < zone_low and close < open_ and strong_reject:
+        if touched and close < zone_low and strong_recovery:
             return reaction_v2(
                 "reject",
                 "short",
                 True,
                 last,
-                ["Strong bearish rejection from zone."],
+                ["Bearish high-to-close recovery rejected the zone."],
                 buffer,
-                body_strength_metadata,
-            )
-        pinbar_metadata = (
-            pinbar_rejection_metadata(
-                last, "short",
-                config.zone_reaction_v2_reject_pinbar_wick_body_ratio,
-                config.zone_reaction_v2_reject_pinbar_min_wick_ratio,
-                avg_body=avg_body,
-                body_min_ratio=config.zone_reaction_v2_reject_body_min_ratio,
-            )
-            if config.zone_reaction_v2_reject_pinbar_enabled
-            else None
-        )
-        if high >= zone_low and close < zone_low and pinbar_metadata is not None:
-            return reaction_v2(
-                "reject",
-                "short",
-                True,
-                last,
-                ["Bearish pinbar rejection at zone."],
-                buffer,
-                {**body_strength_metadata, **pinbar_metadata},
-            )
-        wick_reject = wick_rejection_metadata(last, "short", zone_low, zone_high, avg_body, config)
-        if wick_reject is not None:
-            return reaction_v2(
-                "waiting_bos",
-                "short",
-                True,
-                last,
-                ["Bearish wick rejection needs confirmation."],
-                buffer,
-                wick_reject,
+                recovery_metadata,
             )
 
     closed_through_zone = (
@@ -232,7 +162,7 @@ def classify_zone_reaction_v2(
             last,
             ["Slow reaction inside zone; waiting for BOS/CHOCH."],
             buffer,
-            internal_window_metadata,
+            {**internal_window_metadata, **recovery_metadata},
         )
     if touched:
         return reaction_v2(
@@ -242,7 +172,7 @@ def classify_zone_reaction_v2(
             last,
             ["Touched zone; waiting for stronger M15 reaction."],
             buffer,
-            internal_window_metadata,
+            {**internal_window_metadata, **recovery_metadata},
         )
     # Surface zones the price is closing in on so the UI state machine can show
     # an APPROACHING step before the first touch. Distance is measured from the
@@ -260,100 +190,6 @@ def classify_zone_reaction_v2(
             {"approach_distance_atr": round(distance / max(atr, 0.00001), 4)},
         )
     return reaction_v2("far", expected, False, last, [], buffer)
-
-
-def confirmed_wick_rejection(
-    zone: dict[str, Any],
-    candles: list[dict[str, Any]],
-    avg_body: float,
-    config: StrategyConfig,
-    expected: str,
-) -> dict[str, Any] | None:
-    if len(candles) < 2:
-        return None
-    previous = candles[-2]
-    current = candles[-1]
-    zone_low = float(zone["price_low"])
-    zone_high = float(zone["price_high"])
-    previous_wick = wick_rejection_metadata(previous, expected, zone_low, zone_high, avg_body, config)
-    if previous_wick is None:
-        return None
-
-    current_open = float(current["open"])
-    current_close = float(current["close"])
-    if expected == "short":
-        if current_close >= current_open or current_close >= float(previous["low"]):
-            return None
-    else:
-        if current_close <= current_open or current_close <= float(previous["high"]):
-            return None
-
-    return {
-        **previous_wick,
-        "wick_reject_confirmed": True,
-        # The rejection happened on the previous candle; keep its own rolling
-        # baseline so UI/report strength does not accidentally use the smaller
-        # confirmation candle body.
-        "wick_reject_avg_body": round(avg_body, 5),
-        "wick_reject_rejection_avg_ratio": round(
-            float(previous_wick["wick_reject_rejection_size"]) / avg_body,
-            4,
-        )
-        if avg_body > 0
-        else None,
-        "wick_reject_confirmation_time": current.get("time"),
-        "wick_reject_confirmation_close": current_close,
-    }
-
-
-def wick_rejection_metadata(
-    candle: dict[str, Any],
-    direction: str,
-    zone_low: float,
-    zone_high: float,
-    avg_body: float,
-    config: StrategyConfig,
-) -> dict[str, Any] | None:
-    high = float(candle["high"])
-    low = float(candle["low"])
-    open_ = float(candle["open"])
-    close = float(candle["close"])
-    full_range = high - low
-    if full_range <= 0:
-        return None
-    body = abs(close - open_)
-    body_floor = avg_body * config.zone_reaction_v2_reject_body_min_ratio
-
-    if direction == "short":
-        touched = high >= zone_low and low <= zone_high
-        upper_wick = high - max(open_, close)
-        rejection_size = high - close
-        if not (touched and close < zone_low and close > open_ and rejection_size >= body_floor):
-            return None
-        return {
-            "wick_reject": True,
-            "wick_reject_direction": "short",
-            "wick_reject_candle_time": candle.get("time"),
-            "wick_reject_wick_size": round(upper_wick, 5),
-            "wick_reject_body": round(body, 5),
-            "wick_reject_rejection_size": round(rejection_size, 5),
-            "wick_reject_wick_ratio": round(upper_wick / full_range, 4),
-        }
-
-    touched = high >= zone_low and low <= zone_high
-    lower_wick = min(open_, close) - low
-    rejection_size = close - low
-    if not (touched and close > zone_high and close < open_ and rejection_size >= body_floor):
-        return None
-    return {
-        "wick_reject": True,
-        "wick_reject_direction": "long",
-        "wick_reject_candle_time": candle.get("time"),
-        "wick_reject_wick_size": round(lower_wick, 5),
-        "wick_reject_body": round(body, 5),
-        "wick_reject_rejection_size": round(rejection_size, 5),
-        "wick_reject_wick_ratio": round(lower_wick / full_range, 4),
-    }
 
 
 def classify_consolidation_reaction_v2(
@@ -592,6 +428,51 @@ def internal_reject_gate_failure(
 # Evaluation: given a classified reaction, should we trade?
 # ---------------------------------------------------------------------------
 
+def directional_h1_touch_metadata(
+    *,
+    zone: dict[str, Any],
+    direction: str,
+    context_candles: list[dict[str, Any]],
+    as_of: str,
+    config: StrategyConfig,
+) -> dict[str, Any]:
+    lookback = config.zone_reaction_v2_reject_h1_touch_lookback_bars
+    signal_open = parse_utc_datetime(as_of)
+    evaluated_at = signal_open + timeframe_delta(config.timeframe) if signal_open else None
+    eligible: list[dict[str, Any]] = []
+    for candle in context_candles:
+        candle_open = parse_utc_datetime(candle.get("time"))
+        if evaluated_at is None or candle_open is None:
+            continue
+        if candle_open + timeframe_delta("H1") <= evaluated_at:
+            eligible.append(candle)
+    recent = eligible[-lookback:]
+    zone_low = float(zone["price_low"])
+    zone_high = float(zone["price_high"])
+    matched: dict[str, Any] | None = None
+    for candle in reversed(recent):
+        touches = float(candle["high"]) >= zone_low and float(candle["low"]) <= zone_high
+        directional = (
+            float(candle["close"]) > float(candle["open"])
+            if direction == "long"
+            else float(candle["close"]) < float(candle["open"])
+        )
+        if touches and directional:
+            matched = candle
+            break
+    return {
+        "h1_directional_touch_required": config.zone_reaction_v2_reject_h1_touch_required,
+        "h1_directional_touch_passed": matched is not None,
+        "h1_touch_lookback_bars": lookback,
+        "h1_touch_sample_count": len(recent),
+        "h1_touch_evaluated_at": evaluated_at.isoformat() if evaluated_at else None,
+        "h1_touch_candle_time": matched.get("time") if matched else None,
+        "h1_touch_candle_open": matched.get("open") if matched else None,
+        "h1_touch_candle_high": matched.get("high") if matched else None,
+        "h1_touch_candle_low": matched.get("low") if matched else None,
+        "h1_touch_candle_close": matched.get("close") if matched else None,
+    }
+
 def evaluate_zone_reaction_v2(
     symbol: str,
     zone: dict[str, Any],
@@ -609,6 +490,7 @@ def evaluate_zone_reaction_v2(
     macro_trend: str = "unknown",
     stop_fallback_atr: float | None = None,
     stop_fallback_atr_timeframe: str | None = None,
+    context_candles: list[dict[str, Any]] | None = None,
 ) -> list[SetupCandidate]:
     if not config.zone_reaction_v2_enabled:
         return []
@@ -684,6 +566,24 @@ def evaluate_zone_reaction_v2(
         context_bypass=context_bypass,
         zone_type=str(zone.get("type", "")),
     )
+    h1_touch_metadata = directional_h1_touch_metadata(
+        zone=zone,
+        direction=direction,
+        context_candles=context_candles or [],
+        as_of=as_of,
+        config=config,
+    )
+    if (
+        config.zone_reaction_v2_reject_h1_touch_required
+        and reaction.state in {"reject", "internal_reject"}
+        and not h1_touch_metadata["h1_directional_touch_passed"]
+    ):
+        if status != "blocked":
+            status = "waiting_confirmation"
+        reasons.append(
+            "No closed H1 candle both touched this zone and matched the trade direction "
+            f"within the last {config.zone_reaction_v2_reject_h1_touch_lookback_bars} H1 bars."
+        )
     level_metadata: dict[str, Any] = {}
     entry, stop, take_profit, rr = compute_zone_reaction_v2_levels(
         zone,
@@ -772,6 +672,7 @@ def evaluate_zone_reaction_v2(
             "h1_regime": regime,
             "macro_trend": macro_trend,
             "context_bypass": context_bypass,
+            **h1_touch_metadata,
             "trade_modes": trade_modes,
             "overlays": sorted(overlays),
             "trigger_types": trigger_types,

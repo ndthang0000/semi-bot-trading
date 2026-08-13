@@ -365,7 +365,7 @@ def _trigger_quality(
     required_ratio = (
         config.strategy.zone_reaction_v2_internal_reject_body_min_ratio
         if reaction == "internal_reject"
-        else config.strategy.zone_reaction_v2_reject_body_min_ratio
+        else config.strategy.zone_reaction_v2_reject_recovery_min_avg_body_ratio
     )
     required_body = average * required_ratio if average is not None else None
     expected_bullish = side in {"long", "buy"}
@@ -392,10 +392,14 @@ def _trigger_quality(
                 rejection_size = high - close
     wick_body_ratio = wick / body if wick is not None and body is not None and body > 0 else None
     wick_range_ratio = wick / full_range if wick is not None and full_range is not None and full_range > 0 else None
-    wick_body_min = config.strategy.zone_reaction_v2_reject_pinbar_wick_body_ratio
-    wick_range_min = config.strategy.zone_reaction_v2_reject_pinbar_min_wick_ratio
+    # Legacy trades may still carry the removed pinbar trigger metadata. Keep
+    # their historical report readable without reintroducing pinbar branching
+    # into the runtime strategy.
+    wick_body_min = 2.0 if is_pinbar else None
+    wick_range_min = 0.55 if is_pinbar else None
 
-    if is_pinbar:
+    unified_recovery = metadata.get("reaction_trigger_method") == "close_extreme_recovery"
+    if unified_recovery or is_pinbar:
         strength_ratio = _float(metadata.get("reaction_rejection_avg_ratio"))
         if strength_ratio is None:
             strength_ratio = rejection_size / average if rejection_size is not None and average else None
@@ -403,10 +407,17 @@ def _trigger_quality(
         strength_gate_passed = (
             strength_ratio is not None
             and strength_ratio >= required_ratio
-            and wick_body_ratio is not None
-            and wick_body_ratio >= wick_body_min
-            and wick_range_ratio is not None
-            and wick_range_ratio >= wick_range_min
+            and (
+                unified_recovery
+                or (
+                    wick_body_ratio is not None
+                    and wick_body_min is not None
+                    and wick_body_ratio >= wick_body_min
+                    and wick_range_ratio is not None
+                    and wick_range_min is not None
+                    and wick_range_ratio >= wick_range_min
+                )
+            )
         )
         strength_label = "Recovery / average"
     else:
@@ -426,6 +437,8 @@ def _trigger_quality(
 
     if reaction == "internal_reject":
         rule = "Internal reject: directional body >= rolling M15 average × configured ratio; close may remain inside zone."
+    elif unified_recovery:
+        rule = "Reject: close-to-extreme recovery >= rolling average body × configured ratio, touch zone, then close beyond the zone edge."
     elif metadata.get("wick_reject_confirmed"):
         rule = "Confirmed wick reject: prior wick rejection plus a directional confirmation candle."
     elif is_pinbar:
@@ -445,13 +458,13 @@ def _trigger_quality(
         "body_average_ratio": ratio, "body_min_ratio": required_ratio,
         "required_body": required_body, "direction_aligned": direction_aligned,
         "body_gate_passed": body_gate_passed,
-        "validation_method": "pinbar_reject" if is_pinbar else "directional_body_reject",
+        "validation_method": "close_extreme_recovery" if unified_recovery else "pinbar_reject" if is_pinbar else "directional_body_reject",
         "strength_label": strength_label, "strength_ratio": strength_ratio,
         "required_move": required_move, "strength_gate_passed": strength_gate_passed,
         "wick_body_ratio": wick_body_ratio, "wick_body_min_ratio": wick_body_min,
-        "wick_body_gate_passed": wick_body_ratio >= wick_body_min if wick_body_ratio is not None else None,
+        "wick_body_gate_passed": wick_body_ratio >= wick_body_min if wick_body_ratio is not None and wick_body_min is not None else None,
         "wick_range_ratio": wick_range_ratio, "wick_range_min_ratio": wick_range_min,
-        "wick_range_gate_passed": wick_range_ratio >= wick_range_min if wick_range_ratio is not None else None,
+        "wick_range_gate_passed": wick_range_ratio >= wick_range_min if wick_range_ratio is not None and wick_range_min is not None else None,
         "touches_zone": touches_zone, "reclaim_passed": reclaim_passed,
         "expected_direction": "bullish" if expected_bullish else "bearish",
         "rule": rule,

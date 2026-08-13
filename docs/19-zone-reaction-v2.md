@@ -44,8 +44,10 @@ Zone Reaction V2 khong detect breakout va khong tao state breakout/retest. Toan 
 enabled = true
 allowed_reactions = ["reject", "internal_reject"]
 fakeout_max_atr = 0.5
-reject_body_min_ratio = 1.5
+reject_recovery_min_avg_body_ratio = 1.75
 reject_avg_body_period = 20
+reject_h1_touch_required = false
+reject_h1_touch_lookback_bars = 3
 slow_min_bars = 3
 slow_max_bars = 8
 slow_body_max_ratio = 0.8
@@ -117,20 +119,31 @@ Phase hien tai la reject-family. Chi `reject` va `internal_reject` duoc phep tao
 
 `fakeout`, `waiting_bos` va cac reaction reject-family khac van co the duoc detect/ghi metadata de debug hoac research, nhung khong duoc tao trade trong `zone_reaction_v2` khi chung khong nam trong `allowed_reactions`.
 
-Strong body reject phai dung mau nen theo huong entry: long reject can bullish candle (`close > open`), short reject can bearish candle (`close < open`). Neu candle cham resistance/support co wick reject nhung dong nguoc mau, setup khong duoc promote thanh strong reject; no chuyen sang `waiting_bos` voi metadata `wick_reject=true`. Candle ke tiep moi duoc promote thanh `reject` khi xac nhan cung huong: short can bearish candle pha low cua wick candle, long can bullish candle pha high cua wick candle.
+Classic `reject` chi con mot cong thuc chung, khong phan biet strong-body,
+pinbar hay wick-confirmation:
 
-Moi trade `reject` va `internal_reject` luu snapshot body-strength trong candidate/order metadata:
+```text
+long:  rejection_size = close - low
+short: rejection_size = high - close
+```
 
-- `reaction_avg_body`: average body M15 dung tai thoi diem runtime.
-- `reaction_body_avg_ratio`: `reaction_body / reaction_avg_body`.
-- `reaction_body` luon la than nen that `abs(close - open)`, ke ca voi pinbar.
-- Pinbar luu them `reaction_trigger_method = pinbar`,
-  `reaction_rejection_size` (khoang cach tu wick extreme ve close), va
-  `reaction_rejection_avg_ratio = reaction_rejection_size / reaction_avg_body`.
-  Khong ghi de rejection size vao `reaction_body`, de giu cung mot semantics
-  cho report va thong ke giua strong-body reject, pinbar va internal reject.
+`reaction_avg_body` la trung binh `abs(close - open)` cua dung 20 nen M15 dung
+truoc trigger; trigger khong duoc tinh vao baseline. Setup chi thanh `reject` khi:
 
-Snapshot nay giu report va research dung voi quyet dinh runtime ngay ca khi bang candle sau nay duoc import lai. Trade cu khong co hai field van duoc report reconstruct tu historical M15 candles.
+- trigger touch zone va close reclaim ra ngoai canh hop le;
+- `rejection_size >= reject_recovery_min_avg_body_ratio * reaction_avg_body`;
+- co du 20 nen baseline;
+- neu `reject_h1_touch_required = true`, trong
+  `reject_h1_touch_lookback_bars` nen H1 da dong gan nhat phai co it nhat mot
+  nen vua touch zone vua dung mau: xanh cho LONG, do cho SHORT. Cau hinh LIVE
+  hien tai de `false`, nen H1 chi con trong metadata va khong block setup.
+
+Mau cua chinh nen M15 trigger khong con la dieu kien. Human zone co the bypass
+context gate; H1 directional-touch chi la hard gate khi config duoc bat.
+
+Metadata moi gom `reaction_trigger_method = close_extreme_recovery`,
+`reaction_rejection_size`, `reaction_rejection_avg_ratio`, baseline sample count,
+va snapshot cua H1 touch candle. Report van doc metadata legacy cua trade cu.
 
 Impulse reject khong duoc chase market neu gia da dong cua qua xa zone. Voi `reject`:
 
@@ -221,7 +234,7 @@ Dieu kien `internal_reject`:
 - Structure trigger (`BOS`/`CHOCH` cung huong entry) khong bat buoc cho SR zone khi `internal_reject_sr_requires_structure = false`; SR internal reject co the vao bang price action manh trong zone. FVG cung khong bat buoc structure theo `internal_reject_requires_structure = false`.
 - Co price action trigger cung huong entry: `engulfing`, `pinbar`, `marubozu`, `morning/evening star`, hoac `displacement`.
 - Structure trigger va price action duoc phep nam trong cung reaction window `internal_reject_watch_after_fvg_fill_bars`, khong bat buoc cung mot nen M15. Tuy nhien it nhat mot trigger phai xuat hien o nen signal hien tai de tranh reuse tin hieu cu.
-- Nen reaction phai co than cung huong entry va dat `internal_reject_body_min_ratio = 1.5` lan average body 20 nen M15, cung baseline voi classic reject. Pinbar than nho van duoc detect lam PA nhung khong duoc promote thanh internal reject neu body gate khong dat.
+- Nen reaction phai co than cung huong entry va dat `internal_reject_body_min_ratio = 1.5` lan average body 20 nen M15. Day la gate rieng cua `internal_reject`; classic `reject` dung cong thuc close-to-extreme recovery voi nguong config o tren.
 - SR va FVG deu phai fill it nhat `internal_reject_min_fill_ratio = 0.4` theo chieu rong zone. Support/bullish FVG do tu canh tren xuong reaction low; resistance/bearish FVG do tu canh duoi len reaction high. SR khong con dung penetration/ATR, tranh cung mot nguong ATR mang y nghia khac nhau tren zone hep va zone rong.
 - FVG da `mitigated` van duoc quan sat them `internal_reject_watch_after_fvg_fill_bars = 8` nen M15 sau fill neu chua expired.
 

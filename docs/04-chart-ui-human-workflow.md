@@ -191,7 +191,7 @@ Context strip có card `M15 Trigger`, dùng cùng snapshot với strategy:
   chart nhưng không được hiển thị như một trigger đã xác nhận. Badge `Closed`
   dùng giờ đóng nến; `candle_time` trong strategy metadata vẫn là giờ mở nến.
 - `Avg body (20)` là trung bình thân nến rolling mà Zone Reaction V2 sử dụng.
-- Trigger strong-body và internal-reject hiển thị body cùng `body / avg20`.
+- Classic reject hiển thị close-to-extreme recovery cùng `recovery / avg20`; internal-reject vẫn hiển thị directional body cùng `body / avg20`.
 - Trigger pinbar/confirmed-wick dùng rejection size (từ cực trị wick tới close)
   làm độ mạnh chính và hiển thị `rejection / avg20`; raw body của nến xác nhận
   vẫn là context phụ.

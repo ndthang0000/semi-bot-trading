@@ -107,11 +107,10 @@ CONFIG = StrategyConfig(
     zone_reaction_v2_enabled=True,
     zone_reaction_v2_allowed_reactions=("reject", "internal_reject"),
     zone_reaction_v2_fakeout_max_atr=0.5,
-    zone_reaction_v2_reject_body_min_ratio=1.5,
-    zone_reaction_v2_reject_avg_body_period=20,
-    zone_reaction_v2_reject_pinbar_enabled=True,
-    zone_reaction_v2_reject_pinbar_wick_body_ratio=2.0,
-    zone_reaction_v2_reject_pinbar_min_wick_ratio=0.55,
+    zone_reaction_v2_reject_recovery_min_avg_body_ratio=2.0,
+    zone_reaction_v2_reject_avg_body_period=2,
+    zone_reaction_v2_reject_h1_touch_required=False,
+    zone_reaction_v2_reject_h1_touch_lookback_bars=3,
     zone_reaction_v2_slow_min_bars=3,
     zone_reaction_v2_slow_max_bars=8,
     zone_reaction_v2_slow_body_max_ratio=0.8,
@@ -174,7 +173,7 @@ class StrategyTest(unittest.TestCase):
         self.assertFalse(zone_eligible_for_zone_reaction_v2(draft, candles, CONFIG))
         self.assertFalse(zone_eligible_for_sr_breakout_v1(draft, candles, CONFIG))
 
-    def test_bearish_strong_reject_requires_bearish_candle_body(self) -> None:
+    def test_bearish_reject_accepts_bullish_candle_when_high_to_close_recovery_is_strong(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),
             candle("00:15", 4201, 4203, 4200, 4202),
@@ -188,11 +187,11 @@ class StrategyTest(unittest.TestCase):
             config=CONFIG,
         )
 
-        self.assertNotEqual("reject", reaction.state)
-        self.assertEqual("waiting_bos", reaction.state)
-        self.assertTrue(reaction.metadata.get("wick_reject"))
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("close_extreme_recovery", reaction.metadata["reaction_trigger_method"])
+        self.assertGreaterEqual(reaction.metadata["reaction_rejection_avg_ratio"], 2.0)
 
-    def test_bearish_wick_reject_confirms_after_next_bearish_break(self) -> None:
+    def test_reject_does_not_reuse_previous_wick_confirmation(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),
             candle("00:15", 4201, 4203, 4200, 4202),
@@ -207,11 +206,8 @@ class StrategyTest(unittest.TestCase):
             config=CONFIG,
         )
 
-        self.assertEqual("reject", reaction.state)
-        self.assertEqual("short", reaction.direction)
-        self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
-        self.assertIn("wick_reject_avg_body", reaction.metadata)
-        self.assertIn("wick_reject_rejection_avg_ratio", reaction.metadata)
+        self.assertEqual("far", reaction.state)
+        self.assertNotIn("wick_reject_confirmed", reaction.metadata)
 
     def test_bearish_strong_reject_accepts_bearish_candle_body(self) -> None:
         candles = [
@@ -230,7 +226,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("reject", reaction.state)
         self.assertEqual("short", reaction.direction)
 
-    def test_bearish_pinbar_persists_rejection_strength_without_overwriting_body(self) -> None:
+    def test_bearish_recovery_below_two_average_bodies_waits(self) -> None:
         candles = [
             candle("00:00", 4070.0, 4077.0, 4069.0, 4076.0),
             candle("00:15", 4070.0, 4078.0, 4069.0, 4077.0),
@@ -244,9 +240,9 @@ class StrategyTest(unittest.TestCase):
             config=CONFIG,
         )
 
-        average = (6.0 + 7.0 + 0.417) / 3
-        self.assertEqual("reject", reaction.state)
-        self.assertEqual("pinbar", reaction.metadata["reaction_trigger_method"])
+        average = (6.0 + 7.0) / 2
+        self.assertEqual("waiting_bos", reaction.state)
+        self.assertEqual("close_extreme_recovery", reaction.metadata["reaction_trigger_method"])
         self.assertAlmostEqual(0.417, reaction.metadata["reaction_body"], places=5)
         self.assertAlmostEqual(7.208, reaction.metadata["reaction_rejection_size"], places=5)
         self.assertAlmostEqual(
@@ -255,7 +251,7 @@ class StrategyTest(unittest.TestCase):
             places=4,
         )
 
-    def test_bullish_pinbar_persists_rejection_strength_without_overwriting_body(self) -> None:
+    def test_bullish_recovery_uses_close_minus_low(self) -> None:
         candles = [
             candle("00:00", 92.0, 93.0, 89.0, 90.0),
             candle("00:15", 91.0, 92.0, 88.0, 89.0),
@@ -269,9 +265,9 @@ class StrategyTest(unittest.TestCase):
             config=CONFIG,
         )
 
-        average = (2.0 + 2.0 + 0.4) / 3
+        average = 2.0
         self.assertEqual("reject", reaction.state)
-        self.assertEqual("pinbar", reaction.metadata["reaction_trigger_method"])
+        self.assertEqual("close_extreme_recovery", reaction.metadata["reaction_trigger_method"])
         self.assertAlmostEqual(0.4, reaction.metadata["reaction_body"], places=5)
         self.assertAlmostEqual(5.1, reaction.metadata["reaction_rejection_size"], places=5)
         self.assertAlmostEqual(
@@ -280,7 +276,7 @@ class StrategyTest(unittest.TestCase):
             places=4,
         )
 
-    def test_bullish_strong_reject_requires_bullish_candle_body(self) -> None:
+    def test_bullish_reject_accepts_bearish_candle_when_close_to_low_recovery_is_strong(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),
             candle("00:15", 4201, 4203, 4200, 4202),
@@ -294,11 +290,10 @@ class StrategyTest(unittest.TestCase):
             config=CONFIG,
         )
 
-        self.assertNotEqual("reject", reaction.state)
-        self.assertEqual("waiting_bos", reaction.state)
-        self.assertTrue(reaction.metadata.get("wick_reject"))
+        self.assertEqual("reject", reaction.state)
+        self.assertEqual("close_extreme_recovery", reaction.metadata["reaction_trigger_method"])
 
-    def test_bullish_wick_reject_confirms_after_next_bullish_break(self) -> None:
+    def test_bullish_reject_is_classified_from_current_candle_only(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),
             candle("00:15", 4201, 4203, 4200, 4202),
@@ -316,10 +311,8 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("reject", reaction.state)
         self.assertEqual("long", reaction.direction)
         self.assertIn("reaction_avg_body", reaction.metadata)
-        self.assertIn("reaction_body_avg_ratio", reaction.metadata)
-        self.assertTrue(reaction.metadata.get("wick_reject_confirmed"))
-        self.assertIn("wick_reject_avg_body", reaction.metadata)
-        self.assertIn("wick_reject_rejection_avg_ratio", reaction.metadata)
+        self.assertIn("reaction_rejection_avg_ratio", reaction.metadata)
+        self.assertNotIn("wick_reject_confirmed", reaction.metadata)
 
     def test_zone_reaction_v2_carries_recent_reject_after_price_leaves_zone(self) -> None:
         candles = [
@@ -343,7 +336,7 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual(1, len(candidates))
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("reject", candidates[0]["zone_reaction_state"])
-        self.assertEqual("2026-01-01T00:45:00+00:00", candidates[0]["metadata"]["as_of"])
+        self.assertEqual("2026-01-01T00:30:00+00:00", candidates[0]["metadata"]["as_of"])
         self.assertTrue(candidates[0]["metadata"]["carried_forward"])
         self.assertEqual("2026-01-01T01:00:00+00:00", candidates[0]["metadata"]["carried_forward_current_as_of"])
 
@@ -509,7 +502,7 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual([], candidates)
 
-    def test_bullish_strong_reject_accepts_bullish_candle_body(self) -> None:
+    def test_bullish_reject_persists_recovery_baseline_without_trigger_body(self) -> None:
         candles = [
             candle("00:00", 4200, 4202, 4199, 4201),
             candle("00:15", 4201, 4203, 4200, 4202),
@@ -525,11 +518,11 @@ class StrategyTest(unittest.TestCase):
 
         self.assertEqual("reject", reaction.state)
         self.assertEqual("long", reaction.direction)
-        expected_average = (1.0 + 1.0 + 11.003) / 3
+        expected_average = 1.0
         self.assertAlmostEqual(expected_average, reaction.metadata["reaction_avg_body"], places=5)
         self.assertAlmostEqual(
-            11.003 / expected_average,
-            reaction.metadata["reaction_body_avg_ratio"],
+            (4201.003 - 4189.754) / expected_average,
+            reaction.metadata["reaction_rejection_avg_ratio"],
             places=4,
         )
 
@@ -576,7 +569,83 @@ class StrategyTest(unittest.TestCase):
         self.assertEqual("eligible", candidates[0]["status"])
         self.assertEqual("reject", candidates[0]["zone_reaction_state"])
         self.assertIn("reaction_avg_body", candidates[0]["metadata"])
-        self.assertIn("reaction_body_avg_ratio", candidates[0]["metadata"])
+        self.assertIn("reaction_rejection_avg_ratio", candidates[0]["metadata"])
+
+    def test_reject_requires_directional_h1_touch_when_enabled(self) -> None:
+        config = replace(
+            CONFIG,
+            zone_reaction_v2_reject_h1_touch_required=True,
+            zone_reaction_v2_reject_h1_touch_lookback_bars=3,
+        )
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        bearish_h1 = [candle("00:00", 112, 113, 104, 108)]
+        bearish_h1[0]["time"] = "2025-12-31T23:00:00+00:00"
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending"),
+            candles,
+            [],
+            config,
+            context_candles=bearish_h1,
+        )
+
+        self.assertEqual("waiting_confirmation", candidates[0]["status"])
+        self.assertFalse(candidates[0]["metadata"]["h1_directional_touch_passed"])
+
+    def test_reject_accepts_directional_h1_touch_within_lookback(self) -> None:
+        config = replace(
+            CONFIG,
+            zone_reaction_v2_reject_h1_touch_required=True,
+            zone_reaction_v2_reject_h1_touch_lookback_bars=3,
+        )
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 110, 105.5, 109.5),
+        ]
+        support = zone("support", "bullish", 105, 107)
+        bullish_h1 = [candle("00:00", 104, 110, 103, 109)]
+        bullish_h1[0]["time"] = "2025-12-31T23:00:00+00:00"
+
+        candidates = build_setup_candidates(
+            "XAUUSD",
+            [support],
+            contexts("bullish", "trending"),
+            candles,
+            [],
+            config,
+            context_candles=bullish_h1,
+        )
+
+        self.assertEqual("eligible", candidates[0]["status"])
+        self.assertTrue(candidates[0]["metadata"]["h1_directional_touch_passed"])
+        self.assertEqual(bullish_h1[0]["time"], candidates[0]["metadata"]["h1_touch_candle_time"])
+
+    def test_reject_waits_until_full_m15_body_baseline_is_available(self) -> None:
+        config = replace(CONFIG, zone_reaction_v2_reject_avg_body_period=20)
+        candles = [
+            candle("00:00", 110, 112, 108, 111),
+            candle("00:15", 111, 113, 109, 112),
+            candle("00:30", 106, 120, 105.5, 119.5),
+        ]
+
+        reaction = classify_zone_reaction_v2(
+            zone("support", "bullish", 105, 107),
+            candles,
+            atr=5,
+            config=config,
+        )
+
+        self.assertNotEqual("reject", reaction.state)
+        self.assertFalse(reaction.metadata["reaction_avg_body_ready"])
+        self.assertEqual(2, reaction.metadata["reaction_avg_body_sample_count"])
 
     def test_active_sr_zone_without_expiry_is_tradeable(self) -> None:
         candles = [

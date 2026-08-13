@@ -185,7 +185,7 @@ def build_m15_signal_snapshot(
     reaction_body_ratio = _optional_float(metadata.get("reaction_body_avg_ratio"))
     rejection_size = _optional_float(metadata.get("reaction_rejection_size"))
     rejection_ratio = _optional_float(metadata.get("reaction_rejection_avg_ratio"))
-    if trigger_method == "pinbar":
+    if trigger_method in {"pinbar", "close_extreme_recovery"}:
         strength_size = rejection_size
         strength_ratio = rejection_ratio
     elif trigger_method == "confirmed_wick":

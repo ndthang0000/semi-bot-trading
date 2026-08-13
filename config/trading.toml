@@ -134,12 +134,10 @@ max_waiting = 5
 enabled = true
 allowed_reactions = ["reject", "internal_reject"]
 fakeout_max_atr = 0.5
-reject_body_min_ratio = 1.5
+reject_recovery_min_avg_body_ratio = 1.75
 reject_avg_body_period = 20
-# Pinbar at zone edge counts as reject (close doesn't need to exit the full zone)
-reject_pinbar_enabled = true
-reject_pinbar_wick_body_ratio = 2.0   # lower/upper wick >= 2x body
-reject_pinbar_min_wick_ratio = 0.55   # wick >= 55% of total candle range
+reject_h1_touch_required = false
+reject_h1_touch_lookback_bars = 3
 slow_min_bars = 3
 slow_max_bars = 8
 slow_body_max_ratio = 0.8

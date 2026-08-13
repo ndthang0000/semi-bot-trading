@@ -12,7 +12,6 @@ Internal layout:
 
 from .builder import build_setup_candidates
 from .helpers import (
-    _is_pinbar_reject,
     allowed_zone_types_for_playbooks,
     average_body,
     bias_to_direction,
@@ -26,7 +25,6 @@ from .helpers import (
     inside_zone_close_position,
     internal_reject_window_metadata,
     latest_range,
-    pinbar_rejection_metadata,
     parse_overlays,
     playbook_allowed,
     parse_utc_datetime,
@@ -98,7 +96,7 @@ __all__ = [
     "ReactionResult", "SetupCandidate",
     # helpers
     "allowed_zone_types_for_playbooks", "playbook_allowed",
-    "candle_body", "average_body", "_is_pinbar_reject", "pinbar_rejection_metadata",
+    "candle_body", "average_body",
     "chart_candles_to_slices", "latest_range",
     "zone_trade_modes", "zone_has_explicit_trade_mode", "zone_is_human_thesis", "zone_allows_breakout",
     "zone_trade_disabled_after_sweep", "zone_eligible_for_zone_reaction_v2",
