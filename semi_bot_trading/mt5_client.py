@@ -35,6 +35,24 @@ def mt5_server_timestamp_to_utc(timestamp: int | float, server_utc_offset_hours:
     return encoded_wall_time - timedelta(hours=offset)
 
 
+def utc_datetime_to_mt5_server_time(
+    value: datetime,
+    server_utc_offset_hours: float = 0.0,
+) -> datetime:
+    """Encode a real UTC boundary as the broker wall clock expected by MT5.
+
+    This is the inverse of :func:`mt5_server_timestamp_to_utc`. Some terminals
+    expose history epochs in broker-server wall time; their range filters use
+    that same clock. Offset zero intentionally leaves UTC brokers unchanged.
+    """
+    if value.tzinfo is None:
+        raise ValueError("MT5 history boundary must be timezone-aware")
+    offset = float(server_utc_offset_hours)
+    if not -24.0 < offset < 24.0:
+        raise ValueError(f"MT5 server UTC offset must be between -24 and 24 hours, got {offset}")
+    return value.astimezone(UTC) + timedelta(hours=offset)
+
+
 @dataclass(frozen=True)
 class MT5OrderRequest:
     broker_symbol: str
@@ -336,7 +354,10 @@ class MT5BrokerClient:
 
     def balance_change_since(self, start_utc: datetime) -> float:
         """Return all balance-changing deal components since an aware UTC time."""
-        deals = self.mt5.history_deals_get(start_utc, datetime.now(UTC))
+        offset = self.credentials.server_utc_offset_hours
+        history_start = utc_datetime_to_mt5_server_time(start_utc, offset)
+        history_end = utc_datetime_to_mt5_server_time(datetime.now(UTC), offset)
+        deals = self.mt5.history_deals_get(history_start, history_end)
         if deals is None:
             raise RuntimeError(f"MT5 history_deals_get failed: {self.mt5.last_error()}")
         return sum(

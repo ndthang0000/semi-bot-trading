@@ -10,6 +10,7 @@ from semi_bot_trading.mt5_client import (
     MT5Credentials,
     MT5OrderRequest,
     mt5_server_timestamp_to_utc,
+    utc_datetime_to_mt5_server_time,
 )
 
 
@@ -20,6 +21,38 @@ class MT5TimestampNormalizationTest(unittest.TestCase):
         actual_utc = mt5_server_timestamp_to_utc(encoded_ftmo_time, 3)
 
         self.assertEqual(datetime(2026, 7, 17, 12, 43, 4, tzinfo=UTC), actual_utc)
+
+    def test_history_boundary_adds_ftmo_server_offset(self) -> None:
+        real_utc = datetime(2026, 8, 13, 13, 40, 16, tzinfo=UTC)
+
+        actual = utc_datetime_to_mt5_server_time(real_utc, 3)
+
+        self.assertEqual(datetime(2026, 8, 13, 16, 40, 16, tzinfo=UTC), actual)
+
+    def test_history_boundary_keeps_exness_utc_unchanged(self) -> None:
+        real_utc = datetime(2026, 8, 13, 13, 40, 16, tzinfo=UTC)
+
+        actual = utc_datetime_to_mt5_server_time(real_utc, 0)
+
+        self.assertEqual(real_utc, actual)
+
+    def test_balance_history_query_uses_account_server_clock(self) -> None:
+        mt5 = MagicMock()
+        mt5.history_deals_get.return_value = []
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.credentials = MT5Credentials(123, "secret", "FTMO-Server3", server_utc_offset_hours=3)
+        start = datetime(2026, 8, 12, 22, 0, tzinfo=UTC)
+
+        client.balance_change_since(start)
+
+        history_start, history_end = mt5.history_deals_get.call_args.args
+        self.assertEqual(datetime(2026, 8, 13, 1, 0, tzinfo=UTC), history_start)
+        self.assertAlmostEqual(
+            3 * 60 * 60,
+            (history_end - datetime.now(UTC)).total_seconds(),
+            delta=2,
+        )
 
     def test_closed_deal_uses_configured_server_offset(self) -> None:
         encoded_ftmo_time = int(datetime(2026, 7, 17, 15, 43, 4, tzinfo=UTC).timestamp())

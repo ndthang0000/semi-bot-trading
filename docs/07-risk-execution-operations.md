@@ -435,8 +435,10 @@ account. The local project symbol remains `XAUUSD`.
 `MT5_SERVER_UTC_OFFSET_HOURS` defaults to `0`. Set it per worker when MT5
 history timestamps use broker wall time instead of UTC; for example, use `3`
 when the FTMO terminal is three hours ahead. The worker subtracts this offset
-before storing candle and deal-close timestamps. Recheck it when the broker's
-summer/winter server time changes.
+before storing candle and deal-close timestamps, and adds the same offset to
+UTC history-query boundaries. This keeps FTMO daily deal reconstruction on the
+broker clock while an Exness worker configured with `0` remains unchanged.
+Recheck it when the broker's summer/winter server time changes.
 
 `MT5_PATH` is optional for manual runs, but strongly recommended for Windows
 services on VPS because MetaTrader5 auto-discovery can fail in Session 0. Point
