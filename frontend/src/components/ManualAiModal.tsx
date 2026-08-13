@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight, Bot, Check, CheckCircle2, Copy, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { approveManualAiPlan, fetchManualAiWorkers, importManualAiPlans, type ManualAiPlan, type ManualAiWorker } from "../api/manualAi";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { useChartStore } from "../store/chartStore";
 
 type Props = { currentPrice: number | null; open: boolean; onChanged: () => void; onClose: () => void };
@@ -271,7 +272,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
                         type="button"
                         onClick={() => {
                           if (typeof currentPrice !== "number") return;
-                          void navigator.clipboard.writeText(currentPrice.toFixed(2))
+                          void copyTextToClipboard(currentPrice.toFixed(2))
                             .then(() => setCopiedCurrentPrice(true))
                             .catch(() => setError("Browser không cho phép copy current price."));
                         }}

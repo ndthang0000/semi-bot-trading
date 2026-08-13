@@ -13,6 +13,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
 import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
 import { isEditableHotkeyTarget } from "../lib/appHotkeys";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { toUnixTime } from "../lib/time";
 import { isMobileChartWidth, visibleChartBars } from "../lib/mobileChart";
 import { useChartStore } from "../store/chartStore";
@@ -465,7 +466,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setDrawError(null);
 
     if (drawingTool === "copy_price") {
-      void navigator.clipboard.writeText(point.price.toFixed(2)).then(() => {
+      void copyTextToClipboard(point.price.toFixed(2)).then(() => {
         setDrawingMessage(`Đã copy ${point.price.toFixed(2)}`);
         setDrawingTool("cursor");
         setCopyPriceGuide(null);
