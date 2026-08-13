@@ -36,6 +36,33 @@ class ReactionResult:
 
 
 @dataclass(frozen=True)
+class RecoveryMetrics:
+    size: float
+    ratio: float
+    average_body: float
+    period: int
+    sample_count: int
+    ready: bool
+    minimum_ratio: float
+
+    @property
+    def passed(self) -> bool:
+        return self.ready and self.average_body > 0 and self.ratio >= self.minimum_ratio
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "reaction_trigger_method": "close_extreme_recovery",
+            "reaction_rejection_size": round(self.size, 5),
+            "reaction_rejection_avg_ratio": round(self.ratio, 4),
+            "reaction_rejection_min_ratio": self.minimum_ratio,
+            "reaction_avg_body": round(self.average_body, 5) if self.ready else None,
+            "reaction_avg_body_period": self.period,
+            "reaction_avg_body_sample_count": self.sample_count,
+            "reaction_avg_body_ready": self.ready,
+        }
+
+
+@dataclass(frozen=True)
 class SetupCandidate:
     symbol: str
     timeframe: str

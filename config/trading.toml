@@ -169,9 +169,8 @@ internal_reject_requires_structure = false
 internal_reject_sr_requires_structure = false
 internal_reject_requires_price_action = true
 internal_reject_watch_after_fvg_fill_bars = 8
-# Internal reject still closes inside the zone, so require the same 1.5x body
-# strength as classic reject before trusting PA/BOS confirmation.
-internal_reject_body_min_ratio = 1.5
+# Internal reject shares reject_recovery_min_avg_body_ratio and the exact same
+# preceding 20-candle body baseline as classic reject.
 # SR and FVG now share one depth definition: percentage filled through the zone.
 # This avoids an ATR-based SR threshold changing meaning when zone width changes.
 internal_reject_min_fill_ratio = 0.4

@@ -14,6 +14,7 @@ from .types import (
     PLAYBOOK_ZONE_TYPES,
     TRADE_MODES,
     ReactionResult,
+    RecoveryMetrics,
 )
 
 
@@ -82,6 +83,32 @@ def average_body(candles: list[dict[str, Any]], period: int) -> float:
     window = candles[-max(period, 1):]
     bodies = [candle_body(candle) for candle in window]
     return sum(bodies) / len(bodies) if bodies else 0.0
+
+
+def close_extreme_recovery_metrics(
+    candles: list[dict[str, Any]],
+    direction: str,
+    period: int,
+    minimum_ratio: float,
+) -> RecoveryMetrics:
+    """Measure trigger close-to-extreme recovery against preceding M15 bodies."""
+    normalized_period = max(period, 1)
+    trigger = candles[-1]
+    baseline = candles[:-1][-normalized_period:]
+    ready = len(baseline) == normalized_period
+    average = average_body(baseline, normalized_period) if ready else 0.0
+    close = float(trigger["close"])
+    size = close - float(trigger["low"]) if direction == "long" else float(trigger["high"]) - close
+    ratio = size / average if average > 0 else 0.0
+    return RecoveryMetrics(
+        size=size,
+        ratio=ratio,
+        average_body=average,
+        period=normalized_period,
+        sample_count=len(baseline),
+        ready=ready,
+        minimum_ratio=minimum_ratio,
+    )
 
 
 def chart_candles_to_slices(candles: list[dict[str, Any]]) -> list[CandleSlice]:
@@ -320,15 +347,8 @@ def zone_fill_ratio(zone: dict[str, Any], candle: dict[str, Any] | None = None) 
 def internal_reject_window_metadata(candles: list[dict[str, Any]], config: StrategyConfig) -> dict[str, Any]:
     lookback = max(config.zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars, 1)
     start_index = max(0, len(candles) - lookback)
-    reaction_body = candle_body(candles[-1])
-    average_reaction_body = average_body(candles, config.zone_reaction_v2_reject_avg_body_period)
-    body_ratio = reaction_body / average_reaction_body if average_reaction_body > 0 else 0.0
     return {
         "internal_reject_trigger_window_start": candles[start_index].get("time"),
-        # Use the same rolling body baseline as classic reject so 1.5x has the
-        # same meaning in both reaction modes.
-        "reaction_avg_body": round(average_reaction_body, 5),
-        "reaction_body_avg_ratio": round(body_ratio, 4),
     }
 
 
@@ -368,7 +388,10 @@ def trigger_points_for_direction(
 
 
 def trigger_types_for_ids(points: list[dict[str, Any]], trigger_ids: list[str]) -> list[str]:
-    point_by_id = {str(point.get("id")): str(point.get("point_type", "")) for point in points}
+    point_by_id = {
+        str(point.get("id")): str(point.get("point_type") or point.get("type") or "")
+        for point in points
+    }
     return [point_by_id[tid] for tid in trigger_ids if tid in point_by_id]
 
 

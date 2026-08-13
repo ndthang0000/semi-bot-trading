@@ -347,24 +347,25 @@ def _trigger_quality(
             """
             SELECT open, close
             FROM candles
-            WHERE symbol = ? AND timeframe = 'M15' AND open_time <= ?
+            WHERE symbol = ? AND timeframe = 'M15' AND open_time < ?
             ORDER BY open_time DESC
             LIMIT ?
             """,
             (symbol, candle_time, period),
         ).fetchall()
         bodies = [abs(float(row["close"]) - float(row["open"])) for row in rows]
-        if bodies:
+        if len(bodies) == period:
             average = sum(bodies) / len(bodies)
-            period = len(bodies)
             average_source = "reconstructed from historical M15 candles"
 
     ratio = _float(metadata.get("reaction_body_avg_ratio"))
     if ratio is None and body is not None and average is not None and average > 0:
         ratio = body / average
+    unified_recovery = metadata.get("reaction_trigger_method") == "close_extreme_recovery"
+    legacy_internal_body = reaction == "internal_reject" and not unified_recovery
     required_ratio = (
-        config.strategy.zone_reaction_v2_internal_reject_body_min_ratio
-        if reaction == "internal_reject"
+        _float(metadata.get("internal_reject_body_min_ratio")) or 1.5
+        if legacy_internal_body
         else config.strategy.zone_reaction_v2_reject_recovery_min_avg_body_ratio
     )
     required_body = average * required_ratio if average is not None else None
@@ -398,7 +399,6 @@ def _trigger_quality(
     wick_body_min = 2.0 if is_pinbar else None
     wick_range_min = 0.55 if is_pinbar else None
 
-    unified_recovery = metadata.get("reaction_trigger_method") == "close_extreme_recovery"
     if unified_recovery or is_pinbar:
         strength_ratio = _float(metadata.get("reaction_rejection_avg_ratio"))
         if strength_ratio is None:
@@ -435,8 +435,10 @@ def _trigger_quality(
     if reaction == "reject" and close is not None and zone_low is not None and zone_high is not None:
         reclaim_passed = close > zone_high if expected_bullish else close < zone_low
 
-    if reaction == "internal_reject":
-        rule = "Internal reject: directional body >= rolling M15 average × configured ratio; close may remain inside zone."
+    if reaction == "internal_reject" and unified_recovery:
+        rule = "Internal reject: close-to-extreme recovery >= the exact preceding-body average × configured ratio; close remains inside zone."
+    elif reaction == "internal_reject":
+        rule = "Legacy internal reject: directional body >= rolling M15 average × historical ratio; close may remain inside zone."
     elif unified_recovery:
         rule = "Reject: close-to-extreme recovery >= rolling average body × configured ratio, touch zone, then close beyond the zone edge."
     elif metadata.get("wick_reject_confirmed"):

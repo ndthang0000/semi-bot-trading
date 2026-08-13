@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from semi_bot_trading.config import load_config
 from semi_bot_trading.db import connect, init_db
@@ -111,6 +112,25 @@ class TradeReportTest(unittest.TestCase):
                       '2030-01-01T01:15:01+00:00', '2030-01-01T01:15:01+00:00')
             """,
             (json.dumps(context),),
+        )
+        trigger_open = datetime(2030, 1, 1, 1, 15, tzinfo=UTC)
+        baseline_rows = []
+        for index in range(20):
+            open_time = trigger_open - timedelta(minutes=15 * (20 - index))
+            baseline_rows.append(
+                (
+                    f"baseline-{index}",
+                    open_time.isoformat(),
+                    (open_time + timedelta(minutes=15)).isoformat(),
+                )
+            )
+        self.conn.executemany(
+            """
+            INSERT INTO candles (
+                id, symbol, timeframe, open_time, close_time, open, high, low, close, source
+            ) VALUES (?, 'XAUUSD', 'M15', ?, ?, 100, 112, 98, 110, 'test')
+            """,
+            baseline_rows,
         )
         self.conn.execute(
             """

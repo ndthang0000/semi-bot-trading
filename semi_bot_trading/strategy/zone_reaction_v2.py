@@ -10,11 +10,9 @@ from .helpers import (
     bias_to_direction,
     candle_body,
     candle_touches_zone,
-    close_inside_zone,
+    close_extreme_recovery_metrics,
     expected_trade_direction,
     first_text,
-    zone_fill_ratio,
-    inside_zone_close_position,
     internal_reject_window_metadata,
     parse_utc_datetime,
     reaction,
@@ -29,6 +27,7 @@ from .helpers import (
     zone_trade_modes,
     zone_width_atr_ratio,
 )
+from .internal_reject import promote_internal_reject_if_confirmed
 from .zone_reaction_levels import compute_zone_reaction_v2_levels
 from .types import PLAYBOOK_ZONE_TYPES, ReactionResult, SetupCandidate
 
@@ -62,24 +61,14 @@ def classify_zone_reaction_v2(
     if expected not in {"long", "short"}:
         return reaction("far", None, touched, last, [], 0.0)
 
-    average_period = max(config.zone_reaction_v2_reject_avg_body_period, 1)
-    baseline_candles = candles[:-1][-average_period:]
-    baseline_ready = len(baseline_candles) == average_period
-    avg_body = average_body(baseline_candles, average_period) if baseline_ready else 0.0
-    rejection_size = close - low if expected == "long" else high - close
-    rejection_ratio = rejection_size / avg_body if avg_body > 0 else 0.0
-    recovery_threshold = config.zone_reaction_v2_reject_recovery_min_avg_body_ratio
-    recovery_metadata = {
-        "reaction_trigger_method": "close_extreme_recovery",
-        "reaction_rejection_size": round(rejection_size, 5),
-        "reaction_rejection_avg_ratio": round(rejection_ratio, 4),
-        "reaction_rejection_min_ratio": recovery_threshold,
-        "reaction_avg_body": round(avg_body, 5) if baseline_ready else None,
-        "reaction_avg_body_period": average_period,
-        "reaction_avg_body_sample_count": len(baseline_candles),
-        "reaction_avg_body_ready": baseline_ready,
-    }
-    strong_recovery = baseline_ready and rejection_ratio >= recovery_threshold
+    recovery = close_extreme_recovery_metrics(
+        candles,
+        expected,
+        config.zone_reaction_v2_reject_avg_body_period,
+        config.zone_reaction_v2_reject_recovery_min_avg_body_ratio,
+    )
+    recovery_metadata = recovery.to_metadata()
+    strong_recovery = recovery.passed
     fakeout_limit = atr * config.zone_reaction_v2_fakeout_max_atr
     buffer = atr * config.breakout_buffer_atr_multiplier
 
@@ -270,160 +259,6 @@ def slow_reaction_direction(
     return "short" if last_close > zone_mid(zone) else "long"
 
 
-def promote_internal_reject_if_confirmed(
-    zone: dict[str, Any],
-    base_reaction: ReactionResult,
-    atr: float,
-    config: StrategyConfig,
-    has_structure_trigger: bool,
-    has_price_action_trigger: bool,
-    has_current_trigger: bool,
-) -> ReactionResult:
-    if base_reaction.state in {"reject", "fakeout", "far", "invalid"}:
-        return base_reaction
-    if not config.zone_reaction_v2_internal_reject_enabled or not base_reaction.touched:
-        return base_reaction
-    if not has_current_trigger:
-        return base_reaction
-
-    direction = base_reaction.direction
-    if direction not in {"long", "short"}:
-        return base_reaction
-    zone_type = str(zone.get("type"))
-    if zone_type not in {"support", "resistance", "fvg"}:
-        return base_reaction
-
-    # Internal reject closes before fully reclaiming the zone. Require configured
-    # directional body quality (default 1.5x, same as classic reject) so a tiny
-    # pinbar body does not promote merely because a PA marker exists.
-    reaction_open = float(base_reaction.metadata.get("reaction_open", 0.0))
-    reaction_close = float(base_reaction.metadata.get("reaction_close", 0.0))
-    reaction_body_ratio = float(base_reaction.metadata.get("reaction_body_avg_ratio", 0.0))
-    body_direction_aligned = (
-        direction == "long" and reaction_close > reaction_open
-    ) or (
-        direction == "short" and reaction_close < reaction_open
-    )
-    body_metadata = {
-        "internal_reject_body_min_ratio": config.zone_reaction_v2_internal_reject_body_min_ratio,
-        "internal_reject_body_direction_aligned": body_direction_aligned,
-    }
-    if not body_direction_aligned:
-        return internal_reject_gate_failure(
-            base_reaction,
-            {**body_metadata, "internal_reject_body_gate_passed": False},
-            f"Internal reject {direction.upper()} requires a directional reaction body.",
-        )
-    if reaction_body_ratio < config.zone_reaction_v2_internal_reject_body_min_ratio:
-        return internal_reject_gate_failure(
-            base_reaction,
-            {**body_metadata, "internal_reject_body_gate_passed": False},
-            (
-                f"Internal reject body {reaction_body_ratio:.2f}x is below required "
-                f"{config.zone_reaction_v2_internal_reject_body_min_ratio:.2f}x."
-            ),
-        )
-
-    # SR zones need the stricter structure confirmation: PA alone inside a
-    # support/resistance band backtests as knife-catching (-5.5R support longs),
-    # while FVG fills reverse fine on PA alone (+7R FVG longs).
-    requires_structure = (
-        config.zone_reaction_v2_internal_reject_sr_requires_structure
-        if zone_type in {"support", "resistance"}
-        else config.zone_reaction_v2_internal_reject_requires_structure
-    )
-    if requires_structure and not has_structure_trigger:
-        return base_reaction
-    if config.zone_reaction_v2_internal_reject_requires_price_action and not has_price_action_trigger:
-        return base_reaction
-
-    candle = {
-        "time": base_reaction.metadata.get("reaction_candle_time"),
-        "open": base_reaction.metadata.get("reaction_open"),
-        "high": base_reaction.metadata.get("reaction_high"),
-        "low": base_reaction.metadata.get("reaction_low"),
-        "close": base_reaction.metadata.get("reaction_close"),
-    }
-    if not close_inside_zone(candle, zone):
-        return base_reaction
-
-    metadata: dict[str, Any] = {
-        "inside_zone_close_position": round(inside_zone_close_position(candle, zone), 4),
-        "zone_width_atr": round(zone_width_atr_ratio(zone, atr), 4),
-        **body_metadata,
-        "internal_reject_body_gate_passed": True,
-        "internal_reject_gate_passed": True,
-    }
-    # Both zone families now use the same normalized depth threshold. The FVG
-    # branch keeps only its lifecycle/deep-fill wording; SR no longer depends on
-    # ATR, which previously made the threshold inconsistent across zone widths.
-    fill_ratio = zone_fill_ratio(zone, candle)
-    metadata["fill_ratio"] = round(fill_ratio, 4)
-    if fill_ratio < config.zone_reaction_v2_internal_reject_min_fill_ratio:
-        return internal_reject_gate_failure(
-            base_reaction,
-            metadata,
-            (
-                f"Internal reject fill {fill_ratio:.0%} is below required "
-                f"{config.zone_reaction_v2_internal_reject_min_fill_ratio:.0%}."
-            ),
-        )
-    if zone_type == "fvg":
-        depth_label = "deep " if fill_ratio >= config.zone_reaction_v2_internal_reject_deep_fvg_fill_ratio else ""
-        side = "bullish FVG" if direction == "long" else "bearish FVG"
-        reason = [f"Internal reject inside {side} after {depth_label}{fill_ratio:.0%} fill."]
-    else:
-        side = "support" if direction == "long" else "resistance"
-        reason = [f"Internal reject inside {side} after {fill_ratio:.0%} fill."]
-
-    metadata["internal_reject_reason"] = reason[0]
-    confirmation_reason = (
-        "M15 BOS/CHOCH and price action confirmed inside zone."
-        if requires_structure
-        else "M15 price action confirmed inside zone."
-    )
-    return reaction_v2(
-        "internal_reject",
-        direction,
-        True,
-        candle,
-        [
-            *reason,
-            confirmation_reason,
-        ],
-        float(base_reaction.metadata.get("breakout_buffer", 0.0)),
-        {
-            **base_reaction.metadata,
-            **metadata,
-            # The reaction_v2 helper stamps "reaction_v2" into metadata, so the
-            # inherited base value must be overwritten or trades get mislabeled
-            # with the pre-promotion state (e.g. slow_reaction).
-            "reaction_v2": "internal_reject",
-            "previous_reaction_v2": base_reaction.state,
-        },
-    )
-
-
-def internal_reject_gate_failure(
-    base_reaction: ReactionResult,
-    metadata: dict[str, Any],
-    reason: str,
-) -> ReactionResult:
-    """Keep the pre-promotion state while exposing why Internal was rejected."""
-    return ReactionResult(
-        state=base_reaction.state,
-        direction=base_reaction.direction,
-        touched=base_reaction.touched,
-        candle_time=base_reaction.candle_time,
-        reason=[*base_reaction.reason, reason],
-        metadata={
-            **base_reaction.metadata,
-            **metadata,
-            "internal_reject_gate_passed": False,
-        },
-    )
-
-
 # ---------------------------------------------------------------------------
 # Evaluation: given a classified reaction, should we trade?
 # ---------------------------------------------------------------------------
@@ -560,8 +395,6 @@ def evaluate_zone_reaction_v2(
         secondary_bias,
         regime,
         config,
-        has_structure_trigger=bool(structure_trigger_ids),
-        has_price_action_trigger=bool(price_action_trigger_ids),
         macro_trend=macro_trend,
         context_bypass=context_bypass,
         zone_type=str(zone.get("type", "")),
@@ -798,8 +631,6 @@ def zone_reaction_v2_status(
     secondary_bias: Any,
     regime: str,
     config: StrategyConfig,
-    has_structure_trigger: bool = False,
-    has_price_action_trigger: bool = False,
     macro_trend: str = "unknown",
     context_bypass: bool = False,
     zone_type: str = "",
@@ -891,12 +722,6 @@ def zone_reaction_v2_status(
         status = "waiting_confirmation"
     elif reaction.state == "internal_reject" and reaction.state not in set(config.zone_reaction_v2_allowed_reactions):
         reasons.append("Internal reject is disabled for Zone Reaction V2; keeping it for debug only.")
-        status = "waiting_confirmation"
-    elif reaction.state == "internal_reject" and config.zone_reaction_v2_internal_reject_requires_structure and not has_structure_trigger:
-        reasons.append("Internal reject requires M15 BOS/CHOCH; waiting for structure confirmation.")
-        status = "waiting_confirmation"
-    elif reaction.state == "internal_reject" and config.zone_reaction_v2_internal_reject_requires_price_action and not has_price_action_trigger:
-        reasons.append("Internal reject requires M15 price action; waiting for PA confirmation.")
         status = "waiting_confirmation"
     elif reaction.state not in set(config.zone_reaction_v2_allowed_reactions):
         # We still surface disabled states in UI/backtest metadata so humans can

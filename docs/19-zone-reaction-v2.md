@@ -68,7 +68,6 @@ internal_reject_requires_structure = false
 internal_reject_sr_requires_structure = false
 internal_reject_requires_price_action = true
 internal_reject_watch_after_fvg_fill_bars = 8
-internal_reject_body_min_ratio = 1.5
 internal_reject_min_fill_ratio = 0.4
 internal_reject_deep_fvg_fill_ratio = 0.8
 internal_reject_stop_buffer_atr = 0.4
@@ -234,7 +233,11 @@ Dieu kien `internal_reject`:
 - Structure trigger (`BOS`/`CHOCH` cung huong entry) khong bat buoc cho SR zone khi `internal_reject_sr_requires_structure = false`; SR internal reject co the vao bang price action manh trong zone. FVG cung khong bat buoc structure theo `internal_reject_requires_structure = false`.
 - Co price action trigger cung huong entry: `engulfing`, `pinbar`, `marubozu`, `morning/evening star`, hoac `displacement`.
 - Structure trigger va price action duoc phep nam trong cung reaction window `internal_reject_watch_after_fvg_fill_bars`, khong bat buoc cung mot nen M15. Tuy nhien it nhat mot trigger phai xuat hien o nen signal hien tai de tranh reuse tin hieu cu.
-- Nen reaction phai co than cung huong entry va dat `internal_reject_body_min_ratio = 1.5` lan average body 20 nen M15. Day la gate rieng cua `internal_reject`; classic `reject` dung cong thuc close-to-extreme recovery voi nguong config o tren.
+- Internal va classic reject dung chung mot metric close-to-extreme: LONG la
+  `close - low`, SHORT la `high - close`. Recovery phai dat
+  `reject_recovery_min_avg_body_ratio` lan average body cua dung 20 nen M15
+  truoc trigger; trigger khong nam trong baseline. Khong bat buoc mau than nen
+  M15 vi recovery da gom ca body va wick theo huong tu extreme ve close.
 - SR va FVG deu phai fill it nhat `internal_reject_min_fill_ratio = 0.4` theo chieu rong zone. Support/bullish FVG do tu canh tren xuong reaction low; resistance/bearish FVG do tu canh duoi len reaction high. SR khong con dung penetration/ATR, tranh cung mot nguong ATR mang y nghia khac nhau tren zone hep va zone rong.
 - FVG da `mitigated` van duoc quan sat them `internal_reject_watch_after_fvg_fill_bars = 8` nen M15 sau fill neu chua expired.
 
@@ -248,6 +251,7 @@ Metadata trade ghi them:
 
 - `reaction_v2 = internal_reject`
 - `internal_reject_reason`
+- `internal_reject_recovery_min_ratio` va `internal_reject_recovery_gate_passed`
 - `fill_ratio`
 - `zone_width_atr`
 - `inside_zone_close_position`

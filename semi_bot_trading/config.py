@@ -183,7 +183,6 @@ class StrategyConfig:
     zone_reaction_v2_internal_reject_sr_requires_structure: bool
     zone_reaction_v2_internal_reject_requires_price_action: bool
     zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars: int
-    zone_reaction_v2_internal_reject_body_min_ratio: float
     zone_reaction_v2_internal_reject_min_fill_ratio: float
     zone_reaction_v2_internal_reject_deep_fvg_fill_ratio: float
     zone_reaction_v2_internal_reject_stop_buffer_atr: float
@@ -449,9 +448,6 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             ),
             zone_reaction_v2_internal_reject_watch_after_fvg_fill_bars=int(
                 zone_reaction_v2.get("internal_reject_watch_after_fvg_fill_bars", 8)
-            ),
-            zone_reaction_v2_internal_reject_body_min_ratio=float(
-                zone_reaction_v2.get("internal_reject_body_min_ratio", 1.5)
             ),
             zone_reaction_v2_internal_reject_min_fill_ratio=float(
                 zone_reaction_v2.get("internal_reject_min_fill_ratio", 0.4)

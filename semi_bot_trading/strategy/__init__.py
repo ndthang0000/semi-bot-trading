@@ -5,6 +5,7 @@ using `from .strategy import X` continue to work without any changes.
 Internal layout:
   types.py           — constants + ReactionResult + SetupCandidate
   helpers.py         — shared candle / zone / trigger / context utilities
+  internal_reject.py — in-zone recovery + PA/structure promotion policy
   zone_reaction_v2.py — full ZRV2 playbook (classify → evaluate → score)
   sr_breakout_v1.py  — full SR Breakout V1 playbook
   builder.py         — build_setup_candidates orchestrator
@@ -17,6 +18,7 @@ from .helpers import (
     bias_to_direction,
     candle_body,
     candle_touches_zone,
+    close_extreme_recovery_metrics,
     chart_candles_to_slices,
     close_inside_zone,
     expected_trade_direction,
@@ -57,6 +59,7 @@ from .sr_breakout_v1 import (
     sr_breakout_retest_reaction,
     sr_breakout_v1_state_machine,
 )
+from .internal_reject import promote_internal_reject_if_confirmed
 from .zone_reaction_levels import (
     compute_zone_reaction_v2_levels,
     should_fallback_reject_stop_to_atr,
@@ -72,13 +75,13 @@ from .types import (
     PLAYBOOK_ZONE_TYPES,
     TRADE_MODES,
     ReactionResult,
+    RecoveryMetrics,
     SetupCandidate,
 )
 from .zone_reaction_v2 import (
     classify_consolidation_reaction_v2,
     classify_zone_reaction_v2,
     evaluate_zone_reaction_v2,
-    promote_internal_reject_if_confirmed,
     score_zone_reaction_v2,
     slow_reaction_direction,
     step_done,
@@ -93,10 +96,10 @@ __all__ = [
     # types
     "BULLISH_PA", "BEARISH_PA", "BULLISH_BREAKS", "BEARISH_BREAKS",
     "PLAYBOOK_ZONE_TYPES", "TRADE_MODES", "DEFAULT_TRADE_MODES_BY_ZONE_TYPE",
-    "ReactionResult", "SetupCandidate",
+    "ReactionResult", "RecoveryMetrics", "SetupCandidate",
     # helpers
     "allowed_zone_types_for_playbooks", "playbook_allowed",
-    "candle_body", "average_body",
+    "candle_body", "average_body", "close_extreme_recovery_metrics",
     "chart_candles_to_slices", "latest_range",
     "zone_trade_modes", "zone_has_explicit_trade_mode", "zone_is_human_thesis", "zone_allows_breakout",
     "zone_trade_disabled_after_sweep", "zone_eligible_for_zone_reaction_v2",
