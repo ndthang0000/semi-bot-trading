@@ -675,10 +675,6 @@ def process_account_execution_commands(
         "UPDATE account_execution_commands SET status = 'processing', claimed_at = ? WHERE id = ? AND status = 'pending'",
         (now, command_id),
     )
-    conn.execute(
-        "UPDATE account_execution_controls SET requested_enabled = 0, effective_enabled = 0, updated_at = ? WHERE account_label = ?",
-        (now, env.account_label),
-    )
     conn.commit()
     try:
         cancelled = client.cancel_pending_orders(broker_symbol, magic=env.mt5_magic, comment="Dashboard close all")

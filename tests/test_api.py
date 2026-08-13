@@ -100,6 +100,9 @@ class ApiTest(unittest.TestCase):
                     "SELECT command_type, payload_json FROM account_execution_commands WHERE id = ?",
                     (close_all.json()["command_id"],),
                 ).fetchone()
+                execution_after_close = conn.execute(
+                    "SELECT requested_enabled, effective_enabled FROM account_execution_controls WHERE account_label = 'FTMO 100K'"
+                ).fetchone()
 
         account = listing.json()["accounts"][0]
         self.assertEqual(200, listing.status_code)
@@ -124,6 +127,8 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(close_all.json()["command_id"], duplicate.json()["command_id"])
         self.assertEqual("close_all_positions", command["command_type"])
         self.assertTrue(json.loads(command["payload_json"])["include_manual_positions"])
+        self.assertTrue(execution_after_close["requested_enabled"])
+        self.assertTrue(execution_after_close["effective_enabled"])
 
     def test_init_db_preserves_legacy_weekly_journal_content(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -51,6 +51,7 @@ from semi_bot_trading.live_worker import (
     maybe_weekend_flatten,
     maybe_execute_candidates,
     process_manual_trading_lock,
+    process_account_execution_commands,
     process_manual_ai_plans,
     run_live_iteration,
     sync_closed_positions,
@@ -203,6 +204,56 @@ def _fake_risk_manager(allowed: bool = True, lot_size: float = 0.01, reason: str
     assessment.reason = reason
     rm.assess_trade.return_value = assessment
     return rm
+
+
+class TestAccountExecutionCommands(unittest.TestCase):
+    def test_close_all_preserves_bot_execution_switch(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", execution_enabled=True)
+                now = datetime.now(UTC).isoformat()
+                conn.execute(
+                    """
+                    INSERT INTO account_execution_controls (
+                        account_label, requested_enabled, effective_enabled, hard_enabled,
+                        worker_status, heartbeat_at, updated_at
+                    ) VALUES ('Test', 1, 1, 1, 'online', ?, ?)
+                    """,
+                    (now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO account_execution_commands (
+                        id, account_label, command_type, status, requested_at,
+                        payload_json, idempotency_key
+                    ) VALUES (
+                        'close-command', 'Test', 'close_all_positions', 'pending', ?,
+                        '{"include_manual_positions": false}', 'close-command'
+                    )
+                    """,
+                    (now,),
+                )
+                conn.commit()
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.cancel_pending_orders.return_value = []
+                client.close_open_positions.return_value = []
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                control = conn.execute(
+                    "SELECT requested_enabled, effective_enabled FROM account_execution_controls WHERE account_label = 'Test'"
+                ).fetchone()
+                command = conn.execute(
+                    "SELECT status FROM account_execution_commands WHERE id = 'close-command'"
+                ).fetchone()
+                self.assertEqual("succeeded", command["status"])
+                self.assertTrue(control["requested_enabled"])
+                self.assertTrue(control["effective_enabled"])
+            finally:
+                conn.close()
 
 
 class TestManualTradingLock(unittest.TestCase):

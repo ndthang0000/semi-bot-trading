@@ -110,6 +110,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   return (
     <div className="grid gap-3 text-sm">
       <div className="grid gap-2">
+        <Detail label="Account" value={trade.account_label ?? "--"} />
         <Detail label="Playbook" value={playbookLabel(trade.playbook)} />
         <Detail label="Side" value={trade.side} />
         <Detail label="Status" value={trade.status} />

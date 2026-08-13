@@ -44,9 +44,12 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertTrue(signal["candle_closed"])
         self.assertEqual(signal["candle_time"], "2026-01-01T00:15:00+00:00")
         self.assertEqual(signal["candle_close_time"], "2026-01-01T00:30:00+00:00")
-        self.assertAlmostEqual(signal["avg_body"], 1.5)
+        self.assertAlmostEqual(signal["avg_body"], 1.0)
         self.assertAlmostEqual(signal["body"], 2.0)
-        self.assertAlmostEqual(signal["body_avg_ratio"], 1.3333, places=4)
+        self.assertAlmostEqual(signal["body_avg_ratio"], 2.0, places=4)
+        self.assertEqual(signal["trigger_method"], "close_extreme_recovery")
+        self.assertAlmostEqual(signal["strength_size"], 3.0)
+        self.assertAlmostEqual(signal["strength_avg_ratio"], 3.0)
         self.assertEqual(payload["layers"]["zones"][0]["timeframe"], "H1")
         self.assertEqual(payload["layers"]["contexts"]["H1"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["contexts"]["M15"]["bias"]["effective_value"], "bullish")
@@ -246,6 +249,48 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertAlmostEqual(signal["strength_avg_ratio"], rejection_size / average, places=4)
         self.assertEqual(signal["trigger_body"], 0.417)
         self.assertTrue(signal["trigger_is_latest_closed_candle"])
+
+    def test_m15_signal_uses_close_extreme_recovery_as_trigger_strength(self) -> None:
+        candles = [
+            {
+                "time": "2026-08-13T14:15:00+00:00",
+                "open": 4371.0,
+                "high": 4378.0,
+                "low": 4367.5,
+                "close": 4367.75,
+            },
+            {
+                "time": "2026-08-13T14:30:00+00:00",
+                "open": 4367.7,
+                "high": 4381.883,
+                "low": 4357.346,
+                "close": 4381.084,
+            },
+        ]
+        candidate = {
+            "id": "candidate-recovery",
+            "primary_zone_id": "zone-support",
+            "status": "eligible",
+            "score": 1.0,
+            "zone_reaction_state": "reject",
+            "reason": ["Bullish close-to-low recovery rejected the zone."],
+            "metadata": {
+                "zone_type": "support",
+                "reaction_trigger_method": "close_extreme_recovery",
+                "reaction_candle_time": candles[-1]["time"],
+                "reaction_avg_body": 4.0602,
+                "reaction_body": 13.384,
+                "reaction_body_avg_ratio": 3.2964,
+                "reaction_rejection_size": 23.738,
+                "reaction_rejection_avg_ratio": 5.8465,
+            },
+        }
+
+        signal = build_m15_signal_snapshot(candles, [candidate], avg_body_period=20)
+
+        self.assertEqual("close_extreme_recovery", signal["trigger_method"])
+        self.assertEqual(23.738, signal["strength_size"])
+        self.assertEqual(5.8465, signal["strength_avg_ratio"])
 
     def test_m15_trigger_overlay_caps_touch_only_rows_but_keeps_candidates(self) -> None:
         with TemporaryDirectory() as temp_dir:

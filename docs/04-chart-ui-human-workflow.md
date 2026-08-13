@@ -145,6 +145,10 @@ gõ trong input, textarea, select hoặc rich-text editor.
 
 UI phải vẽ được tất cả lệnh cũ trên chart.
 
+Action `Close all position` chi dong cac bot position va huy bot pending order
+hien tai; checkbox co the mo rong sang human position. Action nay khong thay doi
+switch Bot ON/OFF, de viec quan ly exposure khong vo tinh vo hieu hoa setup sau.
+
 Các thành phần:
 
 - Entry marker tại thời điểm/giá vào lệnh.
@@ -191,7 +195,13 @@ Context strip có card `M15 Trigger`, dùng cùng snapshot với strategy:
   chart nhưng không được hiển thị như một trigger đã xác nhận. Badge `Closed`
   dùng giờ đóng nến; `candle_time` trong strategy metadata vẫn là giờ mở nến.
 - `Avg body (20)` là trung bình thân nến rolling mà Zone Reaction V2 sử dụng.
-- Classic reject hiển thị close-to-extreme recovery cùng `recovery / avg20`; internal-reject vẫn hiển thị directional body cùng `body / avg20`.
+- Ke ca khi chua co candidate va card dang `Watching`, metric van la recovery
+  cua nen M15 da dong gan nhat theo mau nen: bullish dung `close - low`, bearish
+  dung `high - close`. Baseline chi gom cac nen dung truoc, khong tinh chinh nen
+  dang hien thi.
+- Classic reject va internal-reject dung metric chung close-to-extreme, nen card
+  hien thi `Recovery / avg`: LONG la `(close - low) / avg20`, SHORT la
+  `(high - close) / avg20`. Than nen va mau nen chi la context phu.
 - Trigger pinbar/confirmed-wick dùng rejection size (từ cực trị wick tới close)
   làm độ mạnh chính và hiển thị `rejection / avg20`; raw body của nến xác nhận
   vẫn là context phụ.

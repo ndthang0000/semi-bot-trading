@@ -113,12 +113,23 @@ def build_m15_signal_snapshot(
         return None
     candle = candles[-1]
     period = max(int(avg_body_period), 1)
-    average = average_body(candles, period)
+    # Match Zone Reaction V2 exactly: the trigger candle is never part of its
+    # own body baseline. The card keeps using the available preceding sample
+    # while history is warming up; strategy eligibility still requires all N.
+    average = average_body(candles[:-1], period)
     body = candle_body(candle)
     body_ratio = body / average if average > 0 else None
     close = float(candle["close"])
     open_ = float(candle["open"])
     direction = "bullish" if close > open_ else "bearish" if close < open_ else "doji"
+    recovery_size = (
+        close - float(candle["low"])
+        if direction == "bullish"
+        else float(candle["high"]) - close
+        if direction == "bearish"
+        else None
+    )
+    recovery_ratio = recovery_size / average if recovery_size is not None and average > 0 else None
 
     status_priority = {
         "eligible": 0,
@@ -153,14 +164,14 @@ def build_m15_signal_snapshot(
         "candidate_id": None,
         "status": "watching",
         "reaction_state": None,
-        "trigger_method": None,
+        "trigger_method": "close_extreme_recovery",
         "trigger_candle_time": None,
         "trigger_is_latest_closed_candle": False,
         "trigger_avg_body": None,
         "trigger_body": None,
         "trigger_body_avg_ratio": None,
-        "strength_size": None,
-        "strength_avg_ratio": None,
+        "strength_size": round(recovery_size, 5) if recovery_size is not None else None,
+        "strength_avg_ratio": round(recovery_ratio, 4) if recovery_ratio is not None else None,
         "zone_id": None,
         "zone_type": None,
         "reason": None,

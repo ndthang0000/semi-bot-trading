@@ -1030,7 +1030,7 @@ function AccountCard({ acc }: { acc: AccountSnapshot }) {
           <div className="w-full max-w-md rounded-xl border border-red-500/30 bg-ink-900 p-5 shadow-2xl">
             <h2 className="text-base font-semibold text-slate-100">Close all position?</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">
-              Bot execution will be switched OFF first. {acc.execution.open_bot_positions} bot position(s) will be closed and {acc.execution.pending_bot_orders} pending bot order(s) will be cancelled.
+              {acc.execution.open_bot_positions} bot position(s) will be closed and {acc.execution.pending_bot_orders} pending bot order(s) will be cancelled. Bot execution will remain {acc.execution.requested_enabled ? "ON" : "OFF"}.
             </p>
             <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-red-500/25 bg-red-500/5 p-3">
               <input

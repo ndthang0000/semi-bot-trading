@@ -690,10 +690,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             if existing:
                 return {"command_id": existing["id"], "status": existing["status"]}
             conn.execute(
-                "UPDATE account_execution_controls SET requested_enabled = 0, effective_enabled = 0, requested_by = ?, requested_at = ?, updated_at = ? WHERE account_label = ?",
-                (username, now, now, account_label),
-            )
-            conn.execute(
                 """
                 INSERT INTO account_execution_commands
                     (id, account_label, command_type, status, requested_by, requested_at, payload_json, idempotency_key)

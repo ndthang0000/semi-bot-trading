@@ -144,11 +144,14 @@ export function ContextStrip({ payload, onContextUpdated }: ContextStripProps) {
 function M15SignalCard({ signal }: { signal: ChartPayload["layers"]["m15_signal"] | undefined }) {
   const hasCandidate = Boolean(signal?.candidate_id);
   const isPinbar = signal?.trigger_method === "pinbar";
-  const isWickTrigger = isPinbar || signal?.trigger_method === "confirmed_wick";
+  const usesRecoveryStrength =
+    isPinbar ||
+    signal?.trigger_method === "confirmed_wick" ||
+    signal?.trigger_method === "close_extreme_recovery";
   const average = signal?.trigger_avg_body ?? signal?.avg_body;
   const body = signal?.trigger_body ?? signal?.body;
   const bodyRatio = signal?.trigger_body_avg_ratio ?? signal?.body_avg_ratio;
-  const strengthRatio = isWickTrigger ? signal?.strength_avg_ratio : bodyRatio;
+  const strengthRatio = usesRecoveryStrength ? signal?.strength_avg_ratio : bodyRatio;
   const headline = signal ? triggerHeadline(signal.trigger_method, signal.reaction_state, hasCandidate) : "--";
   const toneClass =
     signal?.status === "eligible"
@@ -182,14 +185,17 @@ function M15SignalCard({ signal }: { signal: ChartPayload["layers"]["m15_signal"
       </div>
       <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] leading-tight">
         <SignalMetric label={`Avg body (${signal?.avg_body_period ?? 20})`} value={formatSignalValue(average)} />
-        <SignalMetric label="Body / avg" value={`${formatSignalValue(body)} / ${formatRatio(bodyRatio)}`} />
         <SignalMetric
-          label={isWickTrigger ? "Rejection / avg" : "Candle"}
+          label={usesRecoveryStrength ? "Recovery / avg" : "Body / avg"}
           value={
-            isWickTrigger
+            usesRecoveryStrength
               ? `${formatSignalValue(signal?.strength_size)} / ${formatRatio(signal?.strength_avg_ratio)}`
-              : signal?.candle_direction ?? "--"
+              : `${formatSignalValue(body)} / ${formatRatio(bodyRatio)}`
           }
+        />
+        <SignalMetric
+          label="Candle"
+          value={signal?.candle_direction ?? "--"}
         />
       </div>
     </div>
