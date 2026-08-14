@@ -436,8 +436,9 @@ account. The local project symbol remains `XAUUSD`.
 history timestamps use broker wall time instead of UTC; for example, use `3`
 when the FTMO terminal is three hours ahead. The worker subtracts this offset
 before storing candle and deal-close timestamps, and adds the same offset to
-UTC history-query boundaries. This keeps FTMO daily deal reconstruction on the
-broker clock while an Exness worker configured with `0` remains unchanged.
+UTC history-query boundaries and `ORDER_TIME_SPECIFIED` pending-order
+expirations. This keeps FTMO deal reconstruction and order expiry on the broker
+clock while an Exness worker configured with `0` remains unchanged.
 Recheck it when the broker's summer/winter server time changes.
 
 `MT5_PATH` is optional for manual runs, but strongly recommended for Windows

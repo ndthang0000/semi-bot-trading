@@ -39,7 +39,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
   const [entry, setEntry] = useState("");
   const [stop, setStop] = useState("");
   const [target, setTarget] = useState("");
-  const [expiresInMinutes, setExpiresInMinutes] = useState("90");
+  const [expiresInMinutes, setExpiresInMinutes] = useState("");
   const [reason, setReason] = useState("");
   const [partialEnabled, setPartialEnabled] = useState(true);
   const [partialTriggerR, setPartialTriggerR] = useState(1);
@@ -106,7 +106,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
     setEntry("");
     setStop("");
     setTarget("");
-    setExpiresInMinutes("90");
+    setExpiresInMinutes("");
     setReason("");
     setPartialEnabled(true);
     setPartialTriggerR(1);
@@ -341,7 +341,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
                   <label className="grid gap-1 text-xs text-slate-400">
                     <span>Expire sau · nhập phút hoặc chọn nhanh</span>
                     <span className="flex flex-wrap gap-1">{QUICK_EXPIRY_OPTIONS.map((option) => <button key={option.minutes} className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${Number(expiresInMinutes) === option.minutes ? "border-amber-300 bg-amber-400/15 text-amber-100" : "border-ink-600 bg-ink-800 text-slate-300 hover:border-amber-400/60"}`} type="button" onClick={() => setExpiresInMinutes(String(option.minutes))}>{option.label}</button>)}</span>
-                    <input className={inputClass} min={5} max={MANUAL_AI_MAX_EXPIRY_MINUTES} step={5} type="number" value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(event.target.value)} />
+                    <input className={inputClass} min={5} max={MANUAL_AI_MAX_EXPIRY_MINUTES} placeholder="Nhập số phút" step={5} type="number" value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(event.target.value)} />
                   </label>
                   <section className="grid gap-3 rounded-xl border border-violet-400/25 bg-violet-400/5 p-3 sm:col-span-2">
                     <label className="flex items-center justify-between gap-3 text-sm font-semibold text-violet-100">

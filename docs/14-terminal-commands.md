@@ -726,12 +726,12 @@ cá nhân.
 
 `MT5_SERVER_UTC_OFFSET_HOURS` normalizes broker-server wall-clock timestamps
 before candles and closed deals are stored as UTC, and converts UTC history
-query windows back to that server clock. Keep it at `0` when MT5 already
-returns UTC (the Exness worker), and set it to the observed server offset for
-FTMO (`3` in the example). Update the value if the broker changes between
-summer and winter server time. Secondary FTMO workers should continue using
-`LIVE_SYNC_CANDLES=false`; the offset still applies to deal-close history and
-FTMO daily P/L reconstruction.
+query windows and pending-order expirations back to that server clock. Keep it
+at `0` when MT5 already returns UTC (the Exness worker), and set it to the
+observed server offset for FTMO (`3` in the example). Update the value if the
+broker changes between summer and winter server time. Secondary FTMO workers
+should continue using `LIVE_SYNC_CANDLES=false`; the offset still applies to
+deal-close history and FTMO daily P/L reconstruction.
 
 Keep `FTMO_PHASE=evaluation` during Challenge/Verification. For a funded
 Standard account set `FTMO_PHASE=funded`; the worker then cancels bot pending

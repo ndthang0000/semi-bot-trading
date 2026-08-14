@@ -119,7 +119,8 @@ order không còn pending, tránh nhầm một position vừa fill thành order 
 Manual input dùng hai nút BUY/SELL tương phản, hiển thị current chart price và
 khoảng SL theo cả đơn vị giá lẫn XAUUSD pip (`1 pip = 0.1`, nên 7 giá = 70 pip),
 hiển thị R:R tức thời và có preset TP từ 1.5R tới 4.0R, bước 0.5R. Expiry có
-preset từ 1H tới 48H. Manual input cho phép bật/tắt Partial TP, chọn trigger
+preset từ 1H tới 48H nhưng không có giá trị mặc định; Human phải tự nhập số phút
+hoặc chủ động chọn preset trước khi tạo draft. Manual input cho phép bật/tắt Partial TP, chọn trigger
 0.75R–1.5R, tỷ lệ đóng, và dời SL về breakeven hoặc giữ nguyên. UI chặn limit nằm
 sai phía current price hoặc SL nằm sai phía entry. Đóng wizard sau approval sẽ
 reset toàn bộ draft; màn hình thành công cũng có action `Thêm lệnh mới`.

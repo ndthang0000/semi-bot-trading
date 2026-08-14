@@ -203,7 +203,12 @@ class MT5BotOwnershipTest(unittest.TestCase):
 
 
 class MT5LimitOrderExpirationTest(unittest.TestCase):
-    def _client(self, *, expiration_mode: int) -> tuple[MT5BrokerClient, MagicMock]:
+    def _client(
+        self,
+        *,
+        expiration_mode: int,
+        server_utc_offset_hours: float = 0.0,
+    ) -> tuple[MT5BrokerClient, MagicMock]:
         mt5 = MagicMock()
         mt5.TRADE_ACTION_PENDING = 5
         mt5.ORDER_TYPE_BUY_LIMIT = 2
@@ -217,6 +222,12 @@ class MT5LimitOrderExpirationTest(unittest.TestCase):
         mt5.symbol_info.return_value = SimpleNamespace(visible=True, expiration_mode=expiration_mode)
         client = MT5BrokerClient.__new__(MT5BrokerClient)
         client.mt5 = mt5
+        client.credentials = MT5Credentials(
+            123,
+            "secret",
+            "Test-Server",
+            server_utc_offset_hours=server_utc_offset_hours,
+        )
         client.ensure_symbol = MagicMock()
         client.order_filling_mode = MagicMock(return_value=0)
         return client, mt5
@@ -246,6 +257,19 @@ class MT5LimitOrderExpirationTest(unittest.TestCase):
         payload = mt5.order_send.call_args.args[0]
         self.assertEqual(2, payload["type_time"])
         self.assertEqual(int(datetime(2099, 8, 7, 15, 54, 54, tzinfo=UTC).timestamp()), payload["expiration"])
+
+    def test_specified_expiration_uses_ftmo_server_clock(self) -> None:
+        client, mt5 = self._client(expiration_mode=4, server_utc_offset_hours=3)
+        result = MagicMock()
+        result._asdict.return_value = {"retcode": 10009, "order": 123}
+        mt5.order_send.return_value = result
+
+        client.place_limit_order(self._request())
+
+        payload = mt5.order_send.call_args.args[0]
+        expected = datetime(2099, 8, 7, 18, 54, 54, tzinfo=UTC)
+        self.assertEqual(2, payload["type_time"])
+        self.assertEqual(int(expected.timestamp()), payload["expiration"])
 
     def test_uses_gtc_when_symbol_does_not_support_specified_expiration(self) -> None:
         client, mt5 = self._client(expiration_mode=1)

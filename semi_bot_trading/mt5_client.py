@@ -244,8 +244,12 @@ class MT5BrokerClient:
                 raise ValueError("expires_at must be at least 30 seconds in the future")
             parsed_expiry = expires_at
             if self._supports_specified_expiration(request.broker_symbol):
+                broker_expires_at = utc_datetime_to_mt5_server_time(
+                    expires_at,
+                    self.credentials.server_utc_offset_hours,
+                )
                 payload["type_time"] = self.mt5.ORDER_TIME_SPECIFIED
-                payload["expiration"] = int(expires_at.timestamp())
+                payload["expiration"] = int(broker_expires_at.timestamp())
                 uses_broker_expiration = True
         result = self.mt5.order_send(payload)
         if result is None:
