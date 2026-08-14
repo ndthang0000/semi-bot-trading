@@ -10,7 +10,23 @@ type Mode = "import" | "manual";
 const XAUUSD_PIP_SIZE = 0.1;
 const MANUAL_AI_MIN_RR = 1.5;
 const MANUAL_AI_MAX_RR = 4;
-const QUICK_RR_OPTIONS = [1.5, 2.5, 3] as const;
+const MANUAL_AI_MAX_EXPIRY_MINUTES = 2_880;
+const QUICK_RR_OPTIONS = [1.5, 2, 2.5, 3, 3.5, 4] as const;
+const QUICK_EXPIRY_OPTIONS = [
+  { label: "1H", minutes: 60 },
+  { label: "2H", minutes: 120 },
+  { label: "3H", minutes: 180 },
+  { label: "4H", minutes: 240 },
+  { label: "5H", minutes: 300 },
+  { label: "6H", minutes: 360 },
+  { label: "8H", minutes: 480 },
+  { label: "12H", minutes: 720 },
+  { label: "18H", minutes: 1_080 },
+  { label: "24H", minutes: 1_440 },
+  { label: "48H", minutes: 2_880 },
+] as const;
+const PARTIAL_TRIGGER_OPTIONS = [0.75, 1, 1.25, 1.5] as const;
+const PARTIAL_CLOSE_OPTIONS = [0.25, 0.33, 0.5] as const;
 
 const inputClass = "h-10 rounded-lg border border-ink-600 bg-ink-950 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400";
 
@@ -25,6 +41,11 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
   const [target, setTarget] = useState("");
   const [expiresInMinutes, setExpiresInMinutes] = useState("90");
   const [reason, setReason] = useState("");
+  const [partialEnabled, setPartialEnabled] = useState(true);
+  const [partialTriggerR, setPartialTriggerR] = useState(1);
+  const [partialCloseFraction, setPartialCloseFraction] = useState(0.5);
+  const [partialMoveStopTo, setPartialMoveStopTo] = useState<"breakeven" | "unchanged">("breakeven");
+  const [partialBreakevenBuffer, setPartialBreakevenBuffer] = useState("0");
   const [plans, setPlans] = useState<ManualAiPlan[]>([]);
   const [workers, setWorkers] = useState<ManualAiWorker[]>([]);
   const [selectedWorkerLabels, setSelectedWorkerLabels] = useState<string[]>([]);
@@ -87,6 +108,11 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
     setTarget("");
     setExpiresInMinutes("90");
     setReason("");
+    setPartialEnabled(true);
+    setPartialTriggerR(1);
+    setPartialCloseFraction(0.5);
+    setPartialMoveStopTo("breakeven");
+    setPartialBreakevenBuffer("0");
     setPlans([]);
     setSelectedWorkerLabels(workers.map((worker) => worker.label));
     setShortTrend("neutral");
@@ -166,7 +192,13 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
             take_profit: Number(target),
             risk_pct: 1,
             expires_in_minutes: Number(expiresInMinutes),
-            partial_take_profit: { enabled: true, trigger_r: 1, close_fraction: 0.5, move_stop_to: "breakeven", breakeven_buffer: 0 },
+            partial_take_profit: {
+              enabled: partialEnabled,
+              trigger_r: partialTriggerR,
+              close_fraction: partialCloseFraction,
+              move_stop_to: partialMoveStopTo,
+              breakeven_buffer: Number(partialBreakevenBuffer) || 0,
+            },
             cancel_conditions: [],
             entry_reason: reason || "Human-confirmed pullback limit entry",
             stop_reason: "Structural invalidation selected by human",
@@ -302,15 +334,38 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
                   <label className="grid gap-1 text-xs text-slate-400">Entry<input className={inputClass} inputMode="decimal" value={entry} onChange={(event) => setEntry(event.target.value)} /></label>
                   <label className="grid gap-1 text-xs text-slate-400">Structural SL<input className={inputClass} inputMode="decimal" value={stop} onChange={(event) => setStop(event.target.value)} /></label>
                   <label className="grid gap-1 text-xs text-slate-400">
-                    <span className="flex items-center justify-between gap-2"><span>Take profit</span><span className="flex gap-1">{QUICK_RR_OPTIONS.map((rr) => <button key={rr} className="rounded border border-ink-600 bg-ink-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-200 hover:border-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-35" disabled={!stopMetrics?.validSide} type="button" onClick={() => applyQuickRiskReward(rr)}>{rr}R</button>)}</span></span>
+                    <span>Take profit · chọn nhanh R:R</span>
+                    <span className="flex flex-wrap gap-1">{QUICK_RR_OPTIONS.map((rr) => <button key={rr} className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-[10px] font-semibold text-cyan-200 hover:border-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-35" disabled={!stopMetrics?.validSide} type="button" onClick={() => applyQuickRiskReward(rr)}>{rr.toFixed(1)}R</button>)}</span>
                     <input className={inputClass} inputMode="decimal" value={target} onChange={(event) => setTarget(event.target.value)} />
                   </label>
-                  <label className="grid gap-1 text-xs text-slate-400">Expire sau (phút)<input className={inputClass} min={5} max={1440} step={5} type="number" value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(event.target.value)} /></label>
+                  <label className="grid gap-1 text-xs text-slate-400">
+                    <span>Expire sau · nhập phút hoặc chọn nhanh</span>
+                    <span className="flex flex-wrap gap-1">{QUICK_EXPIRY_OPTIONS.map((option) => <button key={option.minutes} className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${Number(expiresInMinutes) === option.minutes ? "border-amber-300 bg-amber-400/15 text-amber-100" : "border-ink-600 bg-ink-800 text-slate-300 hover:border-amber-400/60"}`} type="button" onClick={() => setExpiresInMinutes(String(option.minutes))}>{option.label}</button>)}</span>
+                    <input className={inputClass} min={5} max={MANUAL_AI_MAX_EXPIRY_MINUTES} step={5} type="number" value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(event.target.value)} />
+                  </label>
+                  <section className="grid gap-3 rounded-xl border border-violet-400/25 bg-violet-400/5 p-3 sm:col-span-2">
+                    <label className="flex items-center justify-between gap-3 text-sm font-semibold text-violet-100">
+                      <span><span className="block">Partial TP</span><span className="mt-0.5 block text-[11px] font-normal text-slate-400">Chốt một phần vị thế khi đạt mức R đã chọn.</span></span>
+                      <input checked={partialEnabled} className="h-4 w-4 accent-violet-400" type="checkbox" onChange={(event) => setPartialEnabled(event.target.checked)} />
+                    </label>
+                    <div className={`grid gap-3 sm:grid-cols-3 ${partialEnabled ? "" : "pointer-events-none opacity-40"}`}>
+                      <QuickOptionGroup label="Kích hoạt tại" options={PARTIAL_TRIGGER_OPTIONS.map((value) => ({ label: `${value.toFixed(2)}R`, value }))} selected={partialTriggerR} onSelect={setPartialTriggerR} />
+                      <QuickOptionGroup label="Khối lượng chốt" options={PARTIAL_CLOSE_OPTIONS.map((value) => ({ label: `${Math.round(value * 100)}%`, value }))} selected={partialCloseFraction} onSelect={setPartialCloseFraction} />
+                      <div className="grid content-start gap-1.5">
+                        <span className="text-[11px] text-slate-400">SL sau partial</span>
+                        <div className="flex flex-wrap gap-1">
+                          <ChoiceButton active={partialMoveStopTo === "breakeven"} label="Dời về BE" onClick={() => setPartialMoveStopTo("breakeven")} />
+                          <ChoiceButton active={partialMoveStopTo === "unchanged"} label="Giữ nguyên" onClick={() => setPartialMoveStopTo("unchanged")} />
+                        </div>
+                      </div>
+                    </div>
+                    {partialEnabled && partialMoveStopTo === "breakeven" ? <label className="grid gap-1 text-xs text-slate-400 sm:max-w-52">BE buffer (giá)<input className={inputClass} min={0} max={10} step={0.1} type="number" value={partialBreakevenBuffer} onChange={(event) => setPartialBreakevenBuffer(event.target.value)} /></label> : null}
+                  </section>
                   <label className="grid gap-1 text-xs text-slate-400 sm:col-span-2">Entry reason<input className={inputClass} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
                 </div>
               </div>
             )}
-            <button className="h-11 rounded-xl bg-cyan-400 font-bold text-ink-950 disabled:opacity-40" disabled={!readGuide || busy || (mode === "import" ? !json.trim() : !entry || !stop || !target || stopMetrics?.validSide === false || limitPlacementValid === false || !riskRewardValid || Number(expiresInMinutes) < 5 || Number(expiresInMinutes) > 1440)} type="button" onClick={submitDraft}>{busy ? "Validating…" : "Validate & create draft"}</button>
+            <button className="h-11 rounded-xl bg-cyan-400 font-bold text-ink-950 disabled:opacity-40" disabled={!readGuide || busy || (mode === "import" ? !json.trim() : !entry || !stop || !target || stopMetrics?.validSide === false || limitPlacementValid === false || !riskRewardValid || Number(expiresInMinutes) < 5 || Number(expiresInMinutes) > MANUAL_AI_MAX_EXPIRY_MINUTES)} type="button" onClick={submitDraft}>{busy ? "Validating…" : "Validate & create draft"}</button>
           </> : null}
 
           {primary && !approved ? <section className="grid gap-4 rounded-xl border border-cyan-400/25 bg-cyan-400/5 p-4"><div><div className="font-semibold text-cyan-100">Draft đã validate</div><div className="mt-2 grid gap-2">{plans.map((plan) => <div key={plan.id} className="rounded-lg border border-ink-700 bg-ink-950/60 p-2 text-sm tabular-nums text-slate-300"><span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${plan.execution_state === "primary" ? "bg-cyan-400/15 text-cyan-200" : "bg-slate-700 text-slate-400"}`}>{plan.execution_state}</span>{plan.side.toUpperCase()} limit {plan.entry_price} · SL {plan.stop_loss} · TP {plan.take_profit} · {plan.risk_reward.toFixed(2)}R · {plan.expires_in_minutes} phút</div>)}</div></div><div className="grid gap-2"><div><div className="text-xs font-medium text-slate-300">Worker nhận lệnh</div><div className="mt-0.5 text-[11px] text-slate-500">Mỗi worker tính lot theo profile: tài khoản quỹ 0.75%, tài khoản thường 1.5%.</div></div>{workers.length ? <div className="grid gap-2 rounded-lg border border-ink-700 bg-ink-950/50 p-3">{workers.map((worker) => <label key={worker.label} className="flex items-center justify-between gap-3 text-sm text-slate-200"><span className="flex items-center gap-2"><input checked={selectedWorkerLabels.includes(worker.label)} className="accent-cyan-400" type="checkbox" onChange={(event) => setSelectedWorkerLabels((current) => event.target.checked ? [...current, worker.label] : current.filter((label) => label !== worker.label))} />{worker.label}</span><span className={worker.execution.worker_status === "online" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>{worker.execution.worker_status}</span></label>)}</div> : <div className="rounded-lg border border-amber-400/25 bg-amber-400/5 p-3 text-xs text-amber-200">Chưa tìm thấy worker nào. Hãy kiểm tra worker heartbeat trên Account Dashboard.</div>}</div><div className="grid gap-3 sm:grid-cols-2"><QuestionSelect label="Short-term trend" value={shortTrend} onChange={setShortTrend} options={["bullish", "bearish", "neutral"]} /><QuestionSelect label="Medium-term trend" value={mediumTrend} onChange={setMediumTrend} options={["bullish", "bearish", "neutral"]} /><QuestionSelect label="Nguồn invalidation" value={invalidationSource} onChange={setInvalidationSource} options={["structure", "liquidity_extreme", "volatility_buffer"]} /><QuestionSelect label="Lý do dùng limit" value={limitReason} onChange={setLimitReason} options={["pullback", "retest", "discount_premium", "liquidity_reaction"]} /><QuestionSelect label="Trạng thái cảm xúc" value={emotionState} onChange={setEmotionState} options={["calm", "uncertain", "fomo", "revenge"]} /></div><div className="grid gap-2 text-sm text-slate-200"><label className="flex gap-2"><input checked={acceptRisk} className="accent-cyan-400" type="checkbox" onChange={(event) => setAcceptRisk(event.target.checked)} />Tôi chấp nhận risk theo profile từng worker (quỹ 0.75% · thường 1.5%).</label><label className="flex gap-2"><input checked={dynamicLot} className="accent-cyan-400" type="checkbox" onChange={(event) => setDynamicLot(event.target.checked)} />Tôi không cố định lot; từng worker tính lot từ SL.</label><label className="flex gap-2"><input checked={competingExposure} className="accent-rose-400" type="checkbox" onChange={(event) => setCompetingExposure(event.target.checked)} />Có worker đang có exposure XAUUSD cạnh tranh.</label></div>{emotionState !== "calm" ? <p className="text-xs text-amber-200">Chỉ trạng thái calm mới được approve; hãy tạm dừng nếu đang FOMO, revenge hoặc chưa chắc chắn.</p> : null}<button className="h-11 rounded-xl bg-emerald-400 font-bold text-ink-950 disabled:opacity-40" disabled={busy || emotionState !== "calm" || !acceptRisk || !dynamicLot || competingExposure || selectedWorkerLabels.length === 0} type="button" onClick={approve}>{busy ? "Approving…" : `Approve & arm ${selectedWorkerLabels.length} worker`}</button></section> : null}
@@ -329,6 +384,14 @@ function QuestionSelect({ label, onChange, options, value }: { label: string; on
 function Metric({ className = "", label, tone = "neutral", value }: { className?: string; label: string; tone?: "neutral" | "good" | "bad"; value: string }) {
   const valueClass = tone === "good" ? "text-emerald-200" : tone === "bad" ? "text-rose-200" : "text-slate-100";
   return <div className={className}><div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</div><div className={`mt-1 text-sm font-bold tabular-nums ${valueClass}`}>{value}</div></div>;
+}
+
+function QuickOptionGroup({ label, onSelect, options, selected }: { label: string; onSelect: (value: number) => void; options: Array<{ label: string; value: number }>; selected: number }) {
+  return <div className="grid content-start gap-1.5"><span className="text-[11px] text-slate-400">{label}</span><div className="flex flex-wrap gap-1">{options.map((option) => <ChoiceButton key={option.value} active={selected === option.value} label={option.label} onClick={() => onSelect(option.value)} />)}</div></div>;
+}
+
+function ChoiceButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return <button className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${active ? "border-violet-300 bg-violet-400/20 text-violet-100" : "border-ink-600 bg-ink-900 text-slate-400 hover:border-violet-400/60"}`} type="button" onClick={onClick}>{label}</button>;
 }
 
 export function xauusdPipsForDistance(priceDistance: number): number {

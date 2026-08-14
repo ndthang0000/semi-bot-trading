@@ -1346,7 +1346,11 @@ def process_manual_ai_plans(
         if linked_order is not None:
             order_status = str(linked_order["status"])
             mapped = {"pending_fill": "armed", "filled": "filled", "closed": "closed", "cancelled": "cancelled"}.get(order_status)
-            if mapped and plan_status not in {"filled", "expired", "cancelled"} and mapped != plan_status:
+            # A user-requested cancellation must remain authoritative while the
+            # broker order is still pending. Mapping pending_fill back to armed
+            # here would skip the broker cancellation branch below and make the
+            # limit reappear in the UI on the next refresh.
+            if mapped and plan_status not in {"filled", "expired", "cancelled", "cancel_requested"} and mapped != plan_status:
                 conn.execute("UPDATE manual_ai_plans SET status = ?, updated_at = ? WHERE id = ?", (mapped, now_iso, plan_id))
                 plan_status = mapped
                 conn.commit()

@@ -9,7 +9,7 @@ from tests.helpers import TemporaryDirectory
 from tests.test_api import authenticated_test_client, seed_candles, write_test_config
 
 
-def envelope(*, rr: float = 2.0, execution_state: str = "primary", client_id: str = "manual-ai-test-1") -> dict:
+def envelope(*, rr: float = 2.0, execution_state: str = "primary", client_id: str = "manual-ai-test-1", expires_in_minutes: int = 120) -> dict:
     now = datetime.now(UTC)
     return {
         "schema_version": 1,
@@ -30,7 +30,7 @@ def envelope(*, rr: float = 2.0, execution_state: str = "primary", client_id: st
                 "take_profit": 2000 + 10 * rr,
                 "risk_pct": 1.0,
                 "risk_reward": rr,
-                "expires_in_minutes": 120,
+                "expires_in_minutes": expires_in_minutes,
                 "partial_take_profit": {
                     "enabled": True,
                     "trigger_r": 1.0,
@@ -117,6 +117,26 @@ class ManualAiApiTest(unittest.TestCase):
                 ).status_code,
             )
             self.assertEqual(client.post("/api/manual-ai/plans/import", json=envelope(execution_state="watch_only")).status_code, 422)
+
+    def test_import_accepts_expiry_up_to_48_hours(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+
+            accepted = client.post(
+                "/api/manual-ai/plans/import",
+                json=envelope(client_id="manual-ai-48h", expires_in_minutes=2_880),
+            )
+            self.assertEqual(accepted.status_code, 200, accepted.text)
+            self.assertEqual(2_880, accepted.json()["plans"][0]["expires_in_minutes"])
+            rejected = client.post(
+                "/api/manual-ai/plans/import",
+                json=envelope(client_id="manual-ai-over-48h", expires_in_minutes=2_881),
+            )
+            self.assertEqual(422, rejected.status_code)
 
     def test_approval_fans_out_to_workers_and_cancel_stops_the_whole_group(self) -> None:
         with TemporaryDirectory() as temp_dir:

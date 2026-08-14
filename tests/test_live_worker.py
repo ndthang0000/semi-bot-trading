@@ -1004,6 +1004,26 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self.assertEqual("expired", plan["status"])
         self.assertEqual("cancelled", order["status"])
 
+    def test_cancel_requested_limit_is_not_mapped_back_to_armed(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        self._conn.execute(
+            "UPDATE manual_ai_plans SET status = 'cancel_requested' WHERE id = 'manual-plan'"
+        )
+        self._conn.commit()
+        client = _fake_client()
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm", order_ticket="33333", comment="Manual AI cancel"
+        )
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
+        self.assertEqual("cancelled", plan["status"])
+        self.assertEqual("cancelled", order["status"])
+
     def test_armed_limit_keeps_cancel_conditions_active(self):
         now = datetime.now(UTC).replace(microsecond=0)
         self._insert_armed_plan(expires_at=now + timedelta(minutes=30))

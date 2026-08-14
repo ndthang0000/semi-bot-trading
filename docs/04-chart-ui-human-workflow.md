@@ -99,7 +99,7 @@ thể cùng tồn tại; khi đã có position bot đang mở, worker không arm
 Live worker yêu cầu M5 fresh, kiểm tra lại
 execution/news/weekend/spread/risk, tính
 lot từ structural SL, giữ partial config riêng của lệnh và gửi expiry sang MT5.
-UI/JSON nhận `expires_in_minutes` (5–1440 phút); backend quy đổi từ `as_of`
+UI/JSON nhận `expires_in_minutes` (5–2880 phút); backend quy đổi từ `as_of`
 thành timestamp tuyệt đối trước khi lưu.
 MT5 adapter kiểm tra `SYMBOL_EXPIRATION_MODE` trước khi dùng expiry chính xác.
 Nếu broker không hỗ trợ hoặc từ chối `ORDER_TIME_SPECIFIED` bằng retcode `10022`,
@@ -118,7 +118,9 @@ broker cancel/expiry mới đóng trạng thái DB. Expiry và cancel condition 
 order không còn pending, tránh nhầm một position vừa fill thành order đã hủy.
 Manual input dùng hai nút BUY/SELL tương phản, hiển thị current chart price và
 khoảng SL theo cả đơn vị giá lẫn XAUUSD pip (`1 pip = 0.1`, nên 7 giá = 70 pip),
-hiển thị R:R tức thời và có preset TP 1.5R/2.5R/3R. UI chặn limit nằm
+hiển thị R:R tức thời và có preset TP từ 1.5R tới 4.0R, bước 0.5R. Expiry có
+preset từ 1H tới 48H. Manual input cho phép bật/tắt Partial TP, chọn trigger
+0.75R–1.5R, tỷ lệ đóng, và dời SL về breakeven hoặc giữ nguyên. UI chặn limit nằm
 sai phía current price hoặc SL nằm sai phía entry. Đóng wizard sau approval sẽ
 reset toàn bộ draft; màn hình thành công cũng có action `Thêm lệnh mới`.
 

@@ -75,7 +75,7 @@ class ManualAiCandidate(BaseModel):
     take_profit: float = Field(gt=0)
     risk_pct: float = Field(default=1.0, ge=1.0, le=1.0)
     risk_reward: float | None = Field(default=None, ge=0)
-    expires_in_minutes: int = Field(ge=5, le=1_440)
+    expires_in_minutes: int = Field(ge=5, le=2_880)
     partial_take_profit: ManualAiPartialTakeProfit = Field(default_factory=ManualAiPartialTakeProfit)
     cancel_conditions: list[ManualAiCancelCondition] = Field(default_factory=list, max_length=8)
     entry_reason: str = Field(min_length=1, max_length=2_000)

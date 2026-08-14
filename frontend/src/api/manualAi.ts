@@ -15,6 +15,13 @@ export type ManualAiPlan = {
   risk_reward: number;
   expires_at: string;
   expires_in_minutes: number;
+  partial_take_profit: {
+    enabled: boolean;
+    trigger_r: number;
+    close_fraction: number;
+    move_stop_to: "breakeven" | "unchanged";
+    breakeven_buffer: number;
+  };
 };
 
 export type ManualAiWorker = {
