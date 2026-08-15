@@ -1750,7 +1750,7 @@ def maybe_weekend_flatten(
     broker_symbol: str,
     now: datetime | None = None,
 ) -> bool:
-    """Cancel pending orders and close open positions once the Friday flatten window starts."""
+    """Flatten every position and pending order for this account's symbol."""
     if not env.execution_enabled or not env.weekend_flatten_enabled or not broker_symbol:
         return False
     now = now or datetime.now(UTC)
@@ -1758,15 +1758,22 @@ def maybe_weekend_flatten(
         return False
 
     action_date = _local_datetime(env, now).date().isoformat()
-    did_anything = False
     cancelled: list[dict[str, Any]] = []
     closed: list[dict[str, Any]] = []
+    errors: list[str] = []
     try:
-        cancelled = client.cancel_pending_orders(broker_symbol, magic=env.mt5_magic, comment="Friday flatten")
-        closed = client.close_open_positions(broker_symbol, magic=env.mt5_magic, comment="Friday flatten")
-        did_anything = bool(cancelled or closed)
+        cancelled = client.cancel_pending_orders(broker_symbol, magic=None, comment="Friday flatten")
     except Exception as exc:
-        logger.exception("Weekend flatten failed")
+        logger.exception("Weekend pending-order cancellation failed")
+        errors.append(f"Pending-order cancellation failed: {exc}")
+    try:
+        closed = client.close_open_positions(broker_symbol, magic=None, comment="Friday flatten")
+    except Exception as exc:
+        logger.exception("Weekend position close failed")
+        errors.append(f"Position close failed: {exc}")
+
+    did_anything = bool(cancelled or closed)
+    if errors:
         queue_alert(
             conn,
             symbol=config.symbol,
@@ -1774,17 +1781,23 @@ def maybe_weekend_flatten(
             event_type="execution_event",
             severity="critical",
             entity_ids=[],
-            payload={"title": "Weekend flatten failed", "reason": [str(exc)]},
-            dedupe_key=f"weekend-flatten-failed:{config.symbol}:{action_date}",
+            payload={
+                "title": "Weekend flatten incomplete",
+                "reason": [
+                    f"Cancelled pending orders: {len(cancelled)}",
+                    f"Closed positions: {len(closed)}",
+                    *errors,
+                ],
+            },
+            dedupe_key=f"weekend-flatten-failed:{env.account_label}:{config.symbol}:{action_date}",
         )
-        return False
 
     if cancelled:
         _mark_live_pending_orders_cancelled(conn, config.symbol, env.account_label, utc_now_iso())
     if closed:
         sync_closed_positions(conn, config, env, client, broker_symbol)
 
-    if did_anything:
+    if did_anything and not errors:
         queue_alert(
             conn,
             symbol=config.symbol,
@@ -1799,10 +1812,11 @@ def maybe_weekend_flatten(
                     f"Closed positions: {len(closed)}",
                 ],
             },
-            dedupe_key=f"weekend-flatten:{config.symbol}:{action_date}",
+            dedupe_key=f"weekend-flatten:{env.account_label}:{config.symbol}:{action_date}",
         )
+    if did_anything or errors:
         conn.commit()
-    return did_anything
+    return did_anything and not errors
 
 
 def _mark_live_pending_orders_cancelled(conn: Connection, symbol: str, account_label: str, now: str) -> None:

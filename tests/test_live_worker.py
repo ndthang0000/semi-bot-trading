@@ -1633,10 +1633,28 @@ class TestWeekendFlatten(unittest.TestCase):
         )
 
         self.assertTrue(did_flatten)
-        client.cancel_pending_orders.assert_called_once_with("XAUUSDm", magic=env.mt5_magic, comment="Friday flatten")
-        client.close_open_positions.assert_called_once_with("XAUUSDm", magic=env.mt5_magic, comment="Friday flatten")
+        client.cancel_pending_orders.assert_called_once_with("XAUUSDm", magic=None, comment="Friday flatten")
+        client.close_open_positions.assert_called_once_with("XAUUSDm", magic=None, comment="Friday flatten")
         row = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'order-pending'").fetchone()
         self.assertEqual("cancelled", row["status"])
+
+    def test_weekend_flatten_still_closes_positions_when_pending_cancel_fails(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        client = _fake_client()
+        client.cancel_pending_orders.side_effect = RuntimeError("cancel failed")
+        client.close_open_positions.return_value = [{"order": 222, "deal": 333, "retcode": 10009}]
+
+        did_flatten = maybe_weekend_flatten(
+            self._conn,
+            self._config,
+            env,
+            client,
+            "XAUUSDm",
+            datetime(2026, 6, 26, 19, 30, tzinfo=UTC),
+        )
+
+        self.assertFalse(did_flatten)
+        client.close_open_positions.assert_called_once_with("XAUUSDm", magic=None, comment="Friday flatten")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

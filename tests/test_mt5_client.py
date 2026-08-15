@@ -175,6 +175,26 @@ class MT5BotOwnershipTest(unittest.TestCase):
         self.assertEqual(1, len(results))
         self.assertEqual(22, mt5.order_send.call_args.args[0]["order"])
 
+    def test_cancel_pending_orders_with_no_magic_includes_human(self) -> None:
+        mt5 = MagicMock()
+        mt5.TRADE_ACTION_REMOVE = 8
+        mt5.TRADE_RETCODE_DONE = 10009
+        mt5.orders_get.return_value = [
+            SimpleNamespace(ticket=11, magic=0),
+            SimpleNamespace(ticket=22, magic=7),
+        ]
+        send_result = MagicMock()
+        send_result._asdict.return_value = {"retcode": 10009}
+        mt5.order_send.return_value = send_result
+        client = MT5BrokerClient.__new__(MT5BrokerClient)
+        client.mt5 = mt5
+        client.ensure_symbol = MagicMock()
+
+        results = client.cancel_pending_orders("XAUUSD", magic=None)
+
+        self.assertEqual(2, len(results))
+        self.assertEqual([11, 22], [call.args[0]["order"] for call in mt5.order_send.call_args_list])
+
     def test_close_positions_with_no_magic_includes_human(self) -> None:
         mt5 = MagicMock()
         mt5.POSITION_TYPE_BUY = 0

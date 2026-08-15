@@ -58,8 +58,8 @@ import {
 } from "./chart/chartCore";
 import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
-import { ChartDrawingLayer, type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
-import { ChartDrawingToolbar } from "./chart/ChartDrawingToolbar";
+import { ChartDrawingControls, type PendingChartNote } from "./chart/ChartDrawingControls";
+import { type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import {
   clampNumber,
@@ -146,7 +146,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingPlotWidth, setDrawingPlotWidth] = useState(0);
   const [drawingMessage, setDrawingMessage] = useState<string | null>(null);
-  const [pendingNote, setPendingNote] = useState<{ anchor: ChartDrawingAnchor; x: number; y: number } | null>(null);
+  const [pendingNote, setPendingNote] = useState<PendingChartNote | null>(null);
   const [noteContent, setNoteContent] = useState("");
   const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean; chartHeight: number } | null>(null);
   const [pointerY, setPointerY] = useState<number | null>(null);
@@ -1329,76 +1329,43 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         className="absolute inset-0"
         onClick={clearSelection}
       />
-      <ChartDrawingLayer
+      <ChartDrawingControls
         drawings={renderedDrawings}
         measure={measurePreview}
         priceGuide={copyPriceGuide}
         plotWidth={drawingPlotWidth}
         selectedId={selectedDrawingId}
+        activeTool={drawingTool}
+        measureHasStart={measureStartRef.current !== null}
+        pendingNote={pendingNote}
+        noteContent={noteContent}
+        chartWidth={containerRef.current?.clientWidth ?? 320}
+        message={drawingMessage}
         onDelete={(drawing) => void removeDrawing(drawing)}
         onMoveStart={beginMoveDrawing}
         onSelect={(drawing) => {
           setSelectedDrawingId(drawing.id);
           setSelected(null);
         }}
+        onToolChange={changeDrawingTool}
+        onPointerDown={beginChartDrawing}
+        onPointerMove={handleDrawingHover}
+        onPointerLeave={() => {
+          if (drawingTool === "copy_price") setCopyPriceGuide(null);
+        }}
+        onNoteContentChange={setNoteContent}
+        onSaveNote={() => {
+          const content = noteContent.trim();
+          if (!content || !pendingNote) return;
+          void persistDrawing("note", [pendingNote.anchor], {}, content);
+          setPendingNote(null);
+          setNoteContent("");
+        }}
+        onCancelNote={() => {
+          setPendingNote(null);
+          changeDrawingTool("cursor");
+        }}
       />
-      {drawingTool !== "cursor" && !pendingNote ? (
-        <div
-          className="absolute inset-0 z-[60] cursor-crosshair"
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={beginChartDrawing}
-          onPointerMove={handleDrawingHover}
-          onPointerLeave={() => {
-            if (drawingTool === "copy_price") setCopyPriceGuide(null);
-          }}
-        />
-      ) : null}
-      <ChartDrawingToolbar activeTool={drawingTool} onToolChange={changeDrawingTool} />
-      {drawingTool !== "cursor" && !pendingNote ? (
-        <div className="pointer-events-none absolute left-4 top-4 z-[65] rounded-lg border border-cyan-400/35 bg-ink-900/92 px-3 py-2 text-xs text-cyan-100 shadow-lg">
-          {drawingTool === "measure"
-            ? measureStartRef.current ? "Click điểm kết thúc để hoàn thành phép đo" : "Click điểm bắt đầu phép đo"
-            : drawingTool === "fib_standard"
-              ? "Kéo từ swing bắt đầu đến swing kết thúc để vẽ Fibonacci"
-              : drawingTool === "fib_ote"
-                ? "Kéo theo nhịp impulse; vùng vàng 0.62–0.79 là OTE"
-                : "Click một mức giá trên chart"}
-          <span className="ml-2 text-slate-500">Esc để hủy</span>
-        </div>
-      ) : null}
-      {pendingNote ? (
-        <form
-          className="absolute z-[80] w-72 rounded-xl border border-amber-300/35 bg-[#17150e]/98 p-3 shadow-2xl"
-          style={{ left: Math.min(pendingNote.x + 8, Math.max(8, (containerRef.current?.clientWidth ?? 320) - 296)), top: Math.max(8, pendingNote.y - 12) }}
-          onSubmit={(event) => {
-            event.preventDefault();
-            const content = noteContent.trim();
-            if (!content) return;
-            void persistDrawing("note", [pendingNote.anchor], {}, content);
-            setPendingNote(null);
-            setNoteContent("");
-          }}
-        >
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-amber-200">Ghi chú tại {pendingNote.anchor.price.toFixed(2)}</label>
-          <textarea
-            autoFocus
-            className="min-h-24 w-full resize-y rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-300/60"
-            maxLength={2000}
-            placeholder="Nhập nhận định, điều kiện hoặc lưu ý..."
-            value={noteContent}
-            onChange={(event) => setNoteContent(event.target.value)}
-          />
-          <div className="mt-2 flex justify-end gap-2">
-            <button className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:bg-white/5" type="button" onClick={() => { setPendingNote(null); changeDrawingTool("cursor"); }}>Hủy</button>
-            <button className="rounded-lg bg-amber-300 px-3 py-1.5 text-xs font-bold text-amber-950 disabled:opacity-40" disabled={!noteContent.trim()} type="submit">Lưu note</button>
-          </div>
-        </form>
-      ) : null}
-      {drawingMessage ? (
-        <div className="pointer-events-none absolute bottom-16 left-1/2 z-[75] -translate-x-1/2 rounded-lg border border-emerald-400/35 bg-emerald-950/95 px-3 py-2 text-xs text-emerald-100 shadow-lg">
-          {drawingMessage}
-        </div>
-      ) : null}
       {addEntityKind ? (
         <div
           className="absolute inset-0 z-40 cursor-crosshair"

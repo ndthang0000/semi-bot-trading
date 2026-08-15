@@ -400,7 +400,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             ),
             zone_reaction_v2_fakeout_max_atr=float(zone_reaction_v2.get("fakeout_max_atr", 0.5)),
             zone_reaction_v2_reject_recovery_min_avg_body_ratio=float(
-                zone_reaction_v2.get("reject_recovery_min_avg_body_ratio", 1.75)
+                zone_reaction_v2.get("reject_recovery_min_avg_body_ratio", 2.0)
             ),
             zone_reaction_v2_reject_avg_body_period=int(zone_reaction_v2.get("reject_avg_body_period", 20)),
             zone_reaction_v2_reject_h1_touch_required=bool(

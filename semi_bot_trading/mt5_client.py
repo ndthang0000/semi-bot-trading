@@ -372,15 +372,19 @@ class MT5BrokerClient:
             for deal in deals
         )
 
-    def cancel_pending_orders(self, broker_symbol: str, *, magic: int, comment: str = "weekend flatten") -> list[dict[str, Any]]:
-        """Cancel pending bot orders only; manual orders are never touched."""
+    def cancel_pending_orders(self, broker_symbol: str, *, magic: int | None, comment: str = "weekend flatten") -> list[dict[str, Any]]:
+        """Cancel pending orders, optionally restricted to one magic number.
+
+        ``magic=None`` is an explicit account-wide operation for the symbol and
+        therefore includes manual orders (magic 0) and orders from other EAs.
+        """
         self.ensure_symbol(broker_symbol)
         orders = self.mt5.orders_get(symbol=broker_symbol)
         if not orders:
             return []
         results: list[dict[str, Any]] = []
         for order in orders:
-            if int(getattr(order, "magic", 0) or 0) != magic:
+            if magic is not None and int(getattr(order, "magic", 0) or 0) != magic:
                 continue
             payload = {
                 "action": self.mt5.TRADE_ACTION_REMOVE,

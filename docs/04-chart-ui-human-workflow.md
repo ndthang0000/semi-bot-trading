@@ -495,6 +495,9 @@ Không nên build chart engine từ đầu ở MVP.
 - Hotkey toàn app: `1` Chart, `2` Dashboard, `3` Journal, `4` Weekly Journal, `5` Calm và `?` mở bảng hướng dẫn.
 - Hotkey riêng khi ở Chart: `T` chuyển H1/M15, `V` bật/tắt trade overlays và `R` reload dữ liệu tương đương nút Reload trên toolbar.
 - Drawing toolbar nằm nổi bên trong chart, kéo thả bằng grip và nhớ vị trí trên thiết bị. `M` mở Measure, `N` tạo Note, `H` tạo Horizontal Line, `F` tạo Fib Retracement, `Shift+F` tạo Fib OTE, `Alt+C` copy giá và `Esc` về Cursor. `V` tiếp tục dành cho bật/tắt trade overlays.
+- Tren mobile, drawing toolbar va tooltip huong dan duoc an de khong che chart;
+  drawing da luu van duoc render binh thuong. Cac cong cu ve day du dung tren
+  desktop tu breakpoint `lg` tro len.
 - Hotkey không kích hoạt khi focus vào input, textarea, select hoặc contenteditable; khóa Weekly Review vẫn áp dụng khi điều hướng bằng phím.
 
 ## Human chart drawings

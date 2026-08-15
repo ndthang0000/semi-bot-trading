@@ -71,7 +71,7 @@ export function ChartDrawingToolbar({ activeTool, onToolChange }: Props) {
     <div
       ref={toolbarRef}
       aria-label="Công cụ vẽ chart"
-      className="absolute z-[70] flex max-w-[calc(100%-16px)] items-center overflow-x-auto rounded-xl border border-white/10 bg-[#202124]/95 p-1.5 text-slate-200 shadow-[0_10px_28px_rgba(0,0,0,0.48)] backdrop-blur-md"
+      className="absolute z-[70] hidden max-w-[calc(100%-16px)] items-center overflow-x-auto rounded-xl border border-white/10 bg-[#202124]/95 p-1.5 text-slate-200 shadow-[0_10px_28px_rgba(0,0,0,0.48)] backdrop-blur-md lg:flex"
       style={{ left: position.x, top: position.y }}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}

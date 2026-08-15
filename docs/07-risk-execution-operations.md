@@ -204,7 +204,9 @@ Metrics:
 Voi style XAUUSD H1/M15 zone reaction, live worker khong giu lenh qua weekend. Mac dinh:
 
 - Ngung mo lenh moi sau `Friday 12:00 America/New_York`.
-- Tu dong cancel pending orders va close open positions sau `Friday 15:30 America/New_York`.
+- Tu dong cancel **tat ca** pending orders va close **tat ca** open positions cua
+  symbol tren account worker sau `Friday 15:30 America/New_York`, bao gom bot,
+  manual (`magic=0`) va order cua EA khac.
 - `Friday 15:30 America/New_York` thuong la `Saturday 02:30 Asia/Ho_Chi_Minh` khi New York dang DST.
 - Weekend window ket thuc luc `Sunday 17:00 America/New_York`, gan voi luc thi truong mo lai tuan moi.
 

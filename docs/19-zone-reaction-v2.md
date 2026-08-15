@@ -44,7 +44,7 @@ Zone Reaction V2 khong detect breakout va khong tao state breakout/retest. Toan 
 enabled = true
 allowed_reactions = ["reject", "internal_reject"]
 fakeout_max_atr = 0.5
-reject_recovery_min_avg_body_ratio = 1.75
+reject_recovery_min_avg_body_ratio = 2.0
 reject_avg_body_period = 20
 reject_h1_touch_required = false
 reject_h1_touch_lookback_bars = 3
