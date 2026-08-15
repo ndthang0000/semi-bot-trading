@@ -26,6 +26,7 @@ export function ZoneEditor({
   const [confidence, setConfidence] = useState(String(zone.confidence));
   const [status, setStatus] = useState<"active" | "draft" | "disabled">(editableZoneStatus(zone));
   const [tradeModes, setTradeModes] = useState<ZoneTradeMode[]>(defaultTradeModes(zone));
+  const [direction, setDirection] = useState(zone.direction);
   const [reason, setReason] = useState("");
   const [shortTermTrend, setShortTermTrend] = useState<TrendAnswer>("");
   const [mediumTermTrend, setMediumTermTrend] = useState<TrendAnswer>("");
@@ -47,6 +48,18 @@ export function ZoneEditor({
     const high = Number(priceHigh);
     return Number.isFinite(low) && Number.isFinite(high) && high >= low ? high - low : null;
   }, [priceHigh, priceLow]);
+  const liquidityStates = useMemo(() => {
+    const rawStates = zone.metadata.liquidity_sweep_states;
+    if (Array.isArray(rawStates)) {
+      return rawStates.filter(
+        (state): state is Record<string, unknown> => Boolean(state) && typeof state === "object" && !Array.isArray(state),
+      );
+    }
+    const legacy = zone.metadata.liquidity_sweep_state;
+    return legacy && typeof legacy === "object" && !Array.isArray(legacy)
+      ? [legacy as Record<string, unknown>]
+      : [];
+  }, [zone.metadata.liquidity_sweep_state, zone.metadata.liquidity_sweep_states]);
   const isDirty = useMemo(() => {
     const low = Number(priceLow);
     const high = Number(priceHigh);
@@ -58,10 +71,11 @@ export function ZoneEditor({
       parsedWeight !== zone.weight ||
       parsedConfidence !== zone.confidence ||
       status !== editableZoneStatus(zone) ||
+      direction !== zone.direction ||
       !sameTradeModes(tradeModes, defaultTradeModes(zone)) ||
       reason.trim().length > 0
     );
-  }, [confidence, priceHigh, priceLow, reason, status, tradeModes, weight, zone]);
+  }, [confidence, direction, priceHigh, priceLow, reason, status, tradeModes, weight, zone]);
 
   useEffect(() => {
     reset();
@@ -74,6 +88,7 @@ export function ZoneEditor({
     setConfidence(String(zone.confidence));
     setStatus(editableZoneStatus(zone));
     setTradeModes(defaultTradeModes(zone));
+    setDirection(zone.direction);
     setReason("");
     setShortTermTrend("");
     setMediumTermTrend("");
@@ -170,6 +185,7 @@ export function ZoneEditor({
         status,
         reason: reason.trim() || undefined,
         trade_modes: tradeModes,
+        direction,
       });
       setSelected({ kind: "zone", entity: updated });
       onZoneUpdated();
@@ -181,7 +197,7 @@ export function ZoneEditor({
     } finally {
       setIsSaving(false);
     }
-  }, [confidence, isDirty, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
+  }, [confidence, direction, isDirty, onZoneUpdated, priceHigh, priceLow, reason, setSelected, showToast, status, tradeModes, weight, zone]);
 
   const deleteZone = useCallback(async () => {
     if (isSaving) return;
@@ -248,6 +264,40 @@ export function ZoneEditor({
         <Detail label="Size" value={zoneSize === null ? "--" : price(zoneSize)} />
       </div>
 
+      {zone.type === "liquidity_pool" ? (
+        <div className="grid gap-2 rounded-md border border-cyan-400/25 bg-cyan-400/5 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">Liquidity Sweep V1</div>
+          <Detail label="Trade side" value={zone.direction === "bullish" ? "Buy" : zone.direction === "bearish" ? "Sell (not active in V1)" : "Not selected"} />
+          {liquidityStates.length === 0 ? <Detail label="Runtime" value="idle / not armed" /> : null}
+          {liquidityStates.map((liquidityState) => (
+            <div className="grid gap-1 border-t border-cyan-400/15 pt-2" key={String(liquidityState.account_label ?? "Default")}>
+              <Detail label="Account" value={String(liquidityState.account_label ?? "--")} />
+              <Detail label="Runtime" value={String(liquidityState.state ?? "idle")} />
+              <Detail label="Touched" value={compactTime(typeof liquidityState.touched_lower_at === "string" ? liquidityState.touched_lower_at : null)} />
+              <Detail label="Deadline" value={compactTime(typeof liquidityState.deadline_at === "string" ? liquidityState.deadline_at : null)} />
+              <Detail label="ATR touch" value={typeof liquidityState.atr_at_touch === "number" ? price(liquidityState.atr_at_touch) : "--"} />
+              <Detail label="Deepest Bid" value={typeof liquidityState.deepest_bid === "number" ? price(liquidityState.deepest_bid) : "--"} />
+              <Detail label="Breakout" value={typeof liquidityState.invalidation_price === "number" ? price(liquidityState.invalidation_price) : "--"} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {zone.type === "liquidity_pool" ? (
+        <label className="grid gap-1 text-xs text-slate-500">
+          Liquidity trade side
+          <select
+            className="h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none"
+            value={direction}
+            onChange={(event) => setDirection(event.target.value)}
+          >
+            <option value="neutral">Not selected</option>
+            <option value="bullish">Buy</option>
+            <option value="bearish">Sell (reserved)</option>
+          </select>
+        </label>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-2">
         <NumberField label="Low" value={priceLow} onChange={setPriceLow} step="0.01" />
         <NumberField label="High" value={priceHigh} onChange={setPriceHigh} step="0.01" />
@@ -280,7 +330,7 @@ export function ZoneEditor({
       <div className="grid gap-2 rounded-md border border-ink-700 bg-ink-950/50 p-3">
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trade modes</div>
         <div className="grid grid-cols-3 gap-2">
-          {TRADE_MODE_OPTIONS.map((option) => (
+          {tradeModeOptionsForZone(zone).map((option) => (
             <label key={option.value} className="inline-flex items-center gap-2 rounded border border-ink-700 bg-ink-850 px-2 py-1.5 text-xs text-slate-200">
               <input
                 checked={tradeModes.includes(option.value)}
@@ -576,12 +626,20 @@ const TRADE_MODE_OPTIONS: Array<{ value: ZoneTradeMode; label: string }> = [
   { value: "reject", label: "Reject" },
   { value: "internal_reject", label: "Internal" },
   { value: "breakout", label: "Breakout" },
+  { value: "liquidity_sweep", label: "Liquidity sweep" },
 ];
+
+function tradeModeOptionsForZone(zone: PriceZone): Array<{ value: ZoneTradeMode; label: string }> {
+  if (zone.type === "liquidity_pool") {
+    return TRADE_MODE_OPTIONS.filter((option) => option.value === "liquidity_sweep");
+  }
+  return TRADE_MODE_OPTIONS.filter((option) => option.value !== "liquidity_sweep");
+}
 
 function defaultTradeModes(zone: PriceZone): ZoneTradeMode[] {
   const raw = zone.metadata.trade_modes;
   if (Array.isArray(raw)) {
-    return raw.filter((mode): mode is ZoneTradeMode => mode === "reject" || mode === "internal_reject" || mode === "breakout");
+    return raw.filter((mode): mode is ZoneTradeMode => mode === "reject" || mode === "internal_reject" || mode === "breakout" || mode === "liquidity_sweep");
   }
   if (zone.type === "fvg") return ["reject", "internal_reject"];
   if (zone.type === "consolidation") return ["breakout"];
@@ -601,16 +659,19 @@ function editableZoneStatus(zone: PriceZone): "active" | "draft" | "disabled" {
 }
 
 function zoneDisplayName(zone: PriceZone): string {
+  if (zone.type === "liquidity_pool" && zone.status === "swept") return "Historical Liquidity Sweep";
   const kind = zone.metadata.add_entity_kind;
   if (kind === "demand_order_block") return "Demand OB";
   if (kind === "supply_order_block") return "Supply OB";
   if (kind === "bullish_fvg") return "Bullish FVG";
   if (kind === "bearish_fvg") return "Bearish FVG";
-  if (kind === "buy_side_liquidity") return "Buy-side Liquidity";
-  if (kind === "sell_side_liquidity") return "Sell-side Liquidity";
+  if (kind === "buy_side_liquidity") return "Buy Liquidity Zone";
+  if (kind === "sell_side_liquidity") return "Sell Liquidity Zone";
   if (zone.type === "order_block") return zone.direction === "bullish" ? "Demand OB" : "Supply OB";
   if (zone.type === "fvg") return zone.direction === "bullish" ? "Bullish FVG" : "Bearish FVG";
-  if (zone.type === "liquidity_pool") return "Liquidity Pool";
+  if (zone.type === "liquidity_pool") {
+    return zone.direction === "bullish" ? "Buy Liquidity Zone" : zone.direction === "bearish" ? "Sell Liquidity Zone" : "Liquidity Pool";
+  }
   return zone.type;
 }
 

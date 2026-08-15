@@ -816,6 +816,39 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(zone_count, 1)
         self.assertEqual(override_count, 1)
 
+    def test_liquidity_sweep_mode_requires_bullish_liquidity_zone(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = {
+                "symbol": "XAUUSD",
+                "timeframe": "H1",
+                "zone_type": "liquidity_pool",
+                "direction": "bullish",
+                "price_low": 1980.0,
+                "price_high": 1990.0,
+                "visual_start": "2026-01-01T00:00:00+00:00",
+                "visual_end": "2026-01-02T00:00:00+00:00",
+                "weight": 0.8,
+                "confidence": 0.9,
+                "trade_modes": ["liquidity_sweep"],
+            }
+
+            accepted = client.post("/api/zones", json=payload)
+            rejected = client.post(
+                "/api/zones",
+                json={**payload, "zone_type": "support"},
+            )
+
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["metadata"]["trade_modes"], ["liquidity_sweep"])
+        self.assertEqual(rejected.status_code, 422)
+        self.assertIn("bullish liquidity_pool", rejected.json()["detail"])
+
     def test_create_manual_sr_zone_persists_reject_only_default(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

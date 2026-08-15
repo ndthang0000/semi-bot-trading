@@ -14,6 +14,7 @@ Playbook runtime hien tai:
 
 - `zone_reaction_v2`: reject/internal reject tai `support`, `resistance`, `fvg`.
 - `sr_breakout_v1`: breakout/retest qua `support`, `resistance`. Xem `docs/21-sr-breakout-v1.md`.
+- `liquidity_sweep_reclaim_v1`: quote-driven reclaim cua Zone Buy liquidity. Xem `docs/22-liquidity-sweep-reclaim-v1.md`.
 
 ## Entity Scope
 

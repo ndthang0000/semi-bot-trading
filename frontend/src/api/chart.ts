@@ -259,6 +259,7 @@ export type ZoneOverrideInput = {
   expires_at?: string | null;
   reason?: string;
   trade_modes?: ZoneTradeMode[];
+  direction?: string;
 };
 
 export type ZoneCreateInput = {

@@ -127,6 +127,7 @@ class ZoneOverrideRequest(BaseModel):
     expires_at: str | None = None
     reason: str | None = None
     trade_modes: list[str] | None = None
+    direction: str | None = None
 
 
 class ZoneCreateRequest(BaseModel):

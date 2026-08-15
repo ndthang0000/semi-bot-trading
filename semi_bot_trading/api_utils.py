@@ -266,3 +266,13 @@ def validate_zone_type(zone_type: str, direction: str) -> None:
     if direction not in allowed[zone_type]:
         valid_directions = ", ".join(sorted(allowed[zone_type]))
         raise ValueErrorForApi(f"direction for {zone_type} must be one of: {valid_directions}")
+
+
+def validate_zone_trade_modes(zone_type: str, direction: str, trade_modes: list[str]) -> None:
+    """Validate execution-sensitive modes against zone geometry semantics."""
+    if "liquidity_sweep" not in trade_modes:
+        return
+    if zone_type != "liquidity_pool" or direction != "bullish":
+        raise ValueErrorForApi(
+            "liquidity_sweep requires a bullish liquidity_pool (Zone Buy liquidity)"
+        )

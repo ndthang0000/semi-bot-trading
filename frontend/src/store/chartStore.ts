@@ -31,6 +31,7 @@ export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibil
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
   manual_ai_v1: { zones: [], structure: true },
+  liquidity_sweep_reclaim_v1: { zones: ["liquidity_pool"], structure: true },
 };
 
 type ChartState = {
@@ -217,23 +218,32 @@ export const useChartStore = create<ChartState>()(
 );
 
 function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> {
-  const requiredZoneTypes = requiredZoneTypesForPlaybooks(state.selectedPlaybooks);
-  const requiresStructure = requiresStructureForPlaybooks(state.selectedPlaybooks);
-  const manualAiOnly = state.selectedPlaybooks.length === 1 && state.selectedPlaybooks[0] === "manual_ai_v1";
-  if (requiredZoneTypes.size === 0 && !requiresStructure) {
-    return {
-      selectedPlaybooks: state.selectedPlaybooks,
-    };
-  }
-  const zoneTypeVisibility = { ...state.zoneTypeVisibility };
-  requiredZoneTypes.forEach((zoneType) => {
-    zoneTypeVisibility[zoneType] = true;
-  });
+  const layers = playbookControlledLayers(state.selectedPlaybooks, state.tradeVisibilityMode);
   return {
     selectedPlaybooks: state.selectedPlaybooks,
-    showZones: manualAiOnly ? false : requiredZoneTypes.size > 0 ? true : state.showZones,
-    zoneTypeVisibility,
-    showStructure: requiresStructure ? true : state.showStructure,
+    ...layers,
+  };
+}
+
+export function playbookControlledLayers(
+  playbooks: PlaybookKey[],
+  currentTradeVisibility: TradeVisibilityMode = "visible",
+): Pick<ChartState, "showZones" | "zoneTypeVisibility" | "showStructure" | "tradeVisibilityMode"> {
+  const requiredZoneTypes = requiredZoneTypesForPlaybooks(playbooks);
+  const liquidityOnly = playbooks.length === 1 && playbooks[0] === "liquidity_sweep_reclaim_v1";
+  const manualAiOnly = playbooks.length === 1 && playbooks[0] === "manual_ai_v1";
+  return {
+    showZones: requiredZoneTypes.size > 0,
+    zoneTypeVisibility: {
+      support: requiredZoneTypes.has("support"),
+      resistance: requiredZoneTypes.has("resistance"),
+      order_block: requiredZoneTypes.has("order_block"),
+      fvg: requiredZoneTypes.has("fvg"),
+      liquidity_pool: requiredZoneTypes.has("liquidity_pool"),
+      consolidation: requiredZoneTypes.has("consolidation"),
+    },
+    showStructure: requiresStructureForPlaybooks(playbooks),
+    tradeVisibilityMode: liquidityOnly || manualAiOnly ? "off" : currentTradeVisibility,
   };
 }
 

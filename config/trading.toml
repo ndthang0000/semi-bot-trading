@@ -210,6 +210,15 @@ rr = 2.0
 # Wide zone-edge stops fall back to ATR stop; this is not a hard block cap.
 max_stop_distance = 40.0
 
+[strategy.playbooks.liquidity_sweep_reclaim_v1]
+enabled = true
+# A liquidity zone is inert until metadata.trade_modes explicitly contains
+# "liquidity_sweep". Existing liquidity zones therefore remain safe after deploy.
+timeout_minutes = 15
+max_sweep_atr = 2.0
+sl_buffer_atr = 0.2
+rr = 2.5
+
 [backtest]
 auto_accept = true
 spread = 0.30

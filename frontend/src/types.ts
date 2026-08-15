@@ -37,7 +37,7 @@ export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 
 export type TradeVisibilityMode = "visible" | "hidden" | "all" | "off";
 
-export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1" | "manual_ai_v1";
+export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1" | "manual_ai_v1" | "liquidity_sweep_reclaim_v1";
 
 export type AddEntityKind =
   | "support"
@@ -119,7 +119,7 @@ export type PriceZone = {
   metadata: Record<string, unknown>;
 };
 
-export type ZoneTradeMode = "reject" | "internal_reject" | "breakout";
+export type ZoneTradeMode = "reject" | "internal_reject" | "breakout" | "liquidity_sweep";
 
 export type ZoneActivationReview = {
   version?: number;

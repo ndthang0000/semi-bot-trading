@@ -551,6 +551,44 @@ def load_chart_zones(
     return zones
 
 
+def attach_liquidity_sweep_states(conn: Connection, zones: list[dict[str, Any]]) -> None:
+    """Attach every account-scoped runtime state for dashboard inspection."""
+    liquidity_zone_ids = [zone["id"] for zone in zones if zone["type"] == "liquidity_pool"]
+    if not liquidity_zone_ids:
+        return
+    placeholders = ",".join("?" for _ in liquidity_zone_ids)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM liquidity_sweep_states
+        WHERE zone_id IN ({placeholders})
+        ORDER BY updated_at DESC
+        """,
+        liquidity_zone_ids,
+    ).fetchall()
+    states_by_zone: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        state = {
+            "account_label": row["account_label"],
+            "state": row["state"],
+            "touched_lower_at": row["touched_lower_at"],
+            "deadline_at": row["deadline_at"],
+            "atr_at_touch": row["atr_at_touch"],
+            "deepest_bid": row["deepest_bid"],
+            "invalidation_price": row["invalidation_price"],
+            "reclaimed_at": row["reclaimed_at"],
+            "terminal_reason": row["terminal_reason"],
+            "updated_at": row["updated_at"],
+        }
+        states_by_zone.setdefault(str(row["zone_id"]), []).append(state)
+    for zone in zones:
+        states = states_by_zone.get(str(zone["id"]), [])
+        if not states:
+            continue
+        zone["metadata"]["liquidity_sweep_states"] = states
+        # Backward-compatible summary for older frontends.
+        zone["metadata"]["liquidity_sweep_state"] = states[0]
+
+
 def project_zone_lifecycle_for_chart(
     row: Any,
     metadata: dict[str, Any],
@@ -934,6 +972,8 @@ def build_chart_payload(
     range_end = candles[-1]["time"]
     effective_structure_timeframe = structure_timeframe or "H1"
     zones = load_chart_zones(conn, symbol, effective_structure_timeframe, range_start, range_end, active_only=active_zones_only)
+    if is_latest_mode:
+        attach_liquidity_sweep_states(conn, zones)
     context_as_of = None if is_latest_mode else range_end
     contexts = load_chart_contexts(conn, symbol, as_of=context_as_of)
     if macro_trend_config is not None:
