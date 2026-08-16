@@ -48,6 +48,7 @@ describe("Liquidity Sweep V1 zone presentation", () => {
     const actionable = liquidityZone("active");
 
     expect(isZoneVisibleForPlaybooks(historical, ["liquidity_sweep_reclaim_v1"])).toBe(false);
+    expect(isZoneVisibleForPlaybooks(historical, ["liquidity_sweep_reclaim_v1"], true)).toBe(true);
     expect(isZoneVisibleForPlaybooks(actionable, ["liquidity_sweep_reclaim_v1"])).toBe(true);
     expect(zoneDisplayName(historical)).toBe("Historical Liquidity Sweep");
     expect(zoneDisplayName(actionable)).toBe("Buy Liquidity Zone");

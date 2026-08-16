@@ -2,6 +2,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, 
 import { useEffect, useRef, useState } from "react";
 import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/auth";
 import type { NewsResponse } from "../api/chart";
+import { allowedAddEntityKinds, type AddEntityMenuKind } from "../lib/playbookEntities";
 import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
@@ -27,6 +28,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
   const startIndex = useChartStore((state) => state.startIndex);
   const autoRefreshEnabled = useChartStore((state) => state.autoRefreshEnabled);
   const addEntityKind = useChartStore((state) => state.addEntityKind);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const setTimeframe = useChartStore((state) => state.setTimeframe);
   const setLimit = useChartStore((state) => state.setLimit);
   const setStartIndex = useChartStore((state) => state.setStartIndex);
@@ -39,8 +41,11 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
   // H1 is the only zone/context timeframe; manual zones on M15 are rejected by
   // the API (422), so the draw entry point is disabled while viewing M15 to
   // avoid a dead-end UX (draw -> submit -> error).
+  const allowedEntityKinds = allowedAddEntityKinds(selectedPlaybooks);
+  const zoneEntityOptions = ADD_ENTITY_OPTIONS.filter((option) => allowedEntityKinds.has(option.kind));
   const canAddEntity = timeframe === "H1";
-  const canCreateManualAi = mode === "dashboard" && startIndex === null;
+  const canCreateManualAi =
+    allowedEntityKinds.has("manual_ai") && mode === "dashboard" && startIndex === null;
 
   useEffect(() => {
     if (!canCreateManualAi) {
@@ -117,16 +122,12 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
             }}
           >
             <option value="">Add entity</option>
-            <option disabled={!canCreateManualAi} value="manual_ai">Manual AI trade…</option>
-            <option disabled={!canAddEntity} value="support">Support</option>
-            <option disabled={!canAddEntity} value="resistance">Resistance</option>
-            <option disabled={!canAddEntity} value="demand_order_block">Demand OB</option>
-            <option disabled={!canAddEntity} value="supply_order_block">Supply OB</option>
-            <option disabled={!canAddEntity} value="bullish_fvg">Bullish FVG</option>
-            <option disabled={!canAddEntity} value="bearish_fvg">Bearish FVG</option>
-            <option disabled={!canAddEntity} value="consolidation">Consolidation</option>
-            <option disabled={!canAddEntity} value="buy_side_liquidity">Buy Liquidity Zone</option>
-            <option disabled={!canAddEntity} value="sell_side_liquidity">Sell Liquidity Zone</option>
+            {allowedEntityKinds.has("manual_ai") ? (
+              <option disabled={!canCreateManualAi} value="manual_ai">Manual AI trade…</option>
+            ) : null}
+            {zoneEntityOptions.map((option) => (
+              <option disabled={!canAddEntity} key={option.kind} value={option.kind}>{option.label}</option>
+            ))}
           </select>
           {addEntityKind ? (
             <button
@@ -228,6 +229,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
         selected={addEntityKind}
         canDrawZones={canAddEntity}
         canCreateManualAi={canCreateManualAi}
+        allowedEntityKinds={allowedEntityKinds}
         onManualAi={() => { setMobilePanel(null); setManualAiOpen(true); }}
         onSelect={(kind) => {
           setAddEntityKind(kind);
@@ -289,6 +291,7 @@ function MobileLayersPanel() {
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const setActiveZonesOnly = useChartStore((state) => state.setActiveZonesOnly);
   const setShowZones = useChartStore((state) => state.setShowZones);
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
@@ -296,6 +299,7 @@ function MobileLayersPanel() {
   const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
   const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
   const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
+  const setShowHistoricalLiquiditySweeps = useChartStore((state) => state.setShowHistoricalLiquiditySweeps);
   const requiredZones = new Set(selectedPlaybooks.flatMap((playbook) => playbookLayerRequirements[playbook].zones));
   const structureRequired = selectedPlaybooks.some((playbook) => playbookLayerRequirements[playbook].structure);
 
@@ -314,6 +318,13 @@ function MobileLayersPanel() {
         />
       </label>
       <MobileToggleRow checked={activeZonesOnly} label="Active zones only" onChange={setActiveZonesOnly} />
+      {selectedPlaybooks.includes("liquidity_sweep_reclaim_v1") ? (
+        <MobileToggleRow
+          checked={showHistoricalLiquiditySweeps}
+          label="Show historical sweeps"
+          onChange={setShowHistoricalLiquiditySweeps}
+        />
+      ) : null}
       <MobileToggleRow checked={showZones} label="Price zones" onChange={setShowZones} />
       <div className="grid grid-cols-2 gap-2">
         {LAYER_ITEMS.map((item) => (
@@ -387,14 +398,17 @@ const MOBILE_DRAW_ITEMS: Array<{ kind: AddEntityKind; label: string; description
   { kind: "sell_side_liquidity", label: "Sell liquidity", description: "Liquidity below lows" },
 ];
 
-function MobileDrawPanel({ canCreateManualAi, canDrawZones, onManualAi, selected, onSelect }: { canCreateManualAi: boolean; canDrawZones: boolean; onManualAi: () => void; selected: AddEntityKind | null; onSelect: (kind: AddEntityKind) => void }) {
+function MobileDrawPanel({ allowedEntityKinds, canCreateManualAi, canDrawZones, onManualAi, selected, onSelect }: { allowedEntityKinds: Set<AddEntityMenuKind>; canCreateManualAi: boolean; canDrawZones: boolean; onManualAi: () => void; selected: AddEntityKind | null; onSelect: (kind: AddEntityKind) => void }) {
+  const drawItems = MOBILE_DRAW_ITEMS.filter((item) => allowedEntityKinds.has(item.kind));
   return (
     <div className="grid grid-cols-2 gap-2 p-4">
-      <button className="col-span-2 min-h-16 rounded-xl border border-cyan-400/40 bg-cyan-400/10 p-3 text-left disabled:cursor-not-allowed disabled:opacity-35" disabled={!canCreateManualAi} type="button" onClick={onManualAi}>
-        <span className="block text-sm font-semibold text-cyan-100">Manual AI trade</span>
-        <span className="mt-1 block text-[11px] text-cyan-200/60">Import AI JSON hoặc nhập limit plan thủ công</span>
-      </button>
-      {MOBILE_DRAW_ITEMS.map((item) => (
+      {allowedEntityKinds.has("manual_ai") ? (
+        <button className="col-span-2 min-h-16 rounded-xl border border-cyan-400/40 bg-cyan-400/10 p-3 text-left disabled:cursor-not-allowed disabled:opacity-35" disabled={!canCreateManualAi} type="button" onClick={onManualAi}>
+          <span className="block text-sm font-semibold text-cyan-100">Manual AI trade</span>
+          <span className="mt-1 block text-[11px] text-cyan-200/60">Import AI JSON hoặc nhập limit plan thủ công</span>
+        </button>
+      ) : null}
+      {drawItems.map((item) => (
         <button
           key={item.kind}
           className={`min-h-20 rounded-xl border p-3 text-left active:scale-[0.99] ${
@@ -628,6 +642,8 @@ function PlaybookMenu() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
+  const setShowHistoricalLiquiditySweeps = useChartStore((state) => state.setShowHistoricalLiquiditySweeps);
   const toggleSelectedPlaybook = useChartStore((state) => state.toggleSelectedPlaybook);
 
   useEffect(() => {
@@ -682,6 +698,20 @@ function PlaybookMenu() {
               </label>
             ))}
           </div>
+          {selectedPlaybooks.includes("liquidity_sweep_reclaim_v1") ? (
+            <label className="mt-2 flex cursor-pointer items-center gap-2 rounded border border-yellow-300/20 bg-yellow-300/5 px-2 py-2 text-yellow-100">
+              <input
+                checked={showHistoricalLiquiditySweeps}
+                className="accent-yellow-300"
+                type="checkbox"
+                onChange={(event) => setShowHistoricalLiquiditySweeps(event.target.checked)}
+              />
+              <span>
+                <span className="block text-xs font-semibold">Show historical sweeps</span>
+                <span className="block text-[10px] text-yellow-100/55">Research only · includes swept detector zones</span>
+              </span>
+            </label>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -853,6 +883,18 @@ const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "sr_breakout_v1", label: "SR Breakout V1" },
   { key: "manual_ai_v1", label: "Manual AI" },
   { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1" },
+];
+
+const ADD_ENTITY_OPTIONS: Array<{ kind: AddEntityKind; label: string }> = [
+  { kind: "support", label: "Support" },
+  { kind: "resistance", label: "Resistance" },
+  { kind: "demand_order_block", label: "Demand OB" },
+  { kind: "supply_order_block", label: "Supply OB" },
+  { kind: "bullish_fvg", label: "Bullish FVG" },
+  { kind: "bearish_fvg", label: "Bearish FVG" },
+  { kind: "consolidation", label: "Consolidation" },
+  { kind: "buy_side_liquidity", label: "Buy Liquidity Zone" },
+  { kind: "sell_side_liquidity", label: "Sell Liquidity Zone" },
 ];
 
 function playbookRequirementLabel(playbook: PlaybookKey): string {

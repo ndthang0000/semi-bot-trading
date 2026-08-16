@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { allowedAddEntityKinds } from "../lib/playbookEntities";
 import type {
   AddEntityKind,
   PlaybookKey,
@@ -40,6 +41,7 @@ type ChartState = {
   limit: number;
   startIndex: number | null;
   activeZonesOnly: boolean;
+  showHistoricalLiquiditySweeps: boolean;
   showZones: boolean;
   zoneTypeVisibility: ZoneTypeVisibility;
   showStructure: boolean;
@@ -58,6 +60,7 @@ type ChartState = {
   setStartIndex: (startIndex: number | null) => void;
   shiftStartIndex: (delta: number) => void;
   setActiveZonesOnly: (activeZonesOnly: boolean) => void;
+  setShowHistoricalLiquiditySweeps: (show: boolean) => void;
   setShowZones: (showZones: boolean) => void;
   setZoneTypeVisible: (zoneType: ZoneVisibilityKey, visible: boolean) => void;
   setAllZoneTypesVisible: (visible: boolean) => void;
@@ -83,6 +86,7 @@ export const useChartStore = create<ChartState>()(
       limit: 300,
       startIndex: null,
       activeZonesOnly: false,
+      showHistoricalLiquiditySweeps: false,
       showZones: true,
       zoneTypeVisibility: defaultZoneTypeVisibility,
       showStructure: true,
@@ -107,7 +111,16 @@ export const useChartStore = create<ChartState>()(
           startIndex: Math.max(0, (state.startIndex ?? 0) + delta),
           selected: null,
         })),
-      setActiveZonesOnly: (activeZonesOnly) => set({ activeZonesOnly }),
+      setActiveZonesOnly: (activeZonesOnly) =>
+        set({
+          activeZonesOnly,
+          ...(activeZonesOnly ? { showHistoricalLiquiditySweeps: false } : {}),
+        }),
+      setShowHistoricalLiquiditySweeps: (showHistoricalLiquiditySweeps) =>
+        set({
+          showHistoricalLiquiditySweeps,
+          ...(showHistoricalLiquiditySweeps ? { activeZonesOnly: false } : {}),
+        }),
       setShowZones: (showZones) =>
         set((state) => ({
           showZones: requiredZoneTypesForPlaybooks(state.selectedPlaybooks).size > 0 ? true : showZones,
@@ -154,7 +167,14 @@ export const useChartStore = create<ChartState>()(
           return applyPlaybookLayerRequirements({ ...state, selectedPlaybooks });
         }),
       setInspectorTab: (inspectorTab) => set({ inspectorTab }),
-      setAddEntityKind: (addEntityKind) => set({ addEntityKind, selected: null }),
+      setAddEntityKind: (addEntityKind) =>
+        set((state) => ({
+          addEntityKind:
+            addEntityKind === null || allowedAddEntityKinds(state.selectedPlaybooks).has(addEntityKind)
+              ? addEntityKind
+              : null,
+          selected: null,
+        })),
       setSelected: (selected) => set({ selected }),
       focusZone: (zone) =>
         set((state) => ({
@@ -175,6 +195,7 @@ export const useChartStore = create<ChartState>()(
       name: "semi-bot-chart-layer-settings",
       partialize: (state) => ({
         activeZonesOnly: state.activeZonesOnly,
+        showHistoricalLiquiditySweeps: state.showHistoricalLiquiditySweeps,
         showZones: state.showZones,
         zoneTypeVisibility: state.zoneTypeVisibility,
         showStructure: state.showStructure,
@@ -219,8 +240,12 @@ export const useChartStore = create<ChartState>()(
 
 function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> {
   const layers = playbookControlledLayers(state.selectedPlaybooks, state.tradeVisibilityMode);
+  const allowedEntities = allowedAddEntityKinds(state.selectedPlaybooks);
+  const liquiditySelected = state.selectedPlaybooks.includes("liquidity_sweep_reclaim_v1");
   return {
     selectedPlaybooks: state.selectedPlaybooks,
+    addEntityKind: state.addEntityKind && allowedEntities.has(state.addEntityKind) ? state.addEntityKind : null,
+    showHistoricalLiquiditySweeps: liquiditySelected ? state.showHistoricalLiquiditySweeps : false,
     ...layers,
   };
 }

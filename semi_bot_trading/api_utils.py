@@ -272,7 +272,7 @@ def validate_zone_trade_modes(zone_type: str, direction: str, trade_modes: list[
     """Validate execution-sensitive modes against zone geometry semantics."""
     if "liquidity_sweep" not in trade_modes:
         return
-    if zone_type != "liquidity_pool" or direction != "bullish":
+    if zone_type != "liquidity_pool" or direction not in {"bullish", "bearish"}:
         raise ValueErrorForApi(
-            "liquidity_sweep requires a bullish liquidity_pool (Zone Buy liquidity)"
+            "liquidity_sweep requires a bullish or bearish liquidity_pool"
         )

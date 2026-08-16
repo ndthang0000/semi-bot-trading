@@ -267,16 +267,17 @@ export function ZoneEditor({
       {zone.type === "liquidity_pool" ? (
         <div className="grid gap-2 rounded-md border border-cyan-400/25 bg-cyan-400/5 p-3">
           <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">Liquidity Sweep V1</div>
-          <Detail label="Trade side" value={zone.direction === "bullish" ? "Buy" : zone.direction === "bearish" ? "Sell (not active in V1)" : "Not selected"} />
+          <Detail label="Trade side" value={zone.direction === "bullish" ? "Buy" : zone.direction === "bearish" ? "Sell" : "Not selected"} />
           {liquidityStates.length === 0 ? <Detail label="Runtime" value="idle / not armed" /> : null}
           {liquidityStates.map((liquidityState) => (
             <div className="grid gap-1 border-t border-cyan-400/15 pt-2" key={String(liquidityState.account_label ?? "Default")}>
               <Detail label="Account" value={String(liquidityState.account_label ?? "--")} />
               <Detail label="Runtime" value={String(liquidityState.state ?? "idle")} />
-              <Detail label="Touched" value={compactTime(typeof liquidityState.touched_lower_at === "string" ? liquidityState.touched_lower_at : null)} />
+              <Detail label="Direction" value={String(liquidityState.trade_direction ?? (zone.direction === "bearish" ? "short" : "long"))} />
+              <Detail label="Touched" value={compactTime(typeof liquidityState.touched_edge_at === "string" ? liquidityState.touched_edge_at : null)} />
               <Detail label="Deadline" value={compactTime(typeof liquidityState.deadline_at === "string" ? liquidityState.deadline_at : null)} />
               <Detail label="ATR touch" value={typeof liquidityState.atr_at_touch === "number" ? price(liquidityState.atr_at_touch) : "--"} />
-              <Detail label="Deepest Bid" value={typeof liquidityState.deepest_bid === "number" ? price(liquidityState.deepest_bid) : "--"} />
+              <Detail label="Sweep extreme" value={typeof liquidityState.extreme_price === "number" ? price(liquidityState.extreme_price) : "--"} />
               <Detail label="Breakout" value={typeof liquidityState.invalidation_price === "number" ? price(liquidityState.invalidation_price) : "--"} />
             </div>
           ))}
@@ -293,7 +294,7 @@ export function ZoneEditor({
           >
             <option value="neutral">Not selected</option>
             <option value="bullish">Buy</option>
-            <option value="bearish">Sell (reserved)</option>
+            <option value="bearish">Sell</option>
           </select>
         </label>
       ) : null}

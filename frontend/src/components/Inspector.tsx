@@ -38,6 +38,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const showZones = useChartStore((state) => state.showZones);
@@ -46,7 +47,9 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const setupCandidates = payload?.layers.setup_candidates ?? [];
   const layerFilteredZones = showZones
     ? zones.filter(
-        (zone) => isZoneTypeVisible(zone, zoneTypeVisibility) && isZoneVisibleForPlaybooks(zone, selectedPlaybooks),
+        (zone) =>
+          isZoneTypeVisible(zone, zoneTypeVisibility) &&
+          isZoneVisibleForPlaybooks(zone, selectedPlaybooks, showHistoricalLiquiditySweeps),
       )
     : [];
   const lastCandle = payload?.layers.candles.at(-1);

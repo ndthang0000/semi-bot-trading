@@ -567,12 +567,18 @@ def attach_liquidity_sweep_states(conn: Connection, zones: list[dict[str, Any]])
     ).fetchall()
     states_by_zone: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
+        row_keys = set(row.keys())
+        touched_edge_at = row["touched_edge_at"] if "touched_edge_at" in row_keys else row["touched_lower_at"]
+        extreme_price = row["extreme_price"] if "extreme_price" in row_keys else row["deepest_bid"]
         state = {
             "account_label": row["account_label"],
             "state": row["state"],
+            "trade_direction": row["trade_direction"] if "trade_direction" in row_keys else "long",
+            "touched_edge_at": touched_edge_at,
             "touched_lower_at": row["touched_lower_at"],
             "deadline_at": row["deadline_at"],
             "atr_at_touch": row["atr_at_touch"],
+            "extreme_price": extreme_price,
             "deepest_bid": row["deepest_bid"],
             "invalidation_price": row["invalidation_price"],
             "reclaimed_at": row["reclaimed_at"],
@@ -906,6 +912,10 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
         "source": row["source"],
         "metadata": json_loads(row["metadata_json"], {}),
     }
+    if row_has_key(row, "manual_ai_plan_status"):
+        result["manual_ai_plan_status"] = row["manual_ai_plan_status"]
+    if row_has_key(row, "manual_ai_expires_at"):
+        result["manual_ai_expires_at"] = row["manual_ai_expires_at"]
     if row_has_key(row, "review_id") and row["review_id"] is not None:
         review_metadata = json_loads(row["review_metadata_json"], {}) if row_has_key(row, "review_metadata_json") else {}
         if not isinstance(review_metadata, dict):

@@ -207,9 +207,8 @@ class StrategyConfig:
     sr_breakout_v1_max_stop_distance: float
     liquidity_sweep_reclaim_v1_enabled: bool = True
     liquidity_sweep_reclaim_v1_timeout_minutes: int = 15
-    liquidity_sweep_reclaim_v1_max_sweep_atr: float = 2.0
+    liquidity_sweep_reclaim_v1_max_sweep_atr: float = 1.0
     liquidity_sweep_reclaim_v1_sl_buffer_atr: float = 0.2
-    liquidity_sweep_reclaim_v1_rr: float = 2.5
 
 
 @dataclass(frozen=True)
@@ -496,12 +495,11 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
                 liquidity_sweep_reclaim_v1.get("timeout_minutes", 15)
             ),
             liquidity_sweep_reclaim_v1_max_sweep_atr=float(
-                liquidity_sweep_reclaim_v1.get("max_sweep_atr", 2.0)
+                liquidity_sweep_reclaim_v1.get("max_sweep_atr", 1.0)
             ),
             liquidity_sweep_reclaim_v1_sl_buffer_atr=float(
                 liquidity_sweep_reclaim_v1.get("sl_buffer_atr", 0.2)
             ),
-            liquidity_sweep_reclaim_v1_rr=float(liquidity_sweep_reclaim_v1.get("rr", 2.5)),
         ),
         backtest=BacktestConfig(
             spread=float(backtest.get("spread", 0.30)),

@@ -482,6 +482,39 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(trade["review"]["strategy_review"]["entry_quality"], "late")
         self.assertEqual(trade["review"]["operator_review"]["followed_plan"], "yes")
 
+    def test_trade_history_includes_manual_ai_plan_lifecycle(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade(db_path)
+            with connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO manual_ai_plans (
+                        id, client_id, account_label, symbol, side, status, execution_state,
+                        entry_price, stop_loss, take_profit, risk_pct, risk_reward, expires_at,
+                        trade_idea_id, created_at, updated_at
+                    )
+                    VALUES (
+                        'plan-1', 'client-1', 'Default', 'XAUUSD', 'buy', 'expired', 'expired',
+                        2001, 1995, 2013, 1, 2, '2026-01-01T00:45:00+00:00',
+                        'idea-1', '2026-01-01T00:00:00+00:00', '2026-01-01T00:45:00+00:00'
+                    )
+                    """
+                )
+                conn.commit()
+
+            client = authenticated_test_client(root, config_path)
+            history_response = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=5&backtest=true")
+
+        self.assertEqual(history_response.status_code, 200)
+        trade = history_response.json()["trades"][0]
+        self.assertEqual(trade["manual_ai_plan_status"], "expired")
+        self.assertEqual(trade["manual_ai_expires_at"], "2026-01-01T00:45:00+00:00")
+
     def test_trade_visibility_can_be_hidden_and_restored(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -816,7 +849,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(zone_count, 1)
         self.assertEqual(override_count, 1)
 
-    def test_liquidity_sweep_mode_requires_bullish_liquidity_zone(self) -> None:
+    def test_liquidity_sweep_mode_requires_directional_liquidity_zone(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "test.sqlite3"
@@ -839,15 +872,20 @@ class ApiTest(unittest.TestCase):
             }
 
             accepted = client.post("/api/zones", json=payload)
+            accepted_sell = client.post(
+                "/api/zones",
+                json={**payload, "direction": "bearish", "price_low": 2000.0, "price_high": 2010.0},
+            )
             rejected = client.post(
                 "/api/zones",
                 json={**payload, "zone_type": "support"},
             )
 
         self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted_sell.status_code, 200)
         self.assertEqual(accepted.json()["metadata"]["trade_modes"], ["liquidity_sweep"])
         self.assertEqual(rejected.status_code, 422)
-        self.assertIn("bullish liquidity_pool", rejected.json()["detail"])
+        self.assertIn("bullish or bearish liquidity_pool", rejected.json()["detail"])
 
     def test_create_manual_sr_zone_persists_reject_only_default(self) -> None:
         with TemporaryDirectory() as temp_dir:

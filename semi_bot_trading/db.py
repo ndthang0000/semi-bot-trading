@@ -523,9 +523,12 @@ CREATE TABLE IF NOT EXISTS liquidity_sweep_states (
     symbol             TEXT NOT NULL,
     zone_updated_at    TEXT NOT NULL,
     state              TEXT NOT NULL,
+    trade_direction    TEXT NOT NULL DEFAULT 'long',
+    touched_edge_at    TEXT,
     touched_lower_at   TEXT,
     deadline_at        TEXT,
     atr_at_touch       REAL,
+    extreme_price      REAL,
     deepest_bid        REAL,
     invalidation_price REAL,
     reclaimed_at       TEXT,
@@ -578,6 +581,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "account_execution_controls", "manual_lock_acknowledged_at", "TEXT")
     ensure_column(conn, "account_execution_controls", "manual_lock_last_action_at", "TEXT")
     ensure_column(conn, "account_execution_controls", "manual_lock_last_error", "TEXT")
+    ensure_column(conn, "liquidity_sweep_states", "trade_direction", "TEXT NOT NULL DEFAULT 'long'")
+    ensure_column(conn, "liquidity_sweep_states", "touched_edge_at", "TEXT")
+    ensure_column(conn, "liquidity_sweep_states", "extreme_price", "REAL")
+    backfill_liquidity_sweep_state_columns(conn)
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)
@@ -603,6 +610,18 @@ def ensure_account_scoped_indexes(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_spread_snapshots_account_symbol_time
         ON spread_snapshots(account_label, symbol, snapshot_at)
+        """
+    )
+
+
+def backfill_liquidity_sweep_state_columns(conn: sqlite3.Connection) -> None:
+    """Migrate the original Buy-only runtime fields without losing live state."""
+    conn.execute(
+        """
+        UPDATE liquidity_sweep_states
+        SET touched_edge_at = COALESCE(touched_edge_at, touched_lower_at),
+            extreme_price = COALESCE(extreme_price, deepest_bid)
+        WHERE touched_edge_at IS NULL OR extreme_price IS NULL
         """
     )
 

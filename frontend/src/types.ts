@@ -187,6 +187,8 @@ export type TradeOrder = {
   hidden_on_chart: boolean;
   source: string;
   metadata: Record<string, unknown>;
+  manual_ai_plan_status?: string | null;
+  manual_ai_expires_at?: string | null;
   chart_index?: number | null;
   review?: TradeReview | null;
 };

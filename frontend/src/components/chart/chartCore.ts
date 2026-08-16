@@ -300,9 +300,13 @@ export function isHistoricalLiquiditySweep(zone: PriceZone): boolean {
   return zone.type === "liquidity_pool" && zone.status === "swept";
 }
 
-export function isZoneVisibleForPlaybooks(zone: PriceZone, playbooks: PlaybookKey[]): boolean {
+export function isZoneVisibleForPlaybooks(
+  zone: PriceZone,
+  playbooks: PlaybookKey[],
+  showHistoricalLiquiditySweeps = false,
+): boolean {
   if (playbooks.includes("liquidity_sweep_reclaim_v1") && isHistoricalLiquiditySweep(zone)) {
-    return false;
+    return showHistoricalLiquiditySweeps;
   }
   return true;
 }

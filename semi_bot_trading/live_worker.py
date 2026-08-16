@@ -26,7 +26,7 @@ from .runtime_env import RuntimeEnv
 from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zones
 from .spread import record_spread_snapshot
 from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
-from .strategy.liquidity_sweep_reclaim_v1 import evaluate_live_buy_liquidity_zones
+from .strategy.liquidity_sweep_reclaim_v1 import evaluate_live_liquidity_zones
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
 
 logger = logging.getLogger(__name__)
@@ -769,7 +769,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
                 maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
             try:
                 quote = client.get_current_quote(broker_symbol)
-                liquidity_candidates = evaluate_live_buy_liquidity_zones(
+                liquidity_candidates = evaluate_live_liquidity_zones(
                     conn,
                     symbol=config.symbol,
                     timeframe=config.strategy.timeframe,

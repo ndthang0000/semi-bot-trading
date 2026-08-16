@@ -122,6 +122,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const showStructure = useChartStore((state) => state.showStructure);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
@@ -166,6 +167,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showZonesRef = useRef(showZones);
   const zoneTypeVisibilityRef = useRef(zoneTypeVisibility);
   const selectedPlaybooksRef = useRef(selectedPlaybooks);
+  const showHistoricalLiquiditySweepsRef = useRef(showHistoricalLiquiditySweeps);
   const showStructureRef = useRef(showStructure);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
@@ -212,6 +214,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   showZonesRef.current = showZones;
   zoneTypeVisibilityRef.current = zoneTypeVisibility;
   selectedPlaybooksRef.current = selectedPlaybooks;
+  showHistoricalLiquiditySweepsRef.current = showHistoricalLiquiditySweeps;
   showStructureRef.current = showStructure;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
@@ -241,7 +244,11 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     const zoneCandidates = (previewZone ? [...currentPayload.layers.zones, previewZone] : currentPayload.layers.zones).filter(
       (zone) =>
         isZoneTypeVisible(zone, zoneTypeVisibilityRef.current) &&
-        isZoneVisibleForPlaybooks(zone, selectedPlaybooksRef.current),
+        isZoneVisibleForPlaybooks(
+          zone,
+          selectedPlaybooksRef.current,
+          showHistoricalLiquiditySweepsRef.current,
+        ),
     );
     const currentSelected = useChartStore.getState().selected;
     const selectedZoneId = currentSelected?.kind === "zone" ? currentSelected.entity.id : null;
@@ -975,6 +982,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     payload,
     scheduleOverlayRecalc,
     selectedPlaybooks,
+    showHistoricalLiquiditySweeps,
     showStructure,
     showZones,
     tradeVisibilityMode,

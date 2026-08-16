@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Trash2, Upload, X } from "lucide-react";
+import { Camera, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toPng } from "html-to-image";
 import {
@@ -11,6 +11,12 @@ import {
 } from "../api/chart";
 import { authFetch } from "../api/auth";
 import { isTradeReviewComplete, type WeeklyReviewGateState } from "../lib/weeklyReview";
+import {
+  tradeLifecycleBadgeClass,
+  tradeLifecycleLabel,
+  tradeLifecycleStatus,
+  type TradeLifecycleStatus,
+} from "../lib/journalTrade";
 import type {
   JournalPatternRow,
   OperatorReview,
@@ -27,7 +33,31 @@ type Filters = {
   outcome: string;
   direction: string;
   reviewed: string;
+  account: string;
+  status: "all" | TradeLifecycleStatus;
 };
+
+const JOURNAL_FILTERS_STORAGE_KEY = "semi-bot-journal-filters-v2";
+const DEFAULT_FILTERS: Filters = { outcome: "all", direction: "all", reviewed: "all", account: "all", status: "all" };
+const STATUS_FILTERS: Array<{ value: "all" | TradeLifecycleStatus; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "pending", label: "Pending limit" },
+  { value: "open", label: "Open position" },
+  { value: "closed", label: "Closed" },
+  { value: "expired", label: "Expired" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "failed", label: "Failed" },
+];
+
+function readJournalFilters(): Filters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(JOURNAL_FILTERS_STORAGE_KEY) ?? "null");
+    if (saved && typeof saved === "object") return { ...DEFAULT_FILTERS, ...saved };
+  } catch {
+    // Ignore stale filters from an older Journal version.
+  }
+  return DEFAULT_FILTERS;
+}
 
 const GRADES = ["A", "B", "C", "D"];
 const VERDICTS = ["unreviewed", "good_trade", "bad_trade", "should_skip", "missed_context"];
@@ -188,6 +218,7 @@ function DetailPanel({ trade, onClose, onSaved }: {
   const rr = trade.take_profit[0] && trade.entry_price && trade.stop_loss
     ? Math.abs((Number(trade.take_profit[0]) - trade.entry_price) / (trade.entry_price - trade.stop_loss))
     : null;
+  const lifecycleStatus = tradeLifecycleStatus(trade);
 
   const updateStrategy = (key: keyof StrategyReview, value: string | string[]) => {
     setStrategyReview((current) => ({ ...current, [key]: value }));
@@ -228,6 +259,8 @@ function DetailPanel({ trade, onClose, onSaved }: {
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
         <InfoSection title="Bot Decision" rows={[
           ["Account", trade.account_label || "Default"],
+          ["Status", tradeLifecycleLabel(lifecycleStatus)],
+          ...(trade.manual_ai_expires_at ? [["Limit expires", fmt(trade.manual_ai_expires_at)] as [string, string]] : []),
           ["Direction", trade.direction ?? trade.side],
           ["Entry", trade.entry_price?.toFixed(2) ?? "-"],
           ["Volume", `${trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })} lot`],
@@ -547,29 +580,95 @@ function AuthenticatedImage({ attachment }: { attachment: TradeReviewAttachment 
   return <img src={imageQuery.data} alt={attachment.caption || "Trade screenshot"} className="h-28 w-full object-cover" />;
 }
 
-function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filters) => void }) {
+function FilterBar({
+  filters,
+  accounts,
+  statusCounts,
+  onChange,
+}: {
+  filters: Filters;
+  accounts: string[];
+  statusCounts: Record<TradeLifecycleStatus, number>;
+  onChange: (f: Filters) => void;
+}) {
   const set = (key: keyof Filters, val: string) => onChange({ ...filters, [key]: val });
   const btnCls = (active: boolean) =>
     `rounded px-2 py-1 text-xs transition-colors ${active ? "bg-blue-600/30 text-blue-300 ring-1 ring-blue-500" : "text-slate-500 hover:text-slate-300"}`;
+  const activeCount = Object.entries(filters).filter(([key, value]) => value !== DEFAULT_FILTERS[key as keyof Filters]).length;
+  // Keep the filter bar resilient while Vite swaps component versions during HMR.
+  // The production render always provides statusCounts, but an older mounted caller
+  // can briefly omit the new prop during a hot update.
+  const safeStatusCounts = statusCounts ?? ({} as Partial<Record<TradeLifecycleStatus, number>>);
+  const totalStatuses = Object.values(safeStatusCounts).reduce((sum, count) => sum + (count ?? 0), 0);
 
   return (
-    <div className="flex flex-wrap items-center gap-3 border-b border-ink-700 bg-ink-900 px-4 py-2">
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-slate-600">Outcome</span>
-        {[["all", "All"], ["win", "Win"], ["loss", "Loss"]].map(([v, l]) => (
-          <button key={v} className={btnCls(filters.outcome === v)} onClick={() => set("outcome", v)} type="button">{l}</button>
-        ))}
+    <div className="space-y-3 border-b border-ink-700 bg-ink-900 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+          <SlidersHorizontal size={14} className="text-cyan-300" /> Filters
+          {activeCount > 0 ? <span className="rounded-full bg-cyan-400/15 px-1.5 py-0.5 text-[10px] text-cyan-200">{activeCount} active</span> : null}
+        </div>
+        <button
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-slate-500 transition hover:bg-white/5 hover:text-slate-300 disabled:opacity-30"
+          disabled={activeCount === 0}
+          onClick={() => onChange(DEFAULT_FILTERS)}
+          type="button"
+        >
+          <RotateCcw size={12} /> Reset
+        </button>
       </div>
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-slate-600">Direction</span>
-        {[["all", "All"], ["long", "Long"], ["short", "Short"]].map(([v, l]) => (
-          <button key={v} className={btnCls(filters.direction === v)} onClick={() => set("direction", v)} type="button">{l}</button>
-        ))}
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(280px,0.8fr)_minmax(620px,1.6fr)]">
+        <div>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Account</div>
+          <div className="flex flex-wrap gap-1.5">
+            <button className={btnCls(filters.account === "all")} onClick={() => set("account", "all")} type="button">All accounts</button>
+            {accounts.map((account) => (
+              <button
+                key={account}
+                className={`max-w-48 truncate rounded border px-2 py-1 text-xs font-semibold transition ${accountBadgeClass(account)} ${filters.account === account ? "ring-1 ring-cyan-300" : "opacity-65 hover:opacity-100"}`}
+                onClick={() => set("account", account)}
+                title={account}
+                type="button"
+              >
+                {account}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Order lifecycle</div>
+          <div className="flex flex-wrap gap-1.5">
+            {STATUS_FILTERS.map(({ value, label }) => {
+              const count = value === "all" ? totalStatuses : (safeStatusCounts[value] ?? 0);
+              const active = filters.status === value;
+              return (
+                <button
+                  key={value}
+                  className={`rounded border px-2 py-1 text-xs transition ${value === "all" ? "border-ink-600" : tradeLifecycleBadgeClass(value)} ${active ? "ring-1 ring-cyan-300 brightness-125" : "opacity-60 hover:opacity-100"}`}
+                  onClick={() => set("status", value)}
+                  type="button"
+                >
+                  {label} <span className="ml-1 tabular-nums opacity-60">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-slate-600">Reviewed</span>
-        {[["all", "All"], ["yes", "Yes"], ["no", "No"]].map(([v, l]) => (
-          <button key={v} className={btnCls(filters.reviewed === v)} onClick={() => set("reviewed", v)} type="button">{l}</button>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-ink-700/60 pt-2">
+        {[
+          ["outcome", "Outcome", [["all", "All"], ["win", "Win"], ["loss", "Loss"]]],
+          ["direction", "Direction", [["all", "All"], ["long", "Long"], ["short", "Short"]]],
+          ["reviewed", "Reviewed", [["all", "All"], ["yes", "Yes"], ["no", "No"]]],
+        ].map(([key, label, options]) => (
+          <div key={String(key)} className="flex items-center gap-1">
+            <span className="text-xs text-slate-600">{String(label)}</span>
+            {(options as string[][]).map(([value, optionLabel]) => (
+              <button key={value} className={btnCls(filters[key as keyof Filters] === value)} onClick={() => set(key as keyof Filters, value)} type="button">{optionLabel}</button>
+            ))}
+          </div>
         ))}
       </div>
     </div>
@@ -580,6 +679,7 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
   const r = trade.pnl_r;
   const reviewed = isTradeReviewComplete(trade.review);
   const accountLabel = trade.account_label || "Default";
+  const lifecycleStatus = tradeLifecycleStatus(trade);
   return (
     <tr
       onClick={onClick}
@@ -598,13 +698,18 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
       <td className={`px-3 py-2 font-medium ${trade.direction === "long" || trade.side === "buy" ? "text-green-400" : "text-red-400"}`}>
         {trade.direction ?? trade.side}
       </td>
+      <td className="whitespace-nowrap px-3 py-2">
+        <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${tradeLifecycleBadgeClass(lifecycleStatus)}`}>
+          {tradeLifecycleLabel(lifecycleStatus)}
+        </span>
+      </td>
       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-400">
         {trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })}
       </td>
       <td className="px-3 py-2 text-slate-400">{trade.entry_price?.toFixed(2) ?? "-"}</td>
       <td className="px-3 py-2 text-slate-400">{trade.stop_loss?.toFixed(2) ?? "-"}</td>
       <td className={`px-3 py-2 text-right font-semibold ${r !== null ? r >= 0 ? "text-green-400" : "text-red-400" : "text-slate-500"}`}>
-        {r !== null ? `${r >= 0 ? "+" : ""}${r.toFixed(2)}R` : "open"}
+        {r !== null ? `${r >= 0 ? "+" : ""}${r.toFixed(2)}R` : "--"}
       </td>
       <td className="px-3 py-2 text-center">
         {reviewed ? (
@@ -683,7 +788,7 @@ function PatternsTab() {
 
 export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyReviewGateState }) {
   const [tab, setTab] = useState<JournalTab>(weeklyReviewGate?.active ? "queue" : "trades");
-  const [filters, setFilters] = useState<Filters>({ outcome: "all", direction: "all", reviewed: "all" });
+  const [filters, setFilters] = useState<Filters>(readJournalFilters);
   const [selected, setSelected] = useState<TradeOrder | null>(null);
   const qc = useQueryClient();
   const reviewGateActive = weeklyReviewGate?.active === true;
@@ -698,8 +803,12 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
     staleTime: 15_000,
   });
 
+  useEffect(() => {
+    localStorage.setItem(JOURNAL_FILTERS_STORAGE_KEY, JSON.stringify(filters));
+  }, [filters]);
+
   const reviewGateIds = weeklyReviewGate?.dueTradeIds ?? null;
-  const trades = useMemo(() => {
+  const baseTrades = useMemo(() => {
     return (data?.trades ?? []).filter((trade) => {
       const reviewed = isTradeReviewComplete(trade.review);
       if ((reviewGateActive || tab === "queue") && reviewGateIds && !reviewGateIds.has(trade.id)) return false;
@@ -710,6 +819,23 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
       return true;
     });
   }, [data?.trades, filters.reviewed, reviewGateActive, reviewGateIds, tab]);
+  const accounts = useMemo(
+    () => Array.from(new Set((data?.trades ?? []).map((trade) => trade.account_label || "Default"))).sort(),
+    [data?.trades],
+  );
+  const statusCounts = useMemo(() => {
+    const counts: Record<TradeLifecycleStatus, number> = { pending: 0, open: 0, closed: 0, expired: 0, cancelled: 0, failed: 0 };
+    for (const trade of baseTrades) {
+      if (filters.account !== "all" && (trade.account_label || "Default") !== filters.account) continue;
+      counts[tradeLifecycleStatus(trade)] += 1;
+    }
+    return counts;
+  }, [baseTrades, filters.account]);
+  const trades = useMemo(() => baseTrades.filter((trade) => {
+    if (filters.account !== "all" && (trade.account_label || "Default") !== filters.account) return false;
+    if (filters.status !== "all" && tradeLifecycleStatus(trade) !== filters.status) return false;
+    return true;
+  }), [baseTrades, filters.account, filters.status]);
 
   const selectedFresh = selected ? (trades.find((trade) => trade.id === selected.id) ?? selected) : null;
   const title = reviewGateActive ? "Weekly Review Required" : "Trade Journal";
@@ -746,7 +872,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
           <PatternsTab />
         ) : (
           <>
-            <FilterBar filters={filters} onChange={setFilters} />
+            <FilterBar filters={filters} accounts={accounts} statusCounts={statusCounts} onChange={setFilters} />
             <div className="flex-1 overflow-auto">
               {isLoading ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-500">Loading...</div>
@@ -760,6 +886,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
                       <th className="px-3 py-2 text-left font-normal">Account</th>
                       <th className="px-3 py-2 text-left font-normal">Playbook</th>
                       <th className="px-3 py-2 text-left font-normal">Dir</th>
+                      <th className="px-3 py-2 text-left font-normal">Status</th>
                       <th className="px-3 py-2 text-right font-normal">Volume (lot)</th>
                       <th className="px-3 py-2 text-left font-normal">Entry</th>
                       <th className="px-3 py-2 text-left font-normal">SL</th>

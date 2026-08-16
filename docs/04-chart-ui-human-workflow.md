@@ -238,6 +238,19 @@ worker, risk manager hoặc execution:
   storage không khả dụng, Calm Reset tự bỏ qua persistence và không làm ảnh
   hưởng trading UI.
 
+## Trade Journal
+
+- Filter chinh gom Account va lifecycle cua order, kem cac filter phu Outcome,
+  Direction va Reviewed. Filter duoc luu trong local storage va co the reset mot
+  lan ve mac dinh.
+- Lifecycle khong duoc suy ra tu `pnl_r`: `pending_fill` la `Pending limit`,
+  `filled` chua dong la `Open position`, order da dong la `Closed`.
+- Manual AI order co raw status `cancelled` nhung plan status `expired` phai hien
+  `Expired`; cancel chu dong hoac invalidation van hien `Cancelled`. PnL chua co
+  gia tri hien `--`, khong hien `open`.
+- API trade history tra them `manual_ai_plan_status` va
+  `manual_ai_expires_at` de UI hien dung lifecycle va thoi gian het han.
+
 ## Weekly Journal
 
 `Weekly Journal` là trang reflection dạng text, nằm cùng cấp với Chart,

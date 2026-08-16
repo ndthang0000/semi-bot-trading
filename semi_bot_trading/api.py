@@ -875,6 +875,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
                        trade_orders.hidden_on_chart, trade_orders.source, trade_orders.metadata_json,
                        trade_ideas.playbook, trade_ideas.direction,
+                       manual_ai_plans.status AS manual_ai_plan_status,
+                       manual_ai_plans.expires_at AS manual_ai_expires_at,
                        trade_reviews.id AS review_id,
                        trade_reviews.grade AS review_grade,
                        trade_reviews.verdict AS review_verdict,
@@ -894,6 +896,14 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        ) AS chart_index
                 FROM trade_orders
                 JOIN trade_ideas ON trade_ideas.id = trade_orders.trade_idea_id
+                LEFT JOIN manual_ai_plans ON manual_ai_plans.id = (
+                    SELECT plan.id
+                    FROM manual_ai_plans AS plan
+                    WHERE plan.trade_idea_id = trade_orders.trade_idea_id
+                      AND COALESCE(plan.account_label, '') = COALESCE(trade_orders.account_label, '')
+                    ORDER BY plan.created_at DESC
+                    LIMIT 1
+                )
                 LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
                 WHERE {where_sql}
                 ORDER BY {order_by}
