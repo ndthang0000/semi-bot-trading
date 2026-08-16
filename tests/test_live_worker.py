@@ -53,6 +53,7 @@ from semi_bot_trading.live_worker import (
     process_manual_trading_lock,
     process_account_execution_commands,
     process_manual_ai_plans,
+    queue_m15_recovery_alert,
     run_live_iteration,
     sync_closed_positions,
     trading_session,
@@ -610,6 +611,8 @@ class TestExecuteCandidate(unittest.TestCase):
         self.assertEqual("limit", orders[0]["order_type"])
         # price=0 in result → fallback to exec_entry
         self.assertAlmostEqual(3000.0, orders[0]["entry_price"], places=2)
+        alerts = self._conn.execute("SELECT * FROM alert_events").fetchall()
+        self.assertEqual([], alerts)
 
     # ── MT5 failure ───────────────────────────────────────────────────────────
     def test_mt5_failure_execution_request_marked_failed(self):
@@ -987,6 +990,8 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self.assertEqual("filled", plan["status"])
         self.assertEqual("filled", order["status"])
         client.cancel_pending_order.assert_not_called()
+        alerts = self._conn.execute("SELECT dedupe_key FROM alert_events").fetchall()
+        self.assertEqual(["manual-ai-lifecycle:Test:manual-plan:filled"], [row["dedupe_key"] for row in alerts])
 
     def test_expired_armed_limit_is_cancelled_at_broker_before_db_closes(self):
         now = datetime.now(UTC)
@@ -1003,6 +1008,8 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
         self.assertEqual("expired", plan["status"])
         self.assertEqual("cancelled", order["status"])
+        alerts = self._conn.execute("SELECT dedupe_key FROM alert_events").fetchall()
+        self.assertEqual(["manual-ai-lifecycle:Test:manual-plan:expired"], [row["dedupe_key"] for row in alerts])
 
     def test_cancel_requested_limit_is_not_mapped_back_to_armed(self):
         now = datetime.now(UTC)

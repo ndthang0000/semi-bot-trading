@@ -68,7 +68,24 @@ Khi đủ điều kiện playbook:
 - Backtest trade closed.
 - Sau live phase: order pending/filled/cancelled/failed.
 
+### 8. M15 Close-to-Extreme Recovery
+
+Khi một nến M15 đã đóng có recovery đạt ngưỡng
+`strategy.playbooks.zone_reaction_v2.reject_recovery_min_avg_body_ratio`, gửi
+một alert Telegram:
+
+- Bullish recovery dùng `(close - low) / average_body`.
+- Bearish recovery dùng `(high - close) / average_body`.
+- `average_body` dùng đúng số nến liền trước cấu hình bởi
+  `reject_avg_body_period`; không đưa nến trigger vào baseline.
+- Nếu cùng một nến đạt cả hai hướng, gộp hai hướng trong một message.
+- Dedupe theo account label, symbol và close time của nến để worker restart hoặc
+  poll lặp không gửi lại cùng event.
+
 ## Format message gợi ý
+
+Mọi message runtime bắt đầu bằng account label, ví dụ `[FTMO Challenge]` hoặc
+`[Exness Personal]`. Không dùng prefix theo environment như `[DEV]`.
 
 ```text
 [XAUUSD][M15] Price touched Bullish OB
@@ -182,3 +199,8 @@ CHART_URL_BASE
 The live worker queues Telegram alerts for new important zones, setup candidates
 (`eligible`, `waiting_confirmation`, and `blocked` with block reasons), and
 execution events, then sends pending alerts without blocking detector logic.
+
+`manual_ai_v1` không gửi setup-candidate hoặc limit-order-placed alert. Limit
+order của playbook này chỉ gửi lifecycle alert khi broker xác nhận `filled` hoặc
+khi worker đã cancel order hết hạn và persist trạng thái `expired`; dedupe theo
+account label, plan ID và lifecycle status.

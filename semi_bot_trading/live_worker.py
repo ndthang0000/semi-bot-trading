@@ -26,6 +26,7 @@ from .runtime_env import RuntimeEnv
 from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zones
 from .spread import record_spread_snapshot
 from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
+from .strategy.helpers import close_extreme_recovery_metrics
 from .strategy.liquidity_sweep_reclaim_v1 import evaluate_live_liquidity_zones
 from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
 
@@ -442,6 +443,7 @@ def run_manual_trade_guard_iteration(
                 token=env.telegram_token,
                 chat_id=env.telegram_chat_id,
                 environment=env.environment,
+                account_label=env.account_label,
             )
     return acted
 
@@ -800,6 +802,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             state.last_closed_m15 = latest_m15
         elif has_new_closed_m15:
             state.last_closed_m15 = latest_m15
+        if has_new_closed_m15:
+            queue_m15_recovery_alert(conn, config, env)
 
         # Override H1 regime to "news" during active blackout windows so that
         # strategy evaluation and the UI both reflect the news state.
@@ -830,7 +834,13 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             queue_setup_alerts(conn, config, env, payload["layers"].get("setup_candidates", []))
             maybe_execute_candidates(conn, config, env, client, payload["layers"].get("setup_candidates", []), broker_symbol)
     with closing(connect(config.database)) as conn:
-        send_pending_telegram_alerts(conn, token=env.telegram_token, chat_id=env.telegram_chat_id, environment=env.environment)
+        send_pending_telegram_alerts(
+            conn,
+            token=env.telegram_token,
+            chat_id=env.telegram_chat_id,
+            environment=env.environment,
+            account_label=env.account_label,
+        )
 
 
 def _maybe_queue_news_alerts(
@@ -1265,6 +1275,8 @@ def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zone
 
 def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, candidates: list[dict[str, Any]]) -> None:
     for candidate in candidates:
+        if candidate.get("playbook") == "manual_ai_v1":
+            continue
         if candidate.get("status") not in {"eligible", "waiting_confirmation", "blocked"}:
             continue
         trigger_timeframe = str(candidate.get("timeframe") or config.strategy.timeframe).upper()
@@ -1301,6 +1313,84 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
             payload=payload,
             dedupe_key=f"setup:{candidate.get('id')}:{status}",
         )
+
+
+def queue_m15_recovery_alert(conn: Connection, config: AppConfig, env: RuntimeEnv) -> bool:
+    period = config.strategy.zone_reaction_v2_reject_avg_body_period
+    threshold = config.strategy.zone_reaction_v2_reject_recovery_min_avg_body_ratio
+    rows = conn.execute(
+        """
+        SELECT open_time, close_time, open, high, low, close
+        FROM candles
+        WHERE symbol = ? AND timeframe = ?
+        ORDER BY open_time DESC
+        LIMIT ?
+        """,
+        (config.symbol, config.strategy.timeframe, period + 1),
+    ).fetchall()
+    if len(rows) != period + 1:
+        return False
+    candles = [dict(row) for row in reversed(rows)]
+    bullish = close_extreme_recovery_metrics(candles, "long", period, threshold)
+    bearish = close_extreme_recovery_metrics(candles, "short", period, threshold)
+    directions = [
+        direction
+        for direction, metrics in (("bullish", bullish), ("bearish", bearish))
+        if metrics.passed
+    ]
+    if not directions:
+        return False
+    trigger = candles[-1]
+    return queue_alert(
+        conn,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="m15_recovery",
+        severity="important",
+        entity_ids=[str(trigger["open_time"])],
+        payload={
+            "account": env.account_label,
+            "recovery": {
+                "directions": directions,
+                "close": round(float(trigger["close"]), 5),
+                "event_time": str(trigger["close_time"]),
+                "bullish_ratio": round(bullish.ratio, 4) if bullish.passed else None,
+                "bearish_ratio": round(bearish.ratio, 4) if bearish.passed else None,
+                "minimum_ratio": threshold,
+                "average_body": round(bullish.average_body, 5),
+            },
+        },
+        dedupe_key=f"m15-recovery:{env.account_label}:{config.symbol}:{trigger['close_time']}",
+    )
+
+
+def queue_manual_ai_lifecycle_alert(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    row: Any,
+    status: str,
+) -> bool:
+    normalized_status = status.lower()
+    if normalized_status not in {"filled", "expired"}:
+        return False
+    return queue_alert(
+        conn,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="critical" if normalized_status == "filled" else "important",
+        entity_ids=[str(row["id"])],
+        payload={
+            "title": f"Manual AI limit {normalized_status}",
+            "account": env.account_label,
+            "direction": "long" if row["side"] == "buy" else "short",
+            "entry": float(row["entry_price"]),
+            "stop_loss": float(row["stop_loss"]),
+            "take_profit": [float(row["take_profit"])],
+        },
+        dedupe_key=f"manual-ai-lifecycle:{env.account_label}:{row['id']}:{normalized_status}",
+    )
 
 
 def process_manual_ai_plans(
@@ -1356,6 +1446,7 @@ def process_manual_ai_plans(
                 plan_status = "filled"
                 conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
                 conn.commit()
+                queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
             elif broker_state == "cancelled":
                 expires_at = datetime.fromisoformat(str(row["expires_at"]))
                 plan_status = "expired" if expires_at <= now else "cancelled"
@@ -1365,6 +1456,7 @@ def process_manual_ai_plans(
                 )
                 conn.execute("UPDATE manual_ai_plans SET status = ?, updated_at = ? WHERE id = ?", (plan_status, now_iso, plan_id))
                 conn.commit()
+                queue_manual_ai_lifecycle_alert(conn, config, env, row, plan_status)
 
         if linked_order is not None:
             order_status = str(linked_order["status"])
@@ -1388,6 +1480,7 @@ def process_manual_ai_plans(
                     )
                 conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
                 conn.commit()
+                queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
                 continue
             if broker_state == "pending":
                 try:
@@ -1422,6 +1515,7 @@ def process_manual_ai_plans(
                         )
                     conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
                     conn.commit()
+                    queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
                     continue
                 if broker_state == "pending":
                     try:
@@ -1438,6 +1532,7 @@ def process_manual_ai_plans(
                     )
             conn.execute("UPDATE manual_ai_plans SET status = 'expired', updated_at = ? WHERE id = ?", (now_iso, plan_id))
             conn.commit()
+            queue_manual_ai_lifecycle_alert(conn, config, env, row, "expired")
             continue
 
         # M5 is a hard execution dependency for this short-horizon playbook.
@@ -1484,6 +1579,7 @@ def process_manual_ai_plans(
                         )
                     conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
                     conn.commit()
+                    queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
                     continue
                 if broker_state == "pending":
                     try:
@@ -2242,29 +2338,30 @@ def execute_candidate(
             ),
         )
         conn.commit()
-        queue_alert(
-            conn,
-            symbol=config.symbol,
-            timeframe=config.strategy.timeframe,
-            event_type="execution_event",
-            severity="critical",
-            entity_ids=[idea_id, order_id],
-            payload={
-                "title": "Live limit order placed" if exec_order_type == "limit" else "Live order sent",
-                "account": env.account_label,
-                "setup": {
-                    "playbook": candidate["playbook"],
-                    "direction": direction,
-                    "order_type": exec_order_type,
-                    "entry": fill_price,
-                    "stop_loss": exec_stop,
-                    "take_profit": exec_take_profit,
-                    "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
+        if exec_order_type != "limit":
+            queue_alert(
+                conn,
+                symbol=config.symbol,
+                timeframe=config.strategy.timeframe,
+                event_type="execution_event",
+                severity="critical",
+                entity_ids=[idea_id, order_id],
+                payload={
+                    "title": "Live order sent",
+                    "account": env.account_label,
+                    "setup": {
+                        "playbook": candidate["playbook"],
+                        "direction": direction,
+                        "order_type": exec_order_type,
+                        "entry": fill_price,
+                        "stop_loss": exec_stop,
+                        "take_profit": exec_take_profit,
+                        "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
+                    },
+                    "reason": [f"MT5 broker order id: {broker_order_id}"],
                 },
-                "reason": [f"MT5 broker order id: {broker_order_id}"],
-            },
-            dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",
-        )
+                dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",
+            )
         return {"trade_idea_id": idea_id, "execution_request_id": request_id, "trade_order_id": order_id}
     except Exception as exc:
         conn.execute(

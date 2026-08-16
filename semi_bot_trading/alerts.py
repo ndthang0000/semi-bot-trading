@@ -111,16 +111,17 @@ def send_pending_telegram_alerts(
     chat_id: str | None,
     limit: int = 20,
     environment: str = "development",
+    account_label: str = "Default",
 ) -> int:
     if not token or not chat_id:
         return 0
-    prefix = "" if environment.lower() == "production" else "[DEV] "
     sent = 0
     for alert in pending_alerts(conn, limit=limit):
         try:
             text = format_alert_message(alert)
-            if prefix:
-                text = prefix + text
+            alert_account = str(alert.payload.get("account") or account_label).strip()
+            if alert_account:
+                text = f"[{alert_account}] {text}"
             send_telegram_message(token, chat_id, text)
             mark_alert_sent(conn, alert.id)
             sent += 1
@@ -160,6 +161,8 @@ def format_alert_message(alert: AlertEvent) -> str:
         return _fmt_execution(alert)
     if et == "new_swing":
         return _fmt_swing(alert)
+    if et == "m15_recovery":
+        return _fmt_recovery(alert)
     if et == "news_alert":
         return _fmt_news(alert)
     return _fmt_generic(alert)
@@ -260,6 +263,24 @@ def _fmt_swing(alert: AlertEvent) -> str:
         sym_tf + " " + icon + " Swing " + direction,
         "Price: " + str(price) + "  At: " + event_time,
     ])
+
+
+def _fmt_recovery(alert: AlertEvent) -> str:
+    recovery = alert.payload.get("recovery") or {}
+    event_time = str(recovery.get("event_time", ""))[:16].replace("T", " ")
+    directions = recovery.get("directions") or []
+    labels = {"bullish": "Bullish", "bearish": "Bearish"}
+    direction_text = " + ".join(labels.get(str(item), str(item).title()) for item in directions)
+    lines = [f"[{alert.symbol} {alert.timeframe}] [RECOVERY] {direction_text}"]
+    lines.append(f"Close: {recovery.get('close', '?')}  At: {event_time}")
+    ratios = []
+    if recovery.get("bullish_ratio") is not None:
+        ratios.append(f"Bullish {float(recovery['bullish_ratio']):.2f}x")
+    if recovery.get("bearish_ratio") is not None:
+        ratios.append(f"Bearish {float(recovery['bearish_ratio']):.2f}x")
+    if ratios:
+        lines.append("Recovery / avg: " + " | ".join(ratios))
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

@@ -12,11 +12,12 @@ from unittest.mock import patch
 
 from semi_bot_trading.candles import Candle, upsert_candles
 from semi_bot_trading.config import load_config
-from semi_bot_trading.alerts import format_alert_message, pending_alerts, queue_alert
+from semi_bot_trading.alerts import format_alert_message, pending_alerts, queue_alert, send_pending_telegram_alerts
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.live_worker import (
     LiveWorkerState,
     _queue_new_swing_alerts,
+    queue_m15_recovery_alert,
     queue_setup_alerts,
     run_live_detectors,
     run_live_iteration,
@@ -26,6 +27,98 @@ from semi_bot_trading.runtime_env import load_runtime_env
 
 
 class LiveIntegrationTest(unittest.TestCase):
+    def test_m15_recovery_alert_combines_directions_and_dedupes(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="Exness")
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                start = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+                candles = []
+                for index in range(21):
+                    open_time = start + timedelta(minutes=15 * index)
+                    is_trigger = index == 20
+                    candles.append(
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe="M15",
+                            open_time=open_time,
+                            close_time=open_time + timedelta(minutes=15),
+                            open=100.0 if is_trigger else 99.0,
+                            high=103.0 if is_trigger else 100.5,
+                            low=97.0 if is_trigger else 98.5,
+                            close=100.0,
+                            volume=100,
+                            source="test",
+                        )
+                    )
+                upsert_candles(conn, candles)
+
+                self.assertTrue(queue_m15_recovery_alert(conn, config, env))
+                self.assertFalse(queue_m15_recovery_alert(conn, config, env))
+                alerts = pending_alerts(conn)
+                message = format_alert_message(alerts[0])
+            finally:
+                conn.close()
+
+        self.assertEqual(1, len(alerts))
+        self.assertIn("[RECOVERY] Bullish + Bearish", message)
+        self.assertIn("Bullish 3.00x | Bearish 3.00x", message)
+
+    def test_manual_ai_setup_alert_is_suppressed(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO")
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                queue_setup_alerts(
+                    conn,
+                    config,
+                    env,
+                    [{"id": "manual-1", "playbook": "manual_ai_v1", "status": "eligible"}],
+                )
+                alerts = pending_alerts(conn)
+            finally:
+                conn.close()
+
+        self.assertEqual([], alerts)
+
+    def test_telegram_message_uses_account_label_instead_of_environment(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                queue_alert(
+                    conn,
+                    symbol="XAUUSD",
+                    timeframe="H1",
+                    event_type="new_swing",
+                    severity="info",
+                    entity_ids=["swing-1"],
+                    payload={"swing": {"point_type": "HH", "swing_type": "high", "price": 4397.008}},
+                    dedupe_key="new-swing:swing-1",
+                )
+                with patch("semi_bot_trading.alerts.send_telegram_message") as send:
+                    sent = send_pending_telegram_alerts(
+                        conn,
+                        token="token",
+                        chat_id="chat",
+                        environment="development",
+                        account_label="FTMO Challenge",
+                    )
+            finally:
+                conn.close()
+
+        self.assertEqual(1, sent)
+        message = send.call_args.args[2]
+        self.assertTrue(message.startswith("[FTMO Challenge] [XAUUSD H1]"))
+        self.assertNotIn("[DEV]", message)
+
     def test_alert_queue_dedupes_by_key(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
