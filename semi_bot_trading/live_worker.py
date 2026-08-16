@@ -442,7 +442,6 @@ def run_manual_trade_guard_iteration(
                 conn,
                 token=env.telegram_token,
                 chat_id=env.telegram_chat_id,
-                environment=env.environment,
                 account_label=env.account_label,
             )
     return acted
@@ -533,6 +532,7 @@ def process_manual_trading_lock(
         conn.commit()
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
@@ -540,6 +540,7 @@ def process_manual_trading_lock(
             entity_ids=[],
             payload={
                 "title": "Manual trading lock enabled",
+                "outcome": "info",
                 "account": env.account_label,
                 "reason": [
                     f"Guard cadence: {env.manual_trade_guard_seconds:g}s",
@@ -639,6 +640,7 @@ def _queue_manual_lock_action_alert(
         details.append(f"Error: {error}")
     queue_alert(
         conn,
+        account_label=env.account_label,
         symbol=config.symbol,
         timeframe=config.strategy.timeframe,
         event_type="execution_event",
@@ -646,6 +648,7 @@ def _queue_manual_lock_action_alert(
         entity_ids=[ticket],
         payload={
             "title": f"Manual {exposure_type} {action} by discipline lock",
+            "outcome": "failed" if error is not None else "info",
             "account": env.account_label,
             "reason": details,
         },
@@ -795,7 +798,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
         if env.live_run_detectors and has_new_closed_m15:
             before_zone_ids = current_zone_ids(conn, config.symbol)
-            run_live_detectors(conn, config, config.symbol)
+            run_live_detectors(conn, config, config.symbol, env.account_label)
             apply_persisted_fvg_mitigation(conn, config.symbol, config.bias.timeframe)
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
@@ -838,7 +841,6 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             conn,
             token=env.telegram_token,
             chat_id=env.telegram_chat_id,
-            environment=env.environment,
             account_label=env.account_label,
         )
 
@@ -867,6 +869,7 @@ def _maybe_queue_news_alerts(
             lines.append(f"Forecast: {ev['forecast']}  |  Previous: {ev.get('previous', '?')}")
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.regime.timeframe,
             event_type="news_alert",
@@ -947,12 +950,13 @@ def queue_ftmo_news_guard_alert(
         dedupe_key = f"ftmo-news-hard-window:{env.account_label}:{guard['id']}"
     queue_alert(
         conn,
+        account_label=env.account_label,
         symbol=config.symbol,
         timeframe=config.strategy.timeframe,
         event_type="execution_event",
         severity="critical",
         entity_ids=[str(guard["id"])],
-        payload={"title": title, "reason": reason, "ftmo_news_guard": guard},
+        payload={"title": title, "outcome": "blocked", "reason": reason, "ftmo_news_guard": guard},
         dedupe_key=dedupe_key,
     )
     conn.commit()
@@ -1067,7 +1071,12 @@ def _load_swing_ids(conn: Connection, symbol: str, timeframe: str) -> set[str]:
 
 
 def _queue_new_swing_alerts(
-    conn: Connection, config: AppConfig, symbol: str, timeframe: str, new_ids: set[str]
+    conn: Connection,
+    config: AppConfig,
+    symbol: str,
+    timeframe: str,
+    new_ids: set[str],
+    account_label: str,
 ) -> None:
     # M15 swing structure is still stored for trigger/debug data, but it is not
     # a trade-context signal. Only notify humans about the H1 context swings.
@@ -1091,6 +1100,7 @@ def _queue_new_swing_alerts(
         event_time = str(row["event_time"])
         queue_alert(
             conn,
+            account_label=account_label,
             symbol=symbol,
             timeframe=timeframe,
             event_type="new_swing",
@@ -1109,7 +1119,7 @@ def _queue_new_swing_alerts(
         )
 
 
-def run_live_detectors(conn: Connection, config: AppConfig, symbol: str) -> None:
+def run_live_detectors(conn: Connection, config: AppConfig, symbol: str, account_label: str) -> None:
     for timeframe in (config.bias.timeframe, config.strategy.timeframe):
         swing_config = config.swing_for(timeframe)
         before_ids = _load_swing_ids(conn, symbol, timeframe)
@@ -1117,7 +1127,7 @@ def run_live_detectors(conn: Connection, config: AppConfig, symbol: str) -> None
         after_ids = _load_swing_ids(conn, symbol, timeframe)
         new_ids = after_ids - before_ids
         if new_ids:
-            _queue_new_swing_alerts(conn, config, symbol, timeframe, new_ids)
+            _queue_new_swing_alerts(conn, config, symbol, timeframe, new_ids, account_label)
         detect_and_store_break_structure(conn, symbol, timeframe, config.breaks.close_break_buffer)
 
     detect_and_store_bias(
@@ -1263,6 +1273,7 @@ def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zone
         }
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=zone["timeframe"],
             event_type="new_zone",
@@ -1305,6 +1316,7 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
         }
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=context_timeframe,
             event_type="setup_candidate",
@@ -1343,6 +1355,7 @@ def queue_m15_recovery_alert(conn: Connection, config: AppConfig, env: RuntimeEn
     trigger = candles[-1]
     return queue_alert(
         conn,
+        account_label=env.account_label,
         symbol=config.symbol,
         timeframe=config.strategy.timeframe,
         event_type="m15_recovery",
@@ -1376,6 +1389,7 @@ def queue_manual_ai_lifecycle_alert(
         return False
     return queue_alert(
         conn,
+        account_label=env.account_label,
         symbol=config.symbol,
         timeframe=config.strategy.timeframe,
         event_type="execution_event",
@@ -1383,6 +1397,7 @@ def queue_manual_ai_lifecycle_alert(
         entity_ids=[str(row["id"])],
         payload={
             "title": f"Manual AI limit {normalized_status}",
+            "outcome": normalized_status,
             "account": env.account_label,
             "direction": "long" if row["side"] == "buy" else "short",
             "entry": float(row["entry_price"]),
@@ -1391,6 +1406,27 @@ def queue_manual_ai_lifecycle_alert(
         },
         dedupe_key=f"manual-ai-lifecycle:{env.account_label}:{row['id']}:{normalized_status}",
     )
+
+
+def mark_manual_ai_filled(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    row: Any,
+    linked_order: Any | None,
+    now_iso: str,
+) -> None:
+    if linked_order is not None:
+        conn.execute(
+            "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+            (now_iso, linked_order["id"]),
+        )
+    conn.execute(
+        "UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?",
+        (now_iso, row["id"]),
+    )
+    conn.commit()
+    queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
 
 
 def process_manual_ai_plans(
@@ -1406,7 +1442,7 @@ def process_manual_ai_plans(
         """
         SELECT * FROM manual_ai_plans
         WHERE account_label = ? AND symbol = ?
-          AND status IN ('approved', 'arming', 'armed', 'filled', 'cancel_requested')
+                    AND status IN ('approved', 'arming', 'armed', 'cancel_requested')
         ORDER BY created_at ASC
         """,
         (env.account_label, config.symbol),
@@ -1439,14 +1475,8 @@ def process_manual_ai_plans(
         if linked_order is not None and str(linked_order["status"]) == "pending_fill" and ticket:
             broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket)
             if broker_state == "filled":
-                conn.execute(
-                    "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
-                    (now_iso, linked_order["id"]),
-                )
                 plan_status = "filled"
-                conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
-                conn.commit()
-                queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
+                mark_manual_ai_filled(conn, config, env, row, linked_order, now_iso)
             elif broker_state == "cancelled":
                 expires_at = datetime.fromisoformat(str(row["expires_at"]))
                 plan_status = "expired" if expires_at <= now else "cancelled"
@@ -1473,14 +1503,7 @@ def process_manual_ai_plans(
         if plan_status == "cancel_requested":
             broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
             if broker_state == "filled":
-                if linked_order is not None:
-                    conn.execute(
-                        "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
-                        (now_iso, linked_order["id"]),
-                    )
-                conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
-                conn.commit()
-                queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
+                mark_manual_ai_filled(conn, config, env, row, linked_order, now_iso)
                 continue
             if broker_state == "pending":
                 try:
@@ -1508,14 +1531,7 @@ def process_manual_ai_plans(
             if plan_status == "armed":
                 broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
                 if broker_state == "filled":
-                    if linked_order is not None:
-                        conn.execute(
-                            "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
-                            (now_iso, linked_order["id"]),
-                        )
-                    conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
-                    conn.commit()
-                    queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
+                    mark_manual_ai_filled(conn, config, env, row, linked_order, now_iso)
                     continue
                 if broker_state == "pending":
                     try:
@@ -1572,14 +1588,7 @@ def process_manual_ai_plans(
             if plan_status == "armed":
                 broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
                 if broker_state == "filled":
-                    if linked_order is not None:
-                        conn.execute(
-                            "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
-                            (now_iso, linked_order["id"]),
-                        )
-                    conn.execute("UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?", (now_iso, plan_id))
-                    conn.commit()
-                    queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
+                    mark_manual_ai_filled(conn, config, env, row, linked_order, now_iso)
                     continue
                 if broker_state == "pending":
                     try:
@@ -1733,12 +1742,13 @@ def maybe_execute_candidates(
     except Exception as exc:
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
             severity="critical",
             entity_ids=[str(candidate.get("id"))],
-            payload={"title": "Trade pricing failed", "reason": [str(exc)]},
+            payload={"title": "Trade pricing failed", "outcome": "failed", "reason": [str(exc)]},
             dedupe_key=f"pricing-failed:{candidate.get('id')}:{datetime.now(UTC).date().isoformat()}",
         )
         return
@@ -1760,6 +1770,7 @@ def maybe_execute_candidates(
     if not assessment.allowed:
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
@@ -1767,6 +1778,7 @@ def maybe_execute_candidates(
             entity_ids=[str(candidate.get("id"))],
             payload={
                 "title": "Trade blocked by risk manager",
+                "outcome": "blocked",
                 "reason": [assessment.reason],
                 "setup": {"playbook": candidate.get("playbook"), "direction": candidate.get("direction")},
             },
@@ -1845,6 +1857,7 @@ def maybe_ftmo_news_flatten(
         ]
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
@@ -1852,6 +1865,7 @@ def maybe_ftmo_news_flatten(
             entity_ids=[str(guard["id"])],
             payload={
                 "title": "FTMO news flatten failed" if errors else "FTMO news flatten completed",
+                "outcome": "failed" if errors else "info",
                 "reason": success_lines + errors,
                 "ftmo_news_guard": guard,
             },
@@ -1895,6 +1909,7 @@ def maybe_weekend_flatten(
     if errors:
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
@@ -1902,6 +1917,7 @@ def maybe_weekend_flatten(
             entity_ids=[],
             payload={
                 "title": "Weekend flatten incomplete",
+                "outcome": "failed",
                 "reason": [
                     f"Cancelled pending orders: {len(cancelled)}",
                     f"Closed positions: {len(closed)}",
@@ -1919,6 +1935,7 @@ def maybe_weekend_flatten(
     if did_anything and not errors:
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
@@ -1926,6 +1943,7 @@ def maybe_weekend_flatten(
             entity_ids=[],
             payload={
                 "title": "Weekend flatten completed",
+                "outcome": "info",
                 "reason": [
                     f"Cancelled pending orders: {len(cancelled)}",
                     f"Closed positions: {len(closed)}",
@@ -2341,6 +2359,7 @@ def execute_candidate(
         if exec_order_type != "limit":
             queue_alert(
                 conn,
+                account_label=env.account_label,
                 symbol=config.symbol,
                 timeframe=config.strategy.timeframe,
                 event_type="execution_event",
@@ -2348,6 +2367,7 @@ def execute_candidate(
                 entity_ids=[idea_id, order_id],
                 payload={
                     "title": "Live order sent",
+                    "outcome": "opened",
                     "account": env.account_label,
                     "setup": {
                         "playbook": candidate["playbook"],
@@ -2375,12 +2395,13 @@ def execute_candidate(
         conn.commit()
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
             severity="critical",
             entity_ids=[idea_id],
-            payload={"title": "Live order failed", "reason": [str(exc)]},
+            payload={"title": "Live order failed", "outcome": "failed", "reason": [str(exc)]},
             dedupe_key=f"live-order-failed:{env.account_label}:{candidate['id']}:{request_id}",
         )
 
@@ -2526,12 +2547,13 @@ def manage_open_trade_partial_take_profit(
             if modify_error is not None:
                 queue_alert(
                     conn,
+                    account_label=env.account_label,
                     symbol=config.symbol,
                     timeframe=config.strategy.timeframe,
                     event_type="execution_event",
                     severity="critical",
                     entity_ids=[row["id"]],
-                    payload={"title": "Break-even move retry failed", "reason": [modify_error]},
+                    payload={"title": "Break-even move retry failed", "outcome": "failed", "reason": [modify_error]},
                     dedupe_key=f"partial-be-retry-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
                 )
                 continue
@@ -2579,12 +2601,13 @@ def manage_open_trade_partial_take_profit(
             except Exception as exc:
                 queue_alert(
                     conn,
+                    account_label=env.account_label,
                     symbol=config.symbol,
                     timeframe=config.strategy.timeframe,
                     event_type="execution_event",
                     severity="critical",
                     entity_ids=[row["id"]],
-                    payload={"title": "Partial TP failed", "reason": [str(exc)]},
+                    payload={"title": "Partial TP failed", "outcome": "failed", "reason": [str(exc)]},
                     dedupe_key=f"partial-tp-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
                 )
                 continue
@@ -2602,12 +2625,13 @@ def manage_open_trade_partial_take_profit(
         if modify_error is not None:
             queue_alert(
                 conn,
+                account_label=env.account_label,
                 symbol=config.symbol,
                 timeframe=config.strategy.timeframe,
                 event_type="execution_event",
                 severity="critical",
                 entity_ids=[row["id"]],
-                payload={"title": "Break-even move failed after partial TP", "reason": [modify_error]},
+                payload={"title": "Break-even move failed after partial TP", "outcome": "failed", "reason": [modify_error]},
                 dedupe_key=f"partial-be-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
             )
         now = utc_now_iso()
@@ -2648,6 +2672,7 @@ def manage_open_trade_partial_take_profit(
         )
         queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="execution_event",
@@ -2655,6 +2680,7 @@ def manage_open_trade_partial_take_profit(
             entity_ids=[row["id"]],
             payload={
                 "title": "Partial TP + break-even" if modify_error is None else "Partial TP done; break-even pending",
+                "outcome": "take_profit",
                 "reason": [
                     f"Closed {close_volume:g} lot at ~{current_close_price:.2f}",
                     f"Moved SL to {be_stop:.2f}" if modify_error is None else f"BE move failed: {modify_error}",
@@ -2837,6 +2863,7 @@ def sync_closed_positions(
             pnl_str = f"+{pnl:.2f}" if pnl >= 0 else f"{pnl:.2f}"
             queue_alert(
                 conn,
+                account_label=env.account_label,
                 symbol=config.symbol,
                 timeframe=config.strategy.timeframe,
                 event_type="execution_event",
@@ -2844,6 +2871,7 @@ def sync_closed_positions(
                 entity_ids=[row["id"]],
                 payload={
                     "title": "Live position closed",
+                    "outcome": "closed",
                     "account": env.account_label,
                     "reason": [f"P&L: ${pnl_str}", f"Close: {close_price}"],
                 },

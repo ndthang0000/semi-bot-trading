@@ -237,6 +237,7 @@ ON weekly_journals(week_start DESC);
 
 CREATE TABLE IF NOT EXISTS alert_events (
     id TEXT PRIMARY KEY,
+    account_label TEXT NOT NULL DEFAULT 'Default',
     symbol TEXT NOT NULL,
     timeframe TEXT NOT NULL,
     event_type TEXT NOT NULL,
@@ -248,14 +249,13 @@ CREATE TABLE IF NOT EXISTS alert_events (
     sent_at TEXT,
     status TEXT NOT NULL,
     failure_reason TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
     chart_snapshot_path TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_alert_events_lookup
 ON alert_events(symbol, timeframe, event_type, status, created_at);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_events_dedupe
-ON alert_events(dedupe_key);
 
 CREATE TABLE IF NOT EXISTS live_candles (
     id TEXT PRIMARY KEY,
@@ -570,6 +570,9 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "weekly_journals", "content_format", "TEXT NOT NULL DEFAULT 'plain_text'")
     ensure_column(conn, "weekly_journals", "icon", "TEXT NOT NULL DEFAULT '📝'")
     ensure_column(conn, "spread_snapshots", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
+    ensure_column(conn, "alert_events", "account_label", "TEXT NOT NULL DEFAULT 'Default'")
+    ensure_column(conn, "alert_events", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "alert_events", "next_attempt_at", "TEXT")
     ensure_column(conn, "account_execution_commands", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "account_execution_controls", "partial_take_profit_enabled", "INTEGER")
     ensure_column(conn, "account_execution_controls", "partial_take_profit_r", "REAL")
@@ -585,6 +588,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "liquidity_sweep_states", "touched_edge_at", "TEXT")
     ensure_column(conn, "liquidity_sweep_states", "extreme_price", "REAL")
     backfill_liquidity_sweep_state_columns(conn)
+    migrate_alert_event_indexes(conn)
     ensure_account_scoped_indexes(conn)
     remove_non_h1_price_zones(conn)
     backfill_price_zone_expiry(conn)
@@ -610,6 +614,37 @@ def ensure_account_scoped_indexes(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_spread_snapshots_account_symbol_time
         ON spread_snapshots(account_label, symbol, snapshot_at)
+        """
+    )
+
+
+def migrate_alert_event_indexes(conn: sqlite3.Connection) -> None:
+    """Scope alert dedupe by account after legacy single-account deployments."""
+    rows = conn.execute(
+        "SELECT id, message_payload_json FROM alert_events WHERE account_label = 'Default'"
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["message_payload_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        account_label = str(payload.get("account") or "").strip()
+        if account_label:
+            conn.execute(
+                "UPDATE alert_events SET account_label = ? WHERE id = ?",
+                (account_label, row["id"]),
+            )
+    index_columns = [
+        row["name"]
+        for row in conn.execute("PRAGMA index_info(idx_alert_events_dedupe)").fetchall()
+    ]
+    if index_columns == ["account_label", "dedupe_key"]:
+        return
+    conn.execute("DROP INDEX IF EXISTS idx_alert_events_dedupe")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX idx_alert_events_dedupe
+        ON alert_events(account_label, dedupe_key)
         """
     )
 

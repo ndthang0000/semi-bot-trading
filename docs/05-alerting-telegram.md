@@ -147,6 +147,7 @@ Không confirm trade qua Telegram. Live phase confirm trên UI.
 ```yaml
 alert_event:
   id: string
+  account_label: string
   symbol: string
   timeframe: string
   event_type: new_zone | approaching_zone | zone_touched | liquidity_sweep | bias_changed | regime_changed | setup_candidate | system
@@ -157,15 +158,24 @@ alert_event:
   created_at: datetime
   sent_at: datetime | null
   status: pending | sent | suppressed | failed
+  attempt_count: integer
+  next_attempt_at: datetime | null
   chart_snapshot_path: string | null
 ```
 
 ## Failure handling
 
-- Telegram API lỗi: retry exponential backoff.
-- Sau retry thất bại: lưu failed, hiển thị trong UI.
+- Queue và dedupe được scope theo `account_label`; worker FTMO chỉ claim alert
+  FTMO, worker Exness chỉ claim alert Exness dù dùng chung SQLite.
+- Telegram API lỗi: retry exponential backoff sau 30, 60, 120 và 240 giây.
+- Sau tổng cộng 5 lần gửi thất bại: chuyển event sang `failed` và giữ
+  `failure_reason` để debug.
 - Bot token không hợp lệ: system alert local/log.
 - Không block analyzer vì Telegram lỗi.
+
+Execution alert dùng `message_payload.outcome` (`opened`, `filled`, `expired`,
+`take_profit`, `stop_loss`, `closed`, `blocked`, `failed`, `info`) để chọn tag;
+không suy luận trạng thái mới từ chuỗi title.
 
 ## Decisions hiện tại
 

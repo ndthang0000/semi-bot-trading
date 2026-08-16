@@ -58,7 +58,7 @@ class LiveIntegrationTest(unittest.TestCase):
 
                 self.assertTrue(queue_m15_recovery_alert(conn, config, env))
                 self.assertFalse(queue_m15_recovery_alert(conn, config, env))
-                alerts = pending_alerts(conn)
+                alerts = pending_alerts(conn, "Exness")
                 message = format_alert_message(alerts[0])
             finally:
                 conn.close()
@@ -81,7 +81,7 @@ class LiveIntegrationTest(unittest.TestCase):
                     env,
                     [{"id": "manual-1", "playbook": "manual_ai_v1", "status": "eligible"}],
                 )
-                alerts = pending_alerts(conn)
+                alerts = pending_alerts(conn, "FTMO")
             finally:
                 conn.close()
 
@@ -95,6 +95,7 @@ class LiveIntegrationTest(unittest.TestCase):
                 init_db(conn)
                 queue_alert(
                     conn,
+                    account_label="FTMO Challenge",
                     symbol="XAUUSD",
                     timeframe="H1",
                     event_type="new_swing",
@@ -108,7 +109,6 @@ class LiveIntegrationTest(unittest.TestCase):
                         conn,
                         token="token",
                         chat_id="chat",
-                        environment="development",
                         account_label="FTMO Challenge",
                     )
             finally:
@@ -127,6 +127,7 @@ class LiveIntegrationTest(unittest.TestCase):
                 init_db(conn)
                 first = queue_alert(
                     conn,
+                    account_label="Test",
                     symbol="XAUUSD",
                     timeframe="M15",
                     event_type="new_zone",
@@ -137,6 +138,7 @@ class LiveIntegrationTest(unittest.TestCase):
                 )
                 second = queue_alert(
                     conn,
+                    account_label="Test",
                     symbol="XAUUSD",
                     timeframe="M15",
                     event_type="new_zone",
@@ -145,7 +147,7 @@ class LiveIntegrationTest(unittest.TestCase):
                     payload={"title": "New zone"},
                     dedupe_key="new-zone:z1",
                 )
-                alerts = pending_alerts(conn)
+                alerts = pending_alerts(conn, "Test")
             finally:
                 conn.close()
 
@@ -153,6 +155,141 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertFalse(second)
         self.assertEqual(1, len(alerts))
         self.assertEqual(["z1"], alerts[0].entity_ids)
+
+    def test_alert_queue_and_sender_are_isolated_by_account(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            conn = connect(Path(temp_dir) / "test.sqlite3")
+            try:
+                init_db(conn)
+                for account_label in ("FTMO", "Exness"):
+                    self.assertTrue(
+                        queue_alert(
+                            conn,
+                            account_label=account_label,
+                            symbol="XAUUSD",
+                            timeframe="M15",
+                            event_type="system",
+                            severity="info",
+                            entity_ids=[],
+                            payload={"title": "Account event"},
+                            dedupe_key="same-event",
+                        )
+                    )
+                with patch("semi_bot_trading.alerts.send_telegram_message") as send:
+                    sent = send_pending_telegram_alerts(
+                        conn,
+                        token="token",
+                        chat_id="chat",
+                        account_label="FTMO",
+                    )
+                exness_pending = pending_alerts(conn, "Exness")
+            finally:
+                conn.close()
+
+        self.assertEqual(1, sent)
+        self.assertTrue(send.call_args.args[2].startswith("[FTMO]"))
+        self.assertEqual(1, len(exness_pending))
+
+    def test_transient_send_failure_schedules_retry(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            conn = connect(Path(temp_dir) / "test.sqlite3")
+            try:
+                init_db(conn)
+                queue_alert(
+                    conn,
+                    account_label="FTMO",
+                    symbol="XAUUSD",
+                    timeframe="M15",
+                    event_type="system",
+                    severity="important",
+                    entity_ids=[],
+                    payload={"title": "Retry me"},
+                    dedupe_key="retry-event",
+                )
+                with patch(
+                    "semi_bot_trading.alerts.send_telegram_message",
+                    side_effect=TimeoutError("temporary timeout"),
+                ):
+                    sent = send_pending_telegram_alerts(
+                        conn,
+                        token="token",
+                        chat_id="chat",
+                        account_label="FTMO",
+                    )
+                row = conn.execute(
+                    "SELECT status, attempt_count, next_attempt_at, failure_reason FROM alert_events"
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(0, sent)
+        self.assertEqual("pending", row["status"])
+        self.assertEqual(1, row["attempt_count"])
+        self.assertIsNotNone(row["next_attempt_at"])
+        self.assertIn("temporary timeout", row["failure_reason"])
+
+    def test_send_failure_becomes_terminal_after_five_attempts(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            conn = connect(Path(temp_dir) / "test.sqlite3")
+            try:
+                init_db(conn)
+                queue_alert(
+                    conn,
+                    account_label="FTMO",
+                    symbol="XAUUSD",
+                    timeframe="M15",
+                    event_type="system",
+                    severity="important",
+                    entity_ids=[],
+                    payload={"title": "Fail eventually"},
+                    dedupe_key="terminal-failure",
+                )
+                with patch(
+                    "semi_bot_trading.alerts.send_telegram_message",
+                    side_effect=TimeoutError("still unavailable"),
+                ):
+                    for _ in range(5):
+                        conn.execute(
+                            "UPDATE alert_events SET next_attempt_at = NULL WHERE dedupe_key = 'terminal-failure'"
+                        )
+                        conn.commit()
+                        send_pending_telegram_alerts(
+                            conn,
+                            token="token",
+                            chat_id="chat",
+                            account_label="FTMO",
+                        )
+                row = conn.execute(
+                    "SELECT status, attempt_count, next_attempt_at FROM alert_events"
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual("failed", row["status"])
+        self.assertEqual(5, row["attempt_count"])
+        self.assertIsNone(row["next_attempt_at"])
+
+    def test_execution_outcome_overrides_ambiguous_title(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            conn = connect(Path(temp_dir) / "test.sqlite3")
+            try:
+                init_db(conn)
+                queue_alert(
+                    conn,
+                    account_label="FTMO",
+                    symbol="XAUUSD",
+                    timeframe="M15",
+                    event_type="execution_event",
+                    severity="critical",
+                    entity_ids=[],
+                    payload={"title": "Partial TP failed", "outcome": "failed"},
+                    dedupe_key="failed-partial",
+                )
+                message = format_alert_message(pending_alerts(conn, "FTMO")[0])
+            finally:
+                conn.close()
+
+        self.assertTrue(message.startswith("[XAUUSD] [FAILED] Partial TP failed"))
 
     def test_m15_swing_detection_does_not_queue_telegram_alert(self) -> None:
         config = load_config()
@@ -174,11 +311,11 @@ class LiveIntegrationTest(unittest.TestCase):
                     )
                 conn.commit()
 
-                _queue_new_swing_alerts(conn, config, config.symbol, "M15", {"m15-swing"})
-                self.assertEqual([], pending_alerts(conn))
+                _queue_new_swing_alerts(conn, config, config.symbol, "M15", {"m15-swing"}, "Test")
+                self.assertEqual([], pending_alerts(conn, "Test"))
 
-                _queue_new_swing_alerts(conn, config, config.symbol, "H1", {"h1-swing"})
-                alerts = pending_alerts(conn)
+                _queue_new_swing_alerts(conn, config, config.symbol, "H1", {"h1-swing"}, "Test")
+                alerts = pending_alerts(conn, "Test")
             finally:
                 conn.close()
 
@@ -250,7 +387,7 @@ class LiveIntegrationTest(unittest.TestCase):
                         }
                     ],
                 )
-                alerts = pending_alerts(conn)
+                alerts = pending_alerts(conn, "Test")
                 message = format_alert_message(alerts[0])
             finally:
                 conn.close()
@@ -326,7 +463,7 @@ class LiveIntegrationTest(unittest.TestCase):
                         }
                     ],
                 )
-                alerts = pending_alerts(conn)
+                alerts = pending_alerts(conn, "Test")
                 message = format_alert_message(alerts[0])
             finally:
                 conn.close()
@@ -696,7 +833,7 @@ class LiveIntegrationTest(unittest.TestCase):
             patch("semi_bot_trading.live_worker.detect_and_store_price_action_patterns"),
             patch("semi_bot_trading.live_worker._load_swing_ids", return_value=set()),
         ):
-            run_live_detectors(conn=None, config=config, symbol=config.symbol)
+            run_live_detectors(conn=None, config=config, symbol=config.symbol, account_label="Test")
 
             swing_timeframes = {call.args[2] for call in swing.call_args_list}
             break_timeframes = {call.args[2] for call in breaks.call_args_list}

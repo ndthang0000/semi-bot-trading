@@ -11,6 +11,56 @@ from semi_bot_trading.db import connect, init_db
 
 
 class DbMigrationTest(unittest.TestCase):
+    def test_alert_events_migrate_to_account_scoped_retry_queue(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "legacy.sqlite3"
+            with closing(connect(db_path)) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE alert_events (
+                        id TEXT PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        timeframe TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        severity TEXT NOT NULL,
+                        entity_ids_json TEXT NOT NULL DEFAULT '[]',
+                        message_payload_json TEXT NOT NULL DEFAULT '{}',
+                        dedupe_key TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        sent_at TEXT,
+                        status TEXT NOT NULL,
+                        failure_reason TEXT,
+                        chart_snapshot_path TEXT
+                    );
+                    CREATE UNIQUE INDEX idx_alert_events_dedupe ON alert_events(dedupe_key);
+                    INSERT INTO alert_events (
+                        id, symbol, timeframe, event_type, severity, message_payload_json,
+                        dedupe_key, status
+                    ) VALUES (
+                        'legacy-alert', 'XAUUSD', 'M15', 'system', 'info',
+                        '{"account":"FTMO"}', 'legacy-key', 'pending'
+                    );
+                    """
+                )
+                init_db(conn)
+                columns = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(alert_events)").fetchall()
+                }
+                row = conn.execute(
+                    "SELECT account_label, attempt_count, next_attempt_at FROM alert_events"
+                ).fetchone()
+                index_columns = [
+                    item["name"]
+                    for item in conn.execute("PRAGMA index_info(idx_alert_events_dedupe)").fetchall()
+                ]
+
+        self.assertIn("account_label", columns)
+        self.assertIn("attempt_count", columns)
+        self.assertIn("next_attempt_at", columns)
+        self.assertEqual("FTMO", row["account_label"])
+        self.assertEqual(0, row["attempt_count"])
+        self.assertEqual(["account_label", "dedupe_key"], index_columns)
+
     def test_partial_take_profit_control_columns_migrate_existing_account_table(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "legacy.sqlite3"

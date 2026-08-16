@@ -723,6 +723,7 @@ def cmd_telegram_test(args: argparse.Namespace) -> None:
         init_db(conn)
         queued = queue_alert(
             conn,
+            account_label=env.account_label,
             symbol=config.symbol,
             timeframe=config.strategy.timeframe,
             event_type="system",
@@ -739,7 +740,6 @@ def cmd_telegram_test(args: argparse.Namespace) -> None:
             conn,
             token=env.telegram_token,
             chat_id=env.telegram_chat_id,
-            environment=env.environment,
             account_label=env.account_label,
         )
     print(f"Telegram test queued={queued} sent={sent}")

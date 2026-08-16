@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from sqlite3 import Connection
+from datetime import UTC, datetime, timedelta
+from sqlite3 import Connection, IntegrityError
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
+MAX_SEND_ATTEMPTS = 5
+RETRY_BASE_SECONDS = 30
 
 
 @dataclass(frozen=True)
 class AlertEvent:
     id: str
+    account_label: str
     symbol: str
     timeframe: str
     event_type: str
@@ -24,11 +30,14 @@ class AlertEvent:
     sent_at: str | None
     status: str
     failure_reason: str | None
+    attempt_count: int
+    next_attempt_at: str | None
 
 
 def queue_alert(
     conn: Connection,
     *,
+    account_label: str,
     symbol: str,
     timeframe: str,
     event_type: str,
@@ -41,13 +50,14 @@ def queue_alert(
         conn.execute(
             """
             INSERT INTO alert_events (
-                id, symbol, timeframe, event_type, severity, entity_ids_json,
+                id, account_label, symbol, timeframe, event_type, severity, entity_ids_json,
                 message_payload_json, dedupe_key, created_at, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 f"alert-{uuid.uuid4()}",
+                account_label,
                 symbol,
                 timeframe,
                 event_type,
@@ -60,22 +70,24 @@ def queue_alert(
         )
         conn.commit()
         return True
-    except Exception as exc:
-        if "UNIQUE constraint failed" not in str(exc):
+    except IntegrityError as exc:
+        if "alert_events.account_label, alert_events.dedupe_key" not in str(exc):
             raise
         return False
 
 
-def pending_alerts(conn: Connection, limit: int = 20) -> list[AlertEvent]:
+def pending_alerts(conn: Connection, account_label: str, limit: int = 20) -> list[AlertEvent]:
     rows = conn.execute(
         """
         SELECT *
         FROM alert_events
-        WHERE status = 'pending'
+        WHERE account_label = ?
+          AND status = 'pending'
+          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
         ORDER BY created_at
         LIMIT ?
         """,
-        (limit,),
+        (account_label, utc_now_iso(), limit),
     ).fetchall()
     return [row_to_alert(row) for row in rows]
 
@@ -84,7 +96,7 @@ def mark_alert_sent(conn: Connection, alert_id: str) -> None:
     conn.execute(
         """
         UPDATE alert_events
-        SET status = 'sent', sent_at = ?, failure_reason = NULL
+        SET status = 'sent', sent_at = ?, failure_reason = NULL, next_attempt_at = NULL
         WHERE id = ?
         """,
         (utc_now_iso(), alert_id),
@@ -92,16 +104,31 @@ def mark_alert_sent(conn: Connection, alert_id: str) -> None:
     conn.commit()
 
 
-def mark_alert_failed(conn: Connection, alert_id: str, reason: str) -> None:
+def schedule_alert_retry(conn: Connection, alert: AlertEvent, reason: str) -> bool:
+    attempt_count = alert.attempt_count + 1
+    if attempt_count >= MAX_SEND_ATTEMPTS:
+        conn.execute(
+            """
+            UPDATE alert_events
+            SET status = 'failed', failure_reason = ?, attempt_count = ?, next_attempt_at = NULL
+            WHERE id = ?
+            """,
+            (reason[:1000], attempt_count, alert.id),
+        )
+        conn.commit()
+        return False
+    delay_seconds = RETRY_BASE_SECONDS * (2 ** (attempt_count - 1))
+    next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
     conn.execute(
         """
         UPDATE alert_events
-        SET status = 'failed', failure_reason = ?
-        WHERE id = ?
+        SET failure_reason = ?, attempt_count = ?, next_attempt_at = ?
+        WHERE id = ? AND status = 'pending'
         """,
-        (reason[:1000], alert_id),
+        (reason[:1000], attempt_count, next_attempt_at.replace(microsecond=0).isoformat(), alert.id),
     )
     conn.commit()
+    return True
 
 
 def send_pending_telegram_alerts(
@@ -109,24 +136,30 @@ def send_pending_telegram_alerts(
     *,
     token: str | None,
     chat_id: str | None,
+    account_label: str,
     limit: int = 20,
-    environment: str = "development",
-    account_label: str = "Default",
 ) -> int:
     if not token or not chat_id:
         return 0
     sent = 0
-    for alert in pending_alerts(conn, limit=limit):
+    for alert in pending_alerts(conn, account_label, limit=limit):
         try:
             text = format_alert_message(alert)
-            alert_account = str(alert.payload.get("account") or account_label).strip()
-            if alert_account:
-                text = f"[{alert_account}] {text}"
+            text = f"[{alert.account_label}] {text}"
             send_telegram_message(token, chat_id, text)
             mark_alert_sent(conn, alert.id)
             sent += 1
         except Exception as exc:
-            mark_alert_failed(conn, alert.id, str(exc))
+            will_retry = schedule_alert_retry(conn, alert, str(exc))
+            logger.warning(
+                "Telegram alert send failed account=%s alert_id=%s event_type=%s attempt=%d retry=%s: %s",
+                alert.account_label,
+                alert.id,
+                alert.event_type,
+                alert.attempt_count + 1,
+                will_retry,
+                exc,
+            )
     return sent
 
 
@@ -351,17 +384,35 @@ def _fmt_execution(alert: AlertEvent) -> str:
     lots = p.get("lots") or p.get("quantity")
     pnl_r = p.get("pnl_r")
 
-    t_lower = title.lower()
-    if "opened" in t_lower or "executed" in t_lower:
-        tag = "[OPEN]"
-    elif "closed" in t_lower or " tp" in t_lower:
-        tag = "[TP]"
-    elif "sl" in t_lower or "stop" in t_lower or "loss" in t_lower:
-        tag = "[SL]"
-    elif "blocked" in t_lower or "failed" in t_lower:
-        tag = "[BLOCK]"
-    else:
-        tag = "[INFO]"
+    outcome_tags = {
+        "opened": "[OPEN]",
+        "filled": "[FILLED]",
+        "expired": "[EXPIRED]",
+        "take_profit": "[TP]",
+        "stop_loss": "[SL]",
+        "closed": "[CLOSE]",
+        "blocked": "[BLOCK]",
+        "failed": "[FAILED]",
+        "info": "[INFO]",
+    }
+    outcome = str(p.get("outcome") or "").lower()
+    tag = outcome_tags.get(outcome)
+    if tag is None:
+        t_lower = title.lower()
+        if "blocked" in t_lower:
+            tag = "[BLOCK]"
+        elif "failed" in t_lower:
+            tag = "[FAILED]"
+        elif "opened" in t_lower or "executed" in t_lower:
+            tag = "[OPEN]"
+        elif "closed" in t_lower:
+            tag = "[CLOSE]"
+        elif " tp" in t_lower:
+            tag = "[TP]"
+        elif "sl" in t_lower or "stop" in t_lower or "loss" in t_lower:
+            tag = "[SL]"
+        else:
+            tag = "[INFO]"
 
     sym = "[" + alert.symbol + "]"
     lines = [sym + " " + tag + " " + title]
@@ -428,6 +479,7 @@ def _fmt_generic(alert: AlertEvent) -> str:
 def row_to_alert(row: Any) -> AlertEvent:
     return AlertEvent(
         id=row["id"],
+        account_label=row["account_label"],
         symbol=row["symbol"],
         timeframe=row["timeframe"],
         event_type=row["event_type"],
@@ -439,6 +491,8 @@ def row_to_alert(row: Any) -> AlertEvent:
         sent_at=row["sent_at"],
         status=row["status"],
         failure_reason=row["failure_reason"],
+        attempt_count=int(row["attempt_count"] or 0),
+        next_attempt_at=row["next_attempt_at"],
     )
 
 
