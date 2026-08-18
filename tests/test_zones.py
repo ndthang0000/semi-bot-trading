@@ -28,6 +28,52 @@ class ZoneDetectorTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "H1-context only"):
                     replace_price_zones(conn, "XAUUSD", "M15", "fvg_v1", [])
 
+    def test_replace_price_zones_preserves_bot_zone_first_seen_created_at(self) -> None:
+        bot_zone = PriceZone(
+            symbol="XAUUSD",
+            timeframe="H1",
+            detector="sr_v2",
+            zone_type="support",
+            direction="bullish",
+            price_low=100,
+            price_high=105,
+            start_time="2026-01-01T00:00:00+00:00",
+            end_time=None,
+            valid_from="2026-01-01T00:00:00+00:00",
+            valid_until=None,
+            invalidated_at=None,
+            invalidated_by_structure_point_id=None,
+            detected_at="2026-01-01T00:00:00+00:00",
+            bot_confidence=0.8,
+            bot_weight=0.7,
+            effective_confidence=0.8,
+            effective_weight=0.7,
+            status="active",
+            source="bot",
+            metadata={},
+        )
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with connect(db_path) as conn:
+                init_db(conn)
+                replace_price_zones(conn, "XAUUSD", "H1", "sr_v2", [bot_zone])
+                first_created_at = conn.execute(
+                    "SELECT created_at FROM price_zones WHERE id = ?", (bot_zone.id,)
+                ).fetchone()["created_at"]
+                conn.execute(
+                    "UPDATE price_zones SET created_at = ? WHERE id = ?",
+                    ("2026-01-02T03:04:05+00:00", bot_zone.id),
+                )
+                conn.commit()
+
+                replace_price_zones(conn, "XAUUSD", "H1", "sr_v2", [bot_zone])
+                refreshed_created_at = conn.execute(
+                    "SELECT created_at FROM price_zones WHERE id = ?", (bot_zone.id,)
+                ).fetchone()["created_at"]
+
+        self.assertTrue(first_created_at)
+        self.assertEqual("2026-01-02T03:04:05+00:00", refreshed_created_at)
+
     def test_replace_price_zones_preserves_human_adjusted_bot_zone(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

@@ -59,8 +59,7 @@ min_stop_atr = 1.5
 max_stop_distance = 25.0
 reject_wide_stop_fallback = "atr"
 reject_atr_stop = 1.2
-impulse_limit_range_atr = 4.0
-impulse_limit_extension_atr = 1.0
+impulse_limit_extension_atr = 2.0
 impulse_limit_expiry_bars = 8
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5
@@ -98,6 +97,7 @@ Moi zone co `metadata.trade_modes` quyet dinh reaction family nao duoc trade:
 - Khi tao manual zone, frontend gui default nay va backend validate/lưu explicit vao `metadata.trade_modes`; backend cung dung cung default cho zone cu chua co field de UI va strategy khong lech nhau.
 - Zone do human ve/chinh sua duoc xem la human thesis va **bypass toan bo context gate** (bias/regime/news/macro trend) cho family duoc trade. Human van co the set explicit `trade_modes` tren UI de gioi han family; cac dieu kien chat luong tin hieu (reject body, internal reject trigger, RR) van ap dung.
 - Trong live mode, human manual zone chi duoc generate setup tu candle co open time bang hoac sau thoi diem zone duoc tao (`created_at`). Cac lan human keo/chinh zone sau do (`last_human_override_at`) khong reset activation, vi trader co the tinh chinh zone cho phu hop thi truong khi gia dang chay. `visual_start` chi de ve chart, khong duoc dung de backdate setup tren candle da mo truoc khi human ve zone.
+- Bot zone chi duoc dung trigger sau khi context candle tao zone da dong va sau thoi diem zone thuc su duoc persist (`created_at`). Cung mot zone id giu nguyen first-seen `created_at` qua cac lan detector refresh. Vi vay zone moi xuat hien giua mot nen M15 chi co the dung nen M15 bat dau sau thoi diem do, khong duoc carry-forward mot reaction da xay ra truoc khi zone ton tai.
 - He qua: bot SR zone khong con trade `internal_reject` theo default; muon internal reject tren SR zone cu the thi human set `trade_modes = ["reject", "internal_reject"]`.
 - Neu human set SR zone chi `trade_modes = ["internal_reject"]`, cac state tien-xac-nhan nhu `slow_reaction`/`waiting_bos` van duoc emit len UI de debug va cho BOS/CHOCH + price action; chung chi thanh `eligible` khi promote duoc thanh `internal_reject`.
 - Metadata candidate ghi `context_bypass` va `trade_modes` de debug.
@@ -147,8 +147,7 @@ va snapshot cua H1 touch candle. Report van doc metadata legacy cua trade cu.
 
 Impulse reject khong duoc chase market neu gia da dong cua qua xa zone. Voi `reject`:
 
-- Neu range cua nen reaction `> impulse_limit_range_atr * ATR_M15`.
-- Va close extension khoi zone edge `> impulse_limit_extension_atr * ATR_M15`.
+- Neu close extension khoi zone edge `> impulse_limit_extension_atr * ATR_M15` (mac dinh `2.0 ATR`). Range cua nen van duoc luu trong metadata de audit nhung khong con la dieu kien gate.
 - Long support/bullish FVG dat `limit` tai `zone_high`; short resistance/bearish FVG dat `limit` tai `zone_low`.
 - TP duoc tinh lai tu limit entry theo `rr_minimum`; SL giu theo stop logic hien tai.
 - Limit expire sau `impulse_limit_expiry_bars` nen M15 tinh tu khi setup xuat hien sau close cua nen signal.

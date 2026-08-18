@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..config import StrategyConfig
+from ..timeframes import timeframe_delta
 from ..zones import CandleSlice, latest_atr  # noqa: F401 – re-exported for builder
 from .types import (
     BEARISH_BREAKS,
@@ -180,8 +181,34 @@ def zone_human_activation_time(zone: dict[str, Any]) -> datetime | None:
     return parse_utc_datetime(zone.get("created_at"))
 
 
+def zone_signal_activation_time(zone: dict[str, Any]) -> datetime | None:
+    """Return the earliest time a zone may consume a trigger candle.
+
+    Human zones become available when they are created. Bot zones must also
+    wait until their context candle has closed; a persisted ``created_at`` is
+    an even stronger runtime boundary because it records when the detector
+    actually exposed the zone to the strategy.
+    """
+    if zone_is_human_thesis(zone):
+        return zone_human_activation_time(zone)
+
+    candidates: list[datetime] = []
+    created_at = parse_utc_datetime(zone.get("created_at"))
+    if created_at is not None:
+        candidates.append(created_at)
+
+    detected_at = parse_utc_datetime(zone.get("detected_at"))
+    if detected_at is not None:
+        try:
+            detected_at += timeframe_delta(str(zone.get("timeframe") or "H1"))
+        except ValueError:
+            pass
+        candidates.append(detected_at)
+    return max(candidates) if candidates else None
+
+
 def zone_can_use_signal_candle(zone: dict[str, Any], candle: dict[str, Any]) -> bool:
-    activation_time = zone_human_activation_time(zone)
+    activation_time = zone_signal_activation_time(zone)
     if activation_time is None:
         return True
     candle_time = parse_utc_datetime(candle.get("time"))

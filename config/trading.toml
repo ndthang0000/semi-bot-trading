@@ -155,10 +155,9 @@ max_stop_distance = 25.0
 # fallback trigger threshold, not a hard reject cap.
 reject_wide_stop_fallback = "atr"
 reject_atr_stop = 1.2
-# If a reject candle is an impulse and closes too far from the zone, do not
-# chase market. Place a retest limit at the zone edge instead.
-impulse_limit_range_atr = 4.0
-impulse_limit_extension_atr = 1.0
+# If a reject candle closes more than 2 ATR from the zone edge, do not chase
+# market. Place a retest limit at the zone edge instead.
+impulse_limit_extension_atr = 2.0
 impulse_limit_expiry_bars = 8
 require_trigger_for_fakeout = true
 fakeout_max_reaction_depth_atr = 1.5

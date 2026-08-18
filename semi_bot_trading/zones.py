@@ -1039,6 +1039,18 @@ def replace_price_zones(
 ) -> int:
     if timeframe.upper() != "H1":
         raise ValueError(f"price_zones are H1-context only; refusing to write {timeframe} zones for {detector}")
+    # Detector refreshes replace bot rows wholesale. Preserve the first time a
+    # stable zone id was persisted so strategy activation does not reset every
+    # M15 detector cycle and so a newly discovered zone has a reliable runtime
+    # availability boundary.
+    existing_created_at = {
+        str(row["id"]): str(row["created_at"])
+        for row in conn.execute(
+            "SELECT id, created_at FROM price_zones WHERE symbol = ? AND timeframe = ?",
+            (symbol, timeframe),
+        ).fetchall()
+    }
+    refresh_created_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     protected_rows = protected_price_zone_rows(conn, symbol, timeframe, detector)
     protected_ids = {str(row["id"]) for row in protected_rows}
     if detector == SR_DETECTOR:
@@ -1066,9 +1078,9 @@ def replace_price_zones(
                 price_low, price_high, start_time, end_time, valid_from, valid_until,
                 invalidated_at, invalidated_by_structure_point_id, detected_at,
                 bot_confidence, bot_weight, effective_confidence, effective_weight,
-                status, source, metadata_json
+                status, source, metadata_json, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -1094,6 +1106,7 @@ def replace_price_zones(
                     zone.status,
                     zone.source,
                     json.dumps(zone.metadata, sort_keys=True),
+                    existing_created_at.get(zone.id, refresh_created_at),
                 )
                 for zone in insert_zones
             ],

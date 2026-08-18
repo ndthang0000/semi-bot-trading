@@ -427,6 +427,10 @@ before broker acceptance, so a manual market position may incur spread/slippage
 before the guard closes it. The fast guard and 15-second strategy cycle share
 one MT5 client and run sequentially to avoid concurrent terminal calls.
 
+Account Dashboard chi hien trang thai `Manual LOCKED`/arming/inactive o dang
+read-only; UI khong co toggle unlock de tranh human tat guard trong luc mat binh
+tinh. Endpoint backend van duoc giu cho thao tac quan tri co chu dich.
+
 Exness cent accounts should use `ACCOUNT_PROFILE=personal_cent` or explicitly
 set `ACCOUNT_BALANCE_SCALE=0.01` when MT5 reports USD-equivalent balance in USC
 units, for example 1000 USD displayed as 100000 USC.
