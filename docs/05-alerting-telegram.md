@@ -79,13 +79,25 @@ một alert Telegram:
 - `average_body` dùng đúng số nến liền trước cấu hình bởi
   `reject_avg_body_period`; không đưa nến trigger vào baseline.
 - Nếu cùng một nến đạt cả hai hướng, gộp hai hướng trong một message.
-- Dedupe theo account label, symbol và close time của nến để worker restart hoặc
-  poll lặp không gửi lại cùng event.
+- Day la market/system alert dung chung. Chi primary data worker co
+  `LIVE_RUN_DETECTORS=true` duoc queue; worker account phu khong gui lai.
+- Dedupe theo symbol và close time của nến trong scope primary worker để restart
+  hoặc poll lặp không gửi lại cùng event.
 
 ## Format message gợi ý
 
-Mọi message runtime bắt đầu bằng account label, ví dụ `[FTMO Challenge]` hoặc
-`[Exness Personal]`. Không dùng prefix theo environment như `[DEV]`.
+Moi message runtime bat dau bang emoji phan loai. Market alert dung chung hien
+`[SYSTEM]`; execution/risk/account alert hien account label, vi du:
+
+```text
+⏳ [SYSTEM] [XAUUSD H1] [WAIT] zone-reaction-v2 LONG
+🟢 [FTMO 100K 2-Step] [XAUUSD] [OPEN] Live order opened
+```
+
+Emoji chinh: `🎯` ready, `⏳` waiting, `🚫` blocked, `⚡` M15 recovery,
+`🗺️` zone, `📈` swing, `🚨` news, `🟢` opened/filled, `💰` TP,
+`🔴` SL, `❌` failed, `🔒` manual lock. Khong dung prefix environment nhu
+`[DEV]`.
 
 ```text
 [XAUUSD][M15] Price touched Bullish OB
@@ -165,8 +177,12 @@ alert_event:
 
 ## Failure handling
 
-- Queue và dedupe được scope theo `account_label`; worker FTMO chỉ claim alert
-  FTMO, worker Exness chỉ claim alert Exness dù dùng chung SQLite.
+- Account-specific alert queue/dedupe theo `account_label`; worker FTMO chi claim
+  alert FTMO va worker Exness chi claim alert Exness du dung chung SQLite.
+- Market/system alert (`setup_candidate`, `m15_recovery`, zone, swing, news)
+  chi do primary data worker `LIVE_RUN_DETECTORS=true` queue/send. Secondary
+  worker phai dat `LIVE_RUN_DETECTORS=false`; no van evaluate/execute setup theo
+  account nhung khong spam lai Telegram.
 - Telegram API lỗi: retry exponential backoff sau 30, 60, 120 và 240 giây.
 - Sau tổng cộng 5 lần gửi thất bại: chuyển event sang `failed` và giữ
   `failure_reason` để debug.

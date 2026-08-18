@@ -852,7 +852,7 @@ def _maybe_queue_news_alerts(
     now: datetime,
 ) -> None:
     """Queue a Telegram alert for tier-1/2 events arriving in ~10 minutes."""
-    if not env.telegram_token or not env.telegram_chat_id:
+    if not env.live_run_detectors or not env.telegram_token or not env.telegram_chat_id:
         return
     events = should_notify_news(conn, now, notify_minutes_before=10)
     for ev in events:
@@ -861,7 +861,7 @@ def _maybe_queue_news_alerts(
         before = int(ev["blackout_before_min"])
         after = int(ev["blackout_after_min"])
         lines = [
-            f"[{config.symbol}] ⚠️ Tin tức sắp ra trong ~10 phút",
+            f"[{config.symbol}] Tin tức sắp ra trong ~10 phút",
             f"{tier_label}: {ev['title']}",
             f"USD · Blackout ±{before}/{after} phút",
         ]
@@ -1254,6 +1254,8 @@ def run_live_detectors(conn: Connection, config: AppConfig, symbol: str, account
 
 
 def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zones: list[Any]) -> None:
+    if not env.live_run_detectors:
+        return
     for zone in zones:
         weight = float(zone["effective_weight"])
         if zone["zone_type"] not in {"support", "resistance", "fvg", "order_block"} and weight < 0.7:
@@ -1285,6 +1287,11 @@ def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zone
 
 
 def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, candidates: list[dict[str, Any]]) -> None:
+    # Setup geometry is shared by every account worker. Only the primary data
+    # worker (LIVE_RUN_DETECTORS=true) announces it; each account still runs its
+    # own risk checks and execution lifecycle alerts below this layer.
+    if not env.live_run_detectors:
+        return
     for candidate in candidates:
         if candidate.get("playbook") == "manual_ai_v1":
             continue
@@ -1328,6 +1335,8 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
 
 
 def queue_m15_recovery_alert(conn: Connection, config: AppConfig, env: RuntimeEnv) -> bool:
+    if not env.live_run_detectors:
+        return False
     period = config.strategy.zone_reaction_v2_reject_avg_body_period
     threshold = config.strategy.zone_reaction_v2_reject_recovery_min_avg_body_ratio
     rows = conn.execute(

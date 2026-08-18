@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 MAX_SEND_ATTEMPTS = 5
 RETRY_BASE_SECONDS = 30
 
+SYSTEM_ALERT_EVENT_TYPES = {
+    "approaching_zone",
+    "bias_changed",
+    "liquidity_sweep",
+    "m15_recovery",
+    "new_swing",
+    "new_zone",
+    "news_alert",
+    "regime_changed",
+    "setup_candidate",
+    "zone_touched",
+}
+
 
 @dataclass(frozen=True)
 class AlertEvent:
@@ -145,7 +158,8 @@ def send_pending_telegram_alerts(
     for alert in pending_alerts(conn, account_label, limit=limit):
         try:
             text = format_alert_message(alert)
-            text = f"[{alert.account_label}] {text}"
+            scope_label = "SYSTEM" if alert.event_type in SYSTEM_ALERT_EVENT_TYPES else alert.account_label
+            text = f"{alert_message_emoji(alert)} [{scope_label}] {text}"
             send_telegram_message(token, chat_id, text)
             mark_alert_sent(conn, alert.id)
             sent += 1
@@ -199,6 +213,59 @@ def format_alert_message(alert: AlertEvent) -> str:
     if et == "news_alert":
         return _fmt_news(alert)
     return _fmt_generic(alert)
+
+
+def alert_message_emoji(alert: AlertEvent) -> str:
+    """Return one stable leading emoji for fast Telegram message scanning."""
+    if alert.event_type == "setup_candidate":
+        setup = alert.payload.get("setup") if isinstance(alert.payload.get("setup"), dict) else {}
+        status = str(setup.get("status") or "")
+        return {"eligible": "🎯", "blocked": "🚫"}.get(status, "⏳")
+    if alert.event_type == "execution_event":
+        title = str(alert.payload.get("title") or "").lower()
+        outcome = str(alert.payload.get("outcome") or "").lower()
+        if "manual" in title and "lock" in title:
+            return "🔒"
+        if "ftmo" in title or "news" in title:
+            return "🛡️"
+        if not outcome:
+            if "blocked" in title:
+                outcome = "blocked"
+            elif "failed" in title:
+                outcome = "failed"
+            elif "opened" in title or "executed" in title:
+                outcome = "opened"
+            elif "expired" in title:
+                outcome = "expired"
+            elif "closed" in title:
+                outcome = "closed"
+            elif "take profit" in title or "partial tp" in title:
+                outcome = "take_profit"
+            elif "stop" in title or "loss" in title:
+                outcome = "stop_loss"
+        return {
+            "opened": "🟢",
+            "filled": "🟢",
+            "take_profit": "💰",
+            "stop_loss": "🔴",
+            "closed": "🏁",
+            "expired": "⌛",
+            "blocked": "🚫",
+            "failed": "❌",
+            "info": "ℹ️",
+        }.get(outcome, "⚙️")
+    return {
+        "new_zone": "🗺️",
+        "new_swing": "📈",
+        "m15_recovery": "⚡",
+        "news_alert": "🚨",
+        "liquidity_sweep": "🌊",
+        "approaching_zone": "👀",
+        "zone_touched": "📍",
+        "bias_changed": "🧭",
+        "regime_changed": "🔄",
+        "system": "⚙️",
+    }.get(alert.event_type, "🔔")
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +515,7 @@ def _fmt_execution(alert: AlertEvent) -> str:
 
 def _fmt_news(alert: AlertEvent) -> str:
     p = alert.payload
-    title = str(p.get("title", "⚠️ Tin tức sắp ra"))
+    title = str(p.get("title", "Tin tức sắp ra"))
     reasons = p.get("reason") or []
     lines = [title] + [str(r) for r in reasons if r]
     return "\n".join(lines)

@@ -87,7 +87,7 @@ class LiveIntegrationTest(unittest.TestCase):
 
         self.assertEqual([], alerts)
 
-    def test_telegram_message_uses_account_label_instead_of_environment(self) -> None:
+    def test_system_telegram_message_uses_system_scope_and_category_emoji(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"
             conn = connect(db_path)
@@ -116,7 +116,8 @@ class LiveIntegrationTest(unittest.TestCase):
 
         self.assertEqual(1, sent)
         message = send.call_args.args[2]
-        self.assertTrue(message.startswith("[FTMO Challenge] [XAUUSD H1]"))
+        self.assertTrue(message.startswith("📈 [SYSTEM] [XAUUSD H1]"))
+        self.assertNotIn("[FTMO Challenge]", message)
         self.assertNotIn("[DEV]", message)
 
     def test_alert_queue_dedupes_by_key(self) -> None:
@@ -187,8 +188,37 @@ class LiveIntegrationTest(unittest.TestCase):
                 conn.close()
 
         self.assertEqual(1, sent)
-        self.assertTrue(send.call_args.args[2].startswith("[FTMO]"))
+        self.assertTrue(send.call_args.args[2].startswith("⚙️ [FTMO]"))
         self.assertEqual(1, len(exness_pending))
+
+    def test_secondary_worker_does_not_queue_shared_setup_or_recovery_alerts(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO", live_run_detectors=False)
+        with TemporaryDirectory() as temp_dir:
+            conn = connect(Path(temp_dir) / "test.sqlite3")
+            try:
+                init_db(conn)
+                queue_setup_alerts(
+                    conn,
+                    config,
+                    env,
+                    [
+                        {
+                            "id": "shared-setup",
+                            "timeframe": "M15",
+                            "playbook": "zone_reaction_v2",
+                            "direction": "long",
+                            "status": "waiting_confirmation",
+                        }
+                    ],
+                )
+                recovery_queued = queue_m15_recovery_alert(conn, config, env)
+                alerts = pending_alerts(conn, "FTMO")
+            finally:
+                conn.close()
+
+        self.assertFalse(recovery_queued)
+        self.assertEqual([], alerts)
 
     def test_transient_send_failure_schedules_retry(self) -> None:
         with TemporaryDirectory() as temp_dir:
