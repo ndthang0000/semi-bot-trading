@@ -325,6 +325,8 @@ CREATE TABLE IF NOT EXISTS manual_ai_plans (
     source TEXT NOT NULL DEFAULT 'ai_import',
     trade_idea_id TEXT,
     execution_request_id TEXT,
+    replacement_levels_json TEXT NOT NULL DEFAULT '{}',
+    replacement_error TEXT,
     approved_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -587,6 +589,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "liquidity_sweep_states", "trade_direction", "TEXT NOT NULL DEFAULT 'long'")
     ensure_column(conn, "liquidity_sweep_states", "touched_edge_at", "TEXT")
     ensure_column(conn, "liquidity_sweep_states", "extreme_price", "REAL")
+    ensure_column(conn, "manual_ai_plans", "replacement_levels_json", "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column(conn, "manual_ai_plans", "replacement_error", "TEXT")
     backfill_liquidity_sweep_state_columns(conn)
     migrate_alert_event_indexes(conn)
     ensure_account_scoped_indexes(conn)

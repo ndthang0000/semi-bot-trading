@@ -246,6 +246,80 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertEqual(rejected.status_code, 200)
             self.assertEqual("cancel_requested", rejected.json()["status"])
 
+    def test_level_edit_updates_draft_immediately_and_recalculates_rr(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            plan = client.post("/api/manual-ai/plans/import", json=envelope()).json()["plans"][0]
+
+            response = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={"entry_price": 2002, "stop_loss": 1992, "take_profit": 2032},
+            )
+
+            self.assertEqual(200, response.status_code, response.text)
+            self.assertFalse(response.json()["requires_broker_replace"])
+            updated = response.json()["plans"][0]
+            self.assertEqual((2002.0, 1992.0, 2032.0, 3.0), (
+                updated["entry_price"], updated["stop_loss"], updated["take_profit"], updated["risk_reward"]
+            ))
+
+    def test_level_edit_requests_cancel_replace_for_every_armed_worker(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            imported = client.post("/api/manual-ai/plans/import", json=envelope()).json()["plans"][0]
+            client.post(
+                f"/api/manual-ai/plans/{imported['id']}/approve",
+                json={"account_labels": ["FTMO 100K", "Exness Personal"], "questionnaire": questionnaire()},
+            )
+            with connect(db_path) as conn:
+                conn.execute("UPDATE manual_ai_plans SET status = 'armed' WHERE client_id = ?", (imported["client_id"],))
+                conn.commit()
+
+            response = client.patch(
+                f"/api/manual-ai/plans/{imported['id']}/levels",
+                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2026},
+            )
+
+            self.assertEqual(200, response.status_code, response.text)
+            self.assertTrue(response.json()["requires_broker_replace"])
+            with connect(db_path) as conn:
+                rows = conn.execute(
+                    "SELECT status, entry_price, replacement_levels_json FROM manual_ai_plans WHERE client_id = ?",
+                    (imported["client_id"],),
+                ).fetchall()
+            self.assertEqual({"replace_requested"}, {row["status"] for row in rows})
+            self.assertEqual({2000.0}, {row["entry_price"] for row in rows})
+            self.assertTrue(all('"entry_price": 2001.0' in row["replacement_levels_json"] for row in rows))
+
+    def test_level_edit_rejects_invalid_geometry_and_rr(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            plan = client.post("/api/manual-ai/plans/import", json=envelope()).json()["plans"][0]
+            invalid_geometry = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={"entry_price": 2000, "stop_loss": 2010, "take_profit": 2030},
+            )
+            invalid_rr = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={"entry_price": 2000, "stop_loss": 1990, "take_profit": 2010},
+            )
+            self.assertEqual(422, invalid_geometry.status_code)
+            self.assertEqual(422, invalid_rr.status_code)
+
 
 def questionnaire(*, accepts: bool = True) -> dict:
     return {

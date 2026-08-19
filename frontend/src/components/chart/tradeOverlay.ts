@@ -36,6 +36,9 @@ export type SetupBox = {
   height: number;
   profit: BoxRect;
   loss: BoxRect;
+  entryY: number;
+  stopY: number;
+  takeProfitY: number;
 };
 
 export function setupToBox(
@@ -69,7 +72,18 @@ export function setupToBox(
   if (!profit || !loss) return null;
   const y = Math.min(profit.y, loss.y);
   const bottom = Math.max(profit.y + profit.height, loss.y + loss.height);
-  return { candidate, x: left, y, width: right - left, height: Math.max(2, bottom - y), profit, loss };
+  return {
+    candidate,
+    x: left,
+    y,
+    width: right - left,
+    height: Math.max(2, bottom - y),
+    profit,
+    loss,
+    entryY,
+    stopY,
+    takeProfitY,
+  };
 }
 
 export function tradeToBox(

@@ -743,6 +743,11 @@ function SetupCard({
           Hết hạn {localDateTime(candidate.expires_at)}
         </div>
       ) : null}
+      {typeof candidate.metadata.manual_ai_replace_error === "string" ? (
+        <div className="mt-1 rounded border border-rose-500/30 bg-rose-950/50 px-2 py-1 text-[10px] leading-4 text-rose-200">
+          Replace failed: {candidate.metadata.manual_ai_replace_error}
+        </div>
+      ) : null}
       {trigger ? (
         <div className="mt-2 rounded border border-cyan-400/20 bg-cyan-400/[0.06] px-2 py-1.5 text-[11px] text-cyan-50">
           <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1">

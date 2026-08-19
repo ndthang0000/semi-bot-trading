@@ -116,6 +116,12 @@ class ManualAiApproveRequest(BaseModel):
     questionnaire: ManualAiQuestionnaire
 
 
+class ManualAiLevelsUpdateRequest(BaseModel):
+    entry_price: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    take_profit: float = Field(gt=0)
+
+
 class ZoneOverrideRequest(BaseModel):
     price_low: float
     price_high: float

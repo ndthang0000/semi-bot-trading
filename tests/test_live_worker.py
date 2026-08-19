@@ -1031,6 +1031,76 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self.assertEqual("cancelled", plan["status"])
         self.assertEqual("cancelled", order["status"])
 
+    def test_replace_requested_cancels_old_ticket_and_requeues_with_new_levels(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        replacement = {
+            "entry_price": 3005.0,
+            "stop_loss": 2995.0,
+            "take_profit": 3035.0,
+            "risk_reward": 3.0,
+        }
+        self._conn.execute(
+            "UPDATE manual_ai_plans SET status = 'replace_requested', replacement_levels_json = ? WHERE id = 'manual-plan'",
+            (json.dumps(replacement),),
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3010.0)
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm", order_ticket="33333", comment="Manual AI replace"
+        )
+        plan = self._conn.execute(
+            "SELECT status, entry_price, stop_loss, take_profit, risk_reward, trade_idea_id, execution_request_id FROM manual_ai_plans WHERE id = 'manual-plan'"
+        ).fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
+        request = self._conn.execute("SELECT status FROM execution_requests WHERE id = 'manual-request'").fetchone()
+        self.assertEqual(("approved", 3005.0, 2995.0, 3035.0, 3.0, None, None), tuple(plan))
+        self.assertEqual("cancelled", order["status"])
+        self.assertEqual("cancelled", request["status"])
+
+    def test_replace_requested_does_not_cancel_when_old_ticket_filled(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        self._conn.execute(
+            "UPDATE manual_ai_plans SET status = 'replace_requested', replacement_levels_json = ? WHERE id = 'manual-plan'",
+            (json.dumps({"entry_price": 3005, "stop_loss": 2995, "take_profit": 3035, "risk_reward": 3}),),
+        )
+        self._conn.commit()
+        client = _fake_client()
+        client.get_pending_order_state.return_value = "filled"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        client.cancel_pending_order.assert_not_called()
+        plan = self._conn.execute("SELECT status, entry_price FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        self.assertEqual(("filled", 3000.0), tuple(plan))
+
+    def test_replace_requested_keeps_old_ticket_when_new_limit_is_on_wrong_side(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        self._conn.execute(
+            "UPDATE manual_ai_plans SET status = 'replace_requested', replacement_levels_json = ? WHERE id = 'manual-plan'",
+            (json.dumps({"entry_price": 3005, "stop_loss": 2995, "take_profit": 3035, "risk_reward": 3}),),
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3000.0)
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        client.cancel_pending_order.assert_not_called()
+        plan = self._conn.execute(
+            "SELECT status, entry_price, replacement_levels_json, replacement_error FROM manual_ai_plans WHERE id = 'manual-plan'"
+        ).fetchone()
+        self.assertEqual("armed", plan["status"])
+        self.assertEqual(3000.0, plan["entry_price"])
+        self.assertEqual("{}", plan["replacement_levels_json"])
+        self.assertIn("wrong side", plan["replacement_error"])
+
     def test_armed_limit_keeps_cancel_conditions_active(self):
         now = datetime.now(UTC).replace(microsecond=0)
         self._insert_armed_plan(expires_at=now + timedelta(minutes=30))

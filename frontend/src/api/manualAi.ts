@@ -87,3 +87,25 @@ export async function rejectManualAiPlan(planId: string): Promise<ManualAiPlan> 
   }
   return response.json();
 }
+
+export type ManualAiLevelsUpdate = {
+  entry_price: number;
+  stop_loss: number;
+  take_profit: number;
+};
+
+export async function updateManualAiPlanLevels(
+  planId: string,
+  levels: ManualAiLevelsUpdate,
+): Promise<{ plans: ManualAiPlan[]; requires_broker_replace: boolean }> {
+  const response = await authFetch(`/api/manual-ai/plans/${encodeURIComponent(planId)}/levels`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(levels),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(typeof body?.detail === "string" ? body.detail : `Update levels failed (${response.status})`);
+  }
+  return response.json();
+}

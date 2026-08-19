@@ -12,6 +12,7 @@ import { ArrowDown, ArrowUp, Newspaper } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
 import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
+import { updateManualAiPlanLevels } from "../api/manualAi";
 import { isEditableHotkeyTarget } from "../lib/appHotkeys";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { toUnixTime } from "../lib/time";
@@ -60,6 +61,7 @@ import {
 import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
 import { ChartDrawingControls, type PendingChartNote } from "./chart/ChartDrawingControls";
+import { ManualAiLevelEditDialog, type ManualAiEditableLevels } from "./chart/ManualAiLevelEditDialog";
 import { type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import {
@@ -106,6 +108,20 @@ type ManualDrawState = {
   startPointerTime: number;
 };
 
+type ManualAiLevel = "entry" | "stopLoss" | "takeProfit";
+
+type ManualAiLevelEditState = {
+  candidate: SetupCandidate;
+  level: ManualAiLevel;
+  original: ManualAiEditableLevels;
+  levels: ManualAiEditableLevels;
+  previewBox: SetupBox;
+  status: string;
+  dragging: boolean;
+  saving: boolean;
+  error: string | null;
+};
+
 const MIN_ZONE_HEIGHT = 0.01;
 const MIN_ZONE_DURATION_SECONDS = 60;
 
@@ -136,6 +152,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [swingDots, setSwingDots] = useState<SwingDot[]>([]);
   const [tradeBoxes, setTradeBoxes] = useState<TradeBox[]>([]);
   const [setupBoxes, setSetupBoxes] = useState<SetupBox[]>([]);
+  const [manualAiLevelEdit, setManualAiLevelEdit] = useState<ManualAiLevelEditState | null>(null);
   const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
   const [newsTimelineMarkers, setNewsTimelineMarkers] = useState<NewsTimelineMarker[]>([]);
   const [hoveredNewsMarker, setHoveredNewsMarker] = useState<NewsTimelineMarker | null>(null);
@@ -159,6 +176,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const draftZoneRef = useRef<PriceZone | null>(null);
   const zoneDragRef = useRef<ZoneDragState | null>(null);
   const manualDrawRef = useRef<ManualDrawState | null>(null);
+  const manualAiLevelDragRef = useRef<{ candidateId: string; level: ManualAiLevel; moved: boolean } | null>(null);
   const drawingInteractionRef = useRef<{ tool: "fib_standard" | "fib_ote"; start: DrawingPoint } | null>(null);
   const measureStartRef = useRef<DrawingPoint | null>(null);
   const drawingMoveRef = useRef<{ drawing: ChartDrawing; startX: number; startY: number; moved: boolean } | null>(null);
@@ -408,6 +426,158 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     const price = series.coordinateToPrice(clientY - rect.top);
     return typeof price === "number" ? price : null;
   }, []);
+
+  const manualAiPreviewBox = useCallback((candidate: SetupCandidate, levels: ManualAiEditableLevels): SetupBox | null => {
+    const chart = chartRef.current;
+    const series = candleSeriesRef.current;
+    const container = containerRef.current;
+    if (!chart || !series || !container) return null;
+    const risk = Math.abs(levels.entry - levels.stopLoss);
+    const reward = Math.abs(levels.takeProfit - levels.entry);
+    return setupToBox(
+      {
+        ...candidate,
+        entry: levels.entry,
+        stop_loss: levels.stopLoss,
+        take_profit: [levels.takeProfit],
+        risk_reward: risk > 0 ? reward / risk : 0,
+      },
+      payloadRef.current.range.start,
+      payloadRef.current.range.end,
+      candleDataRef.current,
+      chartPlotWidth(chart, container.clientWidth),
+      container.clientHeight,
+      chart.timeScale(),
+      series,
+    );
+  }, []);
+
+  const beginManualAiLevelDrag = useCallback((event: ReactPointerEvent<HTMLElement>, box: SetupBox, level: ManualAiLevel) => {
+    const status = typeof box.candidate.metadata.manual_ai_plan_status === "string"
+      ? box.candidate.metadata.manual_ai_plan_status
+      : "draft";
+    if (!["draft", "approved", "armed"].includes(status)) {
+      setDrawError(`Manual AI đang ở trạng thái ${status}; hãy chờ worker hoàn tất rồi thử lại.`);
+      return;
+    }
+    const takeProfit = box.candidate.take_profit[0];
+    if (box.candidate.entry === null || box.candidate.stop_loss === null || typeof takeProfit !== "number") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const original = {
+      entry: box.candidate.entry,
+      stopLoss: box.candidate.stop_loss,
+      takeProfit,
+    };
+    manualAiLevelDragRef.current = { candidateId: box.candidate.id, level, moved: false };
+    setDrawError(null);
+    setManualAiLevelEdit((current) => current?.candidate.id === box.candidate.id
+      ? { ...current, level, dragging: true, error: null }
+      : {
+          candidate: box.candidate,
+          level,
+          original,
+          levels: original,
+          previewBox: box,
+          status,
+          dragging: true,
+          saving: false,
+          error: null,
+        });
+  }, []);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const dragging = manualAiLevelDragRef.current;
+      if (!dragging) return;
+      const price = priceFromClientY(event.clientY);
+      if (price === null) return;
+      event.preventDefault();
+      dragging.moved = true;
+      setManualAiLevelEdit((current) => {
+        if (!current || current.candidate.id !== dragging.candidateId) return current;
+        const levels = { ...current.levels, [dragging.level]: roundPrice(price) };
+        const previewBox = manualAiPreviewBox(current.candidate, levels);
+        return previewBox ? { ...current, levels, previewBox, error: null } : current;
+      });
+    };
+    const finish = () => {
+      const dragging = manualAiLevelDragRef.current;
+      if (!dragging) return;
+      manualAiLevelDragRef.current = null;
+      setManualAiLevelEdit((current) => {
+        if (!current) return null;
+        return dragging.moved ? { ...current, dragging: false } : null;
+      });
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("blur", finish);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("blur", finish);
+    };
+  }, [manualAiPreviewBox, priceFromClientY]);
+
+  const updateManualAiEditLevels = useCallback((levels: ManualAiEditableLevels) => {
+    setManualAiLevelEdit((current) => {
+      if (!current || current.saving) return current;
+      const rounded = {
+        entry: roundPrice(levels.entry),
+        stopLoss: roundPrice(levels.stopLoss),
+        takeProfit: roundPrice(levels.takeProfit),
+      };
+      const previewBox = manualAiPreviewBox(current.candidate, rounded);
+      return previewBox ? { ...current, levels: rounded, previewBox, error: null } : current;
+    });
+  }, [manualAiPreviewBox]);
+
+  const applyManualAiLevelEdit = useCallback(async () => {
+    const edit = manualAiLevelEdit;
+    if (!edit || edit.dragging || edit.saving) return;
+    const { entry, stopLoss, takeProfit } = edit.levels;
+    const isBuy = edit.candidate.direction === "long";
+    const validGeometry = isBuy ? stopLoss < entry && entry < takeProfit : takeProfit < entry && entry < stopLoss;
+    const risk = Math.abs(entry - stopLoss);
+    const rr = risk > 0 ? Math.abs(takeProfit - entry) / risk : 0;
+    if (!validGeometry) {
+      setManualAiLevelEdit({ ...edit, error: `Mức giá ${isBuy ? "BUY" : "SELL"} không đúng thứ tự Entry/SL/TP.` });
+      return;
+    }
+    if (rr < 1.5 || rr > 4) {
+      setManualAiLevelEdit({ ...edit, error: `R:R mới là ${rr.toFixed(2)}R; Manual AI chỉ cho phép 1.5R–4.0R.` });
+      return;
+    }
+    setManualAiLevelEdit({ ...edit, saving: true, error: null });
+    try {
+      await updateManualAiPlanLevels(edit.candidate.id, {
+        entry_price: entry,
+        stop_loss: stopLoss,
+        take_profit: takeProfit,
+      });
+      setManualAiLevelEdit(null);
+      onEntityCreatedRef.current();
+    } catch (error) {
+      setManualAiLevelEdit((current) => current ? {
+        ...current,
+        saving: false,
+        error: error instanceof Error ? error.message : "Không thể cập nhật Manual AI levels.",
+      } : current);
+    }
+  }, [manualAiLevelEdit]);
+
+  useEffect(() => {
+    if (!manualAiLevelEdit || manualAiLevelEdit.saving) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      manualAiLevelDragRef.current = null;
+      setManualAiLevelEdit(null);
+    };
+    window.addEventListener("keydown", cancel, { capture: true });
+    return () => window.removeEventListener("keydown", cancel, { capture: true });
+  }, [manualAiLevelEdit]);
 
   const timeFromClientX = useCallback((clientX: number): number | null => {
     const container = containerRef.current;
@@ -1338,6 +1508,9 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   }, [newsData, scheduleOverlayRecalc]);
 
   const compactViewport = isMobileChartWidth(containerRef.current?.clientWidth ?? window.innerWidth);
+  const displayedSetupBoxes = manualAiLevelEdit
+    ? setupBoxes.map((box) => box.candidate.id === manualAiLevelEdit.candidate.id ? manualAiLevelEdit.previewBox : box)
+    : setupBoxes;
 
   return (
     <div
@@ -1580,16 +1753,17 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         {hoveredNewsMarker ? (
           <NewsTimelineTooltip marker={hoveredNewsMarker} />
         ) : null}
-        {setupBoxes.map((box) => {
+        {displayedSetupBoxes.map((box) => {
           const candidate = box.candidate;
           const planStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
             ? candidate.metadata.manual_ai_plan_status
             : "pending";
-          const label = `${planStatus === "draft" ? "DRAFT" : "PENDING"} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
+          const label = `${planStatus === "draft" ? "DRAFT" : planStatus === "replace_requested" ? "REPLACING" : "PENDING"} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
+          const canEdit = ["draft", "approved", "armed"].includes(planStatus);
           return (
             <button
               key={`manual-ai:${candidate.id}`}
-              className="pointer-events-auto absolute z-[34] overflow-hidden border border-dashed border-yellow-300/80 bg-transparent text-left shadow-[0_0_6px_rgba(250,204,21,0.18)] transition hover:brightness-125"
+              className="pointer-events-auto absolute z-[34] overflow-visible border border-dashed border-yellow-300/80 bg-transparent text-left shadow-[0_0_6px_rgba(250,204,21,0.18)] transition hover:brightness-125"
               style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
               title={`${label}\nEntry ${candidate.entry} · SL ${candidate.stop_loss} · TP ${candidate.take_profit[0]}\nExpires ${candidate.expires_at ?? "--"}`}
               type="button"
@@ -1607,7 +1781,29 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
                 className="absolute border border-dashed border-fuchsia-200/70 bg-fuchsia-500/14"
                 style={{ left: box.loss.x - box.x, top: box.loss.y - box.y, width: box.loss.width, height: box.loss.height }}
               />
-              <span className="absolute left-1 top-1 max-w-[calc(100%-0.5rem)] truncate rounded border border-yellow-200/80 bg-yellow-950/95 px-1.5 py-0.5 text-[9px] font-black text-yellow-100 shadow-lg">
+              {canEdit ? (
+                <>
+                  <span
+                    className="pointer-events-auto absolute z-20 h-3 -translate-y-1/2 cursor-ns-resize border-t border-cyan-100/90 hover:border-t-2 hover:border-white"
+                    style={{ top: box.entryY - box.y, left: 0, width: Math.max(box.width + 112, 160) }}
+                    title="Kéo để dời Entry"
+                    onPointerDown={(event) => beginManualAiLevelDrag(event, box, "entry")}
+                  ><span className="absolute right-0 top-1/2 -translate-y-1/2 rounded border border-cyan-300/50 bg-cyan-950/95 px-1.5 py-0.5 text-[9px] font-black text-cyan-100 shadow">ENTRY {candidate.entry?.toFixed(2)}</span></span>
+                  <span
+                    className="pointer-events-auto absolute z-20 h-3 -translate-y-1/2 cursor-ns-resize border-t border-rose-300/90 hover:border-t-2 hover:border-white"
+                    style={{ top: box.stopY - box.y, left: 0, width: Math.max(box.width + 112, 160) }}
+                    title="Kéo để dời Stop Loss"
+                    onPointerDown={(event) => beginManualAiLevelDrag(event, box, "stopLoss")}
+                  ><span className="absolute right-0 top-1/2 -translate-y-1/2 rounded border border-rose-300/50 bg-rose-950/95 px-1.5 py-0.5 text-[9px] font-black text-rose-100 shadow">SL {candidate.stop_loss?.toFixed(2)}</span></span>
+                  <span
+                    className="pointer-events-auto absolute z-20 h-3 -translate-y-1/2 cursor-ns-resize border-t border-emerald-300/90 hover:border-t-2 hover:border-white"
+                    style={{ top: box.takeProfitY - box.y, left: 0, width: Math.max(box.width + 112, 160) }}
+                    title="Kéo để dời Take Profit"
+                    onPointerDown={(event) => beginManualAiLevelDrag(event, box, "takeProfit")}
+                  ><span className="absolute right-0 top-1/2 -translate-y-1/2 rounded border border-emerald-300/50 bg-emerald-950/95 px-1.5 py-0.5 text-[9px] font-black text-emerald-100 shadow">TP {candidate.take_profit[0]?.toFixed(2)}</span></span>
+                </>
+              ) : null}
+              <span className="absolute right-0 top-[-24px] z-30 whitespace-nowrap rounded border border-yellow-200/80 bg-yellow-950/95 px-1.5 py-0.5 text-[9px] font-black text-yellow-100 shadow-lg">
                 {label}
               </span>
             </button>
@@ -1689,6 +1885,19 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           );
         })}
       </div>
+      {manualAiLevelEdit && !manualAiLevelEdit.dragging ? (
+        <ManualAiLevelEditDialog
+          side={manualAiLevelEdit.candidate.direction === "long" ? "buy" : "sell"}
+          status={manualAiLevelEdit.status}
+          levels={manualAiLevelEdit.levels}
+          original={manualAiLevelEdit.original}
+          error={manualAiLevelEdit.error}
+          saving={manualAiLevelEdit.saving}
+          onLevelsChange={updateManualAiEditLevels}
+          onApply={() => { void applyManualAiLevelEdit(); }}
+          onCancel={() => setManualAiLevelEdit(null)}
+        />
+      ) : null}
       {candleLabel !== null && !payload.replay?.enabled ? (
         <CandleCountdown
           timeframe={payload.timeframe}

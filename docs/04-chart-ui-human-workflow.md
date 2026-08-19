@@ -138,6 +138,18 @@ overlay chuẩn mới xuất hiện. Limit hết hạn hoặc bị hủy trướ
 Replay không hiển thị draft/live Manual AI hiện tại
 để tránh look-ahead.
 
+Ba đường Entry/SL/TP của setup Manual AI có handle kéo theo chiều dọc, nhãn giá
+riêng và vùng bắt chuột tối thiểu đủ rộng ngay cả khi box gần hết hạn rất hẹp.
+Kéo chỉ tạo preview trên chart; thả chuột mở panel nổi không khóa chart nên human
+có thể tiếp tục kéo cả ba mức hoặc nhập giá chính xác trước khi xác nhận. Không
+gửi request MT5 theo từng pixel. Với `draft`/`approved`, API cập nhật cả nhóm account ngay sau khi
+validate đúng geometry và RR 1.5–4.0. Với `armed`, API lưu mức giá đích ở trạng
+thái `replace_requested`; từng worker phải kiểm tra ticket cũ chưa fill, hủy
+đúng pending order đó, đánh dấu execution cũ cancelled, rồi mới áp dụng mức giá
+mới và arm lại bằng lot được tính từ structural SL. Nếu ticket fill trong lúc
+chỉnh, worker giữ lệnh đã fill theo geometry cũ và không replace. `arming`, plan
+đang replace và các trạng thái terminal không được chỉnh. Phím `Esc` bỏ preview.
+
 Manual AI không khóa bất kỳ price-zone layer nào; requirement duy nhất là
 `Structure + ZigZag`. Khi Manual AI là playbook duy nhất, UI tự ẩn price zones.
 Hotkey `P` chuyển độc quyền tới playbook kế tiếp theo thứ tự Zone Reaction V2 →

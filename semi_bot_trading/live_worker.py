@@ -1451,7 +1451,7 @@ def process_manual_ai_plans(
         """
         SELECT * FROM manual_ai_plans
         WHERE account_label = ? AND symbol = ?
-                    AND status IN ('approved', 'arming', 'armed', 'cancel_requested')
+                    AND status IN ('approved', 'arming', 'armed', 'cancel_requested', 'replace_requested')
         ORDER BY created_at ASC
         """,
         (env.account_label, config.symbol),
@@ -1486,7 +1486,7 @@ def process_manual_ai_plans(
             if broker_state == "filled":
                 plan_status = "filled"
                 mark_manual_ai_filled(conn, config, env, row, linked_order, now_iso)
-            elif broker_state == "cancelled":
+            elif broker_state == "cancelled" and plan_status != "replace_requested":
                 expires_at = datetime.fromisoformat(str(row["expires_at"]))
                 plan_status = "expired" if expires_at <= now else "cancelled"
                 conn.execute(
@@ -1504,10 +1504,108 @@ def process_manual_ai_plans(
             # broker order is still pending. Mapping pending_fill back to armed
             # here would skip the broker cancellation branch below and make the
             # limit reappear in the UI on the next refresh.
-            if mapped and plan_status not in {"filled", "expired", "cancelled", "cancel_requested"} and mapped != plan_status:
+            if mapped and plan_status not in {"filled", "expired", "cancelled", "cancel_requested", "replace_requested"} and mapped != plan_status:
                 conn.execute("UPDATE manual_ai_plans SET status = ?, updated_at = ? WHERE id = ?", (mapped, now_iso, plan_id))
                 plan_status = mapped
                 conn.commit()
+
+        if plan_status == "replace_requested":
+            replacement = json.loads(row["replacement_levels_json"] or "{}")
+            required = {"entry_price", "stop_loss", "take_profit", "risk_reward"}
+            if not required.issubset(replacement):
+                logger.error("Manual AI replacement payload is incomplete plan=%s", plan_id)
+                continue
+            broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
+            if broker_state == "filled":
+                mark_manual_ai_filled(conn, config, env, row, linked_order, now_iso)
+                continue
+            replacement_entry = float(replacement["entry_price"])
+            current_price = float(client.current_price_for_side(broker_symbol, str(row["side"])))
+            valid_limit_side = (
+                replacement_entry < current_price
+                if str(row["side"]) == "buy"
+                else replacement_entry > current_price
+            )
+            if not valid_limit_side:
+                message = (
+                    f"Replacement {row['side']} limit entry {replacement_entry:.2f} is on the wrong side "
+                    f"of broker price {current_price:.2f}; old ticket kept"
+                )
+                logger.warning("Manual AI %s plan=%s", message, plan_id)
+                conn.execute(
+                    """
+                    UPDATE manual_ai_plans
+                    SET status = 'armed', replacement_levels_json = '{}', replacement_error = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (message, now_iso, plan_id),
+                )
+                conn.commit()
+                continue
+            if broker_state == "pending":
+                try:
+                    client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Manual AI replace")
+                except Exception as exc:
+                    logger.warning("Manual AI replace cancel failed plan=%s: %s", plan_id, exc)
+                    continue
+            elif broker_state is None:
+                # Never replace until MT5 proves the old ticket did not fill.
+                continue
+            if linked_order is not None:
+                conn.execute(
+                    "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_fill'",
+                    (now_iso, now_iso, linked_order["id"]),
+                )
+            if row["execution_request_id"]:
+                conn.execute(
+                    "UPDATE execution_requests SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('pending', 'sent')",
+                    (now_iso, row["execution_request_id"]),
+                )
+            if trade_idea_id:
+                conn.execute(
+                    """
+                    UPDATE trade_ideas
+                    SET suggested_entry = ?, suggested_stop_loss = ?, suggested_take_profit_json = ?,
+                        risk_reward = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        float(replacement["entry_price"]),
+                        float(replacement["stop_loss"]),
+                        json.dumps([float(replacement["take_profit"])]),
+                        float(replacement["risk_reward"]),
+                        trade_idea_id,
+                    ),
+                )
+            cancel_conditions = json.loads(row["cancel_conditions_json"] or "[]")
+            for condition in cancel_conditions:
+                if condition.get("price") is None:
+                    continue
+                if abs(float(condition["price"]) - float(row["stop_loss"])) <= 1e-9:
+                    condition["price"] = float(replacement["stop_loss"])
+            conn.execute(
+                """
+                UPDATE manual_ai_plans
+                SET status = 'approved', entry_price = ?, stop_loss = ?, take_profit = ?,
+                    risk_reward = ?, replacement_levels_json = '{}',
+                    replacement_error = NULL, cancel_conditions_json = ?,
+                    trade_idea_id = NULL, execution_request_id = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    float(replacement["entry_price"]),
+                    float(replacement["stop_loss"]),
+                    float(replacement["take_profit"]),
+                    float(replacement["risk_reward"]),
+                    json.dumps(cancel_conditions, sort_keys=True),
+                    now_iso,
+                    plan_id,
+                ),
+            )
+            conn.commit()
+            # Re-arm on the next poll. This creates a clean broker request and
+            # recalculates volume from the new structural SL.
+            continue
 
         if plan_status == "cancel_requested":
             broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None

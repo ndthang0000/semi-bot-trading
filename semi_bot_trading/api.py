@@ -24,6 +24,7 @@ from .api_models import (
     LoginRequest,
     LogoutRequest,
     ManualAiApproveRequest,
+    ManualAiLevelsUpdateRequest,
     ManualAiPlanImportRequest,
     RefreshRequest,
     TradeReviewAttachmentRequest,
@@ -191,7 +192,37 @@ def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
         "approved_at": row["approved_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "replacement_levels": json_loads(row["replacement_levels_json"], {}),
+        "replacement_error": row["replacement_error"],
     }
+
+
+def validate_manual_ai_levels(side: str, entry_price: float, stop_loss: float, take_profit: float) -> float:
+    valid_geometry = (
+        stop_loss < entry_price < take_profit
+        if side == "buy"
+        else take_profit < entry_price < stop_loss
+    )
+    if not valid_geometry:
+        raise HTTPException(status_code=422, detail=f"Invalid {side} price geometry")
+    risk = abs(entry_price - stop_loss)
+    risk_reward = abs(take_profit - entry_price) / risk
+    if not 1.5 <= risk_reward <= 4.0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Manual AI risk/reward must be between 1.5 and 4.0; calculated={risk_reward:.3f}",
+        )
+    return risk_reward
+
+
+def manual_ai_cancel_conditions_for_new_stop(raw_json: str, old_stop: float, new_stop: float) -> str:
+    conditions = json_loads(raw_json, [])
+    for condition in conditions:
+        if not isinstance(condition, dict) or condition.get("price") is None:
+            continue
+        if abs(float(condition["price"]) - old_stop) <= 1e-9:
+            condition["price"] = new_stop
+    return json.dumps(conditions, sort_keys=True)
 
 
 def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tuple[Any, float, str]]:
@@ -1937,6 +1968,94 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             return {"plans": plans}
         return plans[0]
 
+    @app.patch("/api/manual-ai/plans/{plan_id}/levels")
+    def update_manual_ai_plan_levels(
+        plan_id: str,
+        request: ManualAiLevelsUpdateRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Update a whole Manual AI account group without desynchronising MT5.
+
+        Draft/approved plans can be changed immediately. Armed plans retain their
+        broker-backed levels until their worker confirms cancellation, then the
+        worker applies these requested levels and re-arms with freshly sized lots.
+        """
+        now = utc_now_iso()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+            risk_reward = validate_manual_ai_levels(
+                str(row["side"]), request.entry_price, request.stop_loss, request.take_profit
+            )
+            group_rows = conn.execute(
+                """
+                SELECT * FROM manual_ai_plans
+                WHERE client_id = ? AND symbol = ?
+                  AND status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
+                """,
+                (row["client_id"], row["symbol"]),
+            ).fetchall()
+            if not group_rows:
+                raise HTTPException(status_code=409, detail="Manual AI plan is no longer editable")
+            editable_statuses = {"draft", "approved", "armed"}
+            busy = sorted({str(item["status"]) for item in group_rows if str(item["status"]) not in editable_statuses})
+            if busy:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Manual AI plan is busy ({', '.join(busy)}); wait for workers and retry",
+                )
+            replacement = json.dumps(
+                {
+                    "entry_price": request.entry_price,
+                    "stop_loss": request.stop_loss,
+                    "take_profit": request.take_profit,
+                    "risk_reward": risk_reward,
+                    "requested_at": now,
+                },
+                sort_keys=True,
+            )
+            for group_row in group_rows:
+                status_value = str(group_row["status"])
+                if status_value == "armed":
+                    conn.execute(
+                        "UPDATE manual_ai_plans SET status = 'replace_requested', replacement_levels_json = ?, replacement_error = NULL, updated_at = ? WHERE id = ?",
+                        (replacement, now, group_row["id"]),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE manual_ai_plans
+                        SET entry_price = ?, stop_loss = ?, take_profit = ?, risk_reward = ?,
+                            cancel_conditions_json = ?, replacement_levels_json = '{}',
+                            replacement_error = NULL, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            request.entry_price,
+                            request.stop_loss,
+                            request.take_profit,
+                            risk_reward,
+                            manual_ai_cancel_conditions_for_new_stop(
+                                str(group_row["cancel_conditions_json"]),
+                                float(group_row["stop_loss"]),
+                                request.stop_loss,
+                            ),
+                            now,
+                            group_row["id"],
+                        ),
+                    )
+            conn.commit()
+            updated_rows = conn.execute(
+                "SELECT * FROM manual_ai_plans WHERE client_id = ? AND symbol = ? ORDER BY account_label",
+                (row["client_id"], row["symbol"]),
+            ).fetchall()
+        return {
+            "plans": [manual_ai_row_to_api(item) for item in updated_rows],
+            "requires_broker_replace": any(str(item["status"]) == "armed" for item in group_rows),
+        }
+
     def transition_manual_ai_plan(plan_id: str, target_status: str) -> dict[str, Any]:
         now = utc_now_iso()
         with connect(config.database) as conn:
@@ -1958,7 +2077,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 current_status = str(group_row["status"])
                 effective_status = (
                     "cancel_requested"
-                    if target_status in {"cancelled", "rejected"} and current_status in {"arming", "armed", "cancel_requested"}
+                    if target_status in {"cancelled", "rejected"} and current_status in {"arming", "armed", "cancel_requested", "replace_requested"}
                     else target_status
                 )
                 conn.execute(

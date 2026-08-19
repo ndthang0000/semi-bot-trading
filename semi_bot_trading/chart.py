@@ -31,7 +31,7 @@ def load_manual_ai_setup_candidates(
         SELECT * FROM manual_ai_plans
         WHERE symbol = ?
           AND execution_state IN ('primary', 'watch_only')
-          AND status IN ('draft', 'approved', 'arming', 'armed')
+          AND status IN ('draft', 'approved', 'arming', 'armed', 'replace_requested')
           AND expires_at > ?
         ORDER BY created_at ASC
         """,
@@ -56,9 +56,26 @@ def load_manual_ai_setup_candidates(
             ),
             {},
         )
-        status_order = {"draft": 0, "approved": 1, "arming": 2, "armed": 3}
+        status_order = {"draft": 0, "approved": 1, "arming": 2, "armed": 3, "replace_requested": 4}
         plan_status = max((str(item["status"]) for item in group), key=lambda value: status_order.get(value, -1))
         account_labels = sorted(str(item["account_label"]) for item in group if item["account_label"])
+        replacement_errors = [
+            {"account_label": item["account_label"], "error": item["replacement_error"]}
+            for item in group
+            if item["replacement_error"]
+        ]
+        replacement = next(
+            (
+                json.loads(item["replacement_levels_json"] or "{}")
+                for item in group
+                if str(item["status"]) == "replace_requested"
+            ),
+            {},
+        )
+        entry_price = float(replacement.get("entry_price", row["entry_price"]))
+        stop_loss = float(replacement.get("stop_loss", row["stop_loss"]))
+        take_profit = float(replacement.get("take_profit", row["take_profit"]))
+        risk_reward = float(replacement.get("risk_reward", row["risk_reward"]))
         candidates.append(
             {
                 "id": str(row["id"]),
@@ -69,10 +86,10 @@ def load_manual_ai_setup_candidates(
                 "status": "waiting_confirmation",
                 "zone_reaction_state": "limit_pending",
                 "score": float(raw_candidate.get("confidence") or 0.5),
-                "entry": float(row["entry_price"]),
-                "stop_loss": float(row["stop_loss"]),
-                "take_profit": [float(row["take_profit"])],
-                "risk_reward": float(row["risk_reward"]),
+                "entry": entry_price,
+                "stop_loss": stop_loss,
+                "take_profit": [take_profit],
+                "risk_reward": risk_reward,
                 "primary_zone_id": None,
                 "related_zone_ids": [],
                 "trigger_point_ids": [],
@@ -84,6 +101,9 @@ def load_manual_ai_setup_candidates(
                 "metadata": {
                     "manual_ai": True,
                     "manual_ai_plan_status": plan_status,
+                    "manual_ai_replace_pending": plan_status == "replace_requested",
+                    "manual_ai_replace_error": row["replacement_error"],
+                    "manual_ai_replace_errors": replacement_errors,
                     "execution_state": str(row["execution_state"]),
                     "created_at": str(row["created_at"]),
                     "as_of": raw_payload.get("as_of"),
