@@ -53,6 +53,8 @@ type ChartState = {
   inspectorTab: InspectorTab;
   addEntityKind: AddEntityKind | null;
   selected: SelectedEntity | null;
+  selectedSetupId: string | null;
+  manualAiEditSetupId: string | null;
   zoneFocusRequest: ZoneFocusRequest | null;
   tradeFocusRequest: TradeFocusRequest | null;
   setTimeframe: (timeframe: Timeframe) => void;
@@ -74,6 +76,8 @@ type ChartState = {
   setInspectorTab: (tab: InspectorTab) => void;
   setAddEntityKind: (kind: AddEntityKind | null) => void;
   setSelected: (selected: SelectedEntity | null) => void;
+  selectSetup: (setupId: string | null) => void;
+  setManualAiEditSetupId: (setupId: string | null) => void;
   focusZone: (zone: PriceZone) => void;
   focusTrade: (trade: TradeOrder) => void;
 };
@@ -98,18 +102,33 @@ export const useChartStore = create<ChartState>()(
       inspectorTab: "zones",
       addEntityKind: null,
       selected: null,
+      selectedSetupId: null,
+      manualAiEditSetupId: null,
       zoneFocusRequest: null,
       tradeFocusRequest: null,
       // Manual zone drawing is H1-only (the API rejects M15 zone creation), so
       // leaving H1 must cancel any in-progress "add entity" draw mode.
       setTimeframe: (timeframe) =>
-        set((state) => ({ timeframe, selected: null, addEntityKind: timeframe === "H1" ? state.addEntityKind : null })),
+        set((state) => ({
+          timeframe,
+          selected: null,
+          selectedSetupId: null,
+          manualAiEditSetupId: null,
+          addEntityKind: timeframe === "H1" ? state.addEntityKind : null,
+        })),
       setLimit: (limit) => set({ limit: Math.min(Math.max(limit, 1), 15000) }),
-      setStartIndex: (startIndex) => set({ startIndex: startIndex === null ? null : Math.max(0, Math.floor(startIndex)), selected: null }),
+      setStartIndex: (startIndex) => set({
+        startIndex: startIndex === null ? null : Math.max(0, Math.floor(startIndex)),
+        selected: null,
+        selectedSetupId: null,
+        manualAiEditSetupId: null,
+      }),
       shiftStartIndex: (delta) =>
         set((state) => ({
           startIndex: Math.max(0, (state.startIndex ?? 0) + delta),
           selected: null,
+          selectedSetupId: null,
+          manualAiEditSetupId: null,
         })),
       setActiveZonesOnly: (activeZonesOnly) =>
         set({
@@ -174,8 +193,18 @@ export const useChartStore = create<ChartState>()(
               ? addEntityKind
               : null,
           selected: null,
+          selectedSetupId: null,
+          manualAiEditSetupId: null,
         })),
-      setSelected: (selected) => set({ selected }),
+      setSelected: (selected) => set({
+        selected,
+        ...(selected ? { selectedSetupId: null, manualAiEditSetupId: null } : {}),
+      }),
+      selectSetup: (selectedSetupId) => set((state) => setupSelectionState(state.manualAiEditSetupId, selectedSetupId)),
+      setManualAiEditSetupId: (manualAiEditSetupId) => set({
+        manualAiEditSetupId,
+        ...(manualAiEditSetupId ? { selectedSetupId: manualAiEditSetupId, selected: null } : {}),
+      }),
       focusZone: (zone) =>
         set((state) => ({
           zoneFocusRequest: {
@@ -242,10 +271,13 @@ function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> 
   const layers = playbookControlledLayers(state.selectedPlaybooks, state.tradeVisibilityMode);
   const allowedEntities = allowedAddEntityKinds(state.selectedPlaybooks);
   const liquiditySelected = state.selectedPlaybooks.includes("liquidity_sweep_reclaim_v1");
+  const manualAiSelected = state.selectedPlaybooks.includes("manual_ai_v1");
   return {
     selectedPlaybooks: state.selectedPlaybooks,
     addEntityKind: state.addEntityKind && allowedEntities.has(state.addEntityKind) ? state.addEntityKind : null,
     showHistoricalLiquiditySweeps: liquiditySelected ? state.showHistoricalLiquiditySweeps : false,
+    selectedSetupId: manualAiSelected ? state.selectedSetupId : null,
+    manualAiEditSetupId: manualAiSelected ? state.manualAiEditSetupId : null,
     ...layers,
   };
 }
@@ -291,4 +323,15 @@ function requiresStructureForPlaybooks(playbooks: PlaybookKey[]): boolean {
 
 function normalizeTradeVisibilityMode(value: unknown): TradeVisibilityMode {
   return value === "hidden" || value === "all" || value === "off" ? value : "visible";
+}
+
+export function setupSelectionState(
+  currentEditSetupId: string | null,
+  selectedSetupId: string | null,
+): Pick<ChartState, "selected" | "selectedSetupId" | "manualAiEditSetupId"> {
+  return {
+    selected: null,
+    selectedSetupId,
+    manualAiEditSetupId: currentEditSetupId === selectedSetupId ? currentEditSetupId : null,
+  };
 }

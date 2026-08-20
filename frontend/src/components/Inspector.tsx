@@ -572,7 +572,10 @@ function ZonesTab({
 
 function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: { candidates: SetupCandidate[]; m15Triggers: M15TriggerOverlay[]; zones: PriceZone[]; onChanged: () => void; showToast: (kind: ToastMessage["kind"], text: string) => void }) {
   const focusZone = useChartStore((state) => state.focusZone);
-  const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
+  const selectedSetupId = useChartStore((state) => state.selectedSetupId);
+  const manualAiEditSetupId = useChartStore((state) => state.manualAiEditSetupId);
+  const selectSetup = useChartStore((state) => state.selectSetup);
+  const setManualAiEditSetupId = useChartStore((state) => state.setManualAiEditSetupId);
   const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
   const [rejectedIds, setRejectedIds] = useState<Set<string>>(new Set());
   const [disabledPlaybooks, setDisabledPlaybooks] = useState<Set<string>>(new Set());
@@ -588,7 +591,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   };
 
   const focusCandidate = (candidate: SetupCandidate) => {
-    setFocusedCandidateId(candidate.id);
+    selectSetup(candidate.id);
     const zone = zones.find((item) => item.id === candidate.primary_zone_id);
     if (!zone) return;
     focusZone(zone);
@@ -665,10 +668,12 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
                     <SetupCard
                       key={candidate.id}
                       candidate={candidate}
-                      focused={focusedCandidateId === candidate.id}
+                      focused={selectedSetupId === candidate.id}
+                      editing={manualAiEditSetupId === candidate.id}
                       trigger={triggerByCandidateId.get(candidate.id) ?? null}
                       watched={watchedIds.has(candidate.id)}
                       onFocus={() => focusCandidate(candidate)}
+                      onEdit={() => setManualAiEditSetupId(candidate.id)}
                       onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
                       onReject={() => { void rejectCandidate(candidate); }}
                       disableBusy={cancellingIds.has(candidate.id)}
@@ -688,9 +693,11 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
 function SetupCard({
   candidate,
   focused,
+  editing,
   trigger,
   watched,
   onFocus,
+  onEdit,
   onToggleWatch,
   onReject,
   onDisablePlaybook,
@@ -698,14 +705,21 @@ function SetupCard({
 }: {
   candidate: SetupCandidate;
   focused: boolean;
+  editing: boolean;
   trigger: M15TriggerOverlay | null;
   watched: boolean;
   onFocus: () => void;
+  onEdit: () => void;
   onToggleWatch: () => void;
   onReject: () => void;
   onDisablePlaybook: () => void;
   disableBusy: boolean;
 }) {
+  const manualAiPlanStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
+    ? candidate.metadata.manual_ai_plan_status
+    : "draft";
+  const canEditLevels = candidate.playbook === "manual_ai_v1"
+    && ["draft", "approved", "armed"].includes(manualAiPlanStatus);
   return (
     <div
       className={`min-w-0 overflow-hidden rounded-md border p-3 text-left transition ${
@@ -766,6 +780,9 @@ function SetupCard({
       </div>
       <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
       <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+        {canEditLevels && focused ? (
+          <SetupAction active={editing} label={editing ? "Editing levels" : "Edit levels"} onClick={onEdit} />
+        ) : null}
         <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} />
         <SetupAction label="Reject" onClick={onReject} />
         <SetupAction label={candidate.playbook === "manual_ai_v1" ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} />
@@ -774,11 +791,13 @@ function SetupCard({
   );
 }
 
-function SetupAction({ disabled = false, label, onClick }: { disabled?: boolean; label: string; onClick: () => void }) {
+function SetupAction({ active = false, disabled = false, label, onClick }: { active?: boolean; disabled?: boolean; label: string; onClick: () => void }) {
   return (
     <span
       aria-disabled={disabled}
-      className="rounded border border-ink-700 bg-ink-950 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-500 hover:text-cyan-100 aria-disabled:cursor-wait aria-disabled:opacity-50"
+      className={`rounded border px-1.5 py-0.5 text-[10px] hover:border-cyan-500 hover:text-cyan-100 aria-disabled:cursor-wait aria-disabled:opacity-50 ${
+        active ? "border-cyan-400 bg-cyan-400/15 text-cyan-100" : "border-ink-700 bg-ink-950 text-slate-300"
+      }`}
       role="button"
       tabIndex={0}
       onClick={(event) => {

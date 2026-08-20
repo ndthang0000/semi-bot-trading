@@ -134,6 +134,10 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const zigzagSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const setSelected = useChartStore((state) => state.setSelected);
   const selected = useChartStore((state) => state.selected);
+  const selectedSetupId = useChartStore((state) => state.selectedSetupId);
+  const manualAiEditSetupId = useChartStore((state) => state.manualAiEditSetupId);
+  const selectSetup = useChartStore((state) => state.selectSetup);
+  const setManualAiEditSetupId = useChartStore((state) => state.setManualAiEditSetupId);
   const setInspectorTab = useChartStore((state) => state.setInspectorTab);
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
@@ -244,6 +248,12 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   drawingsRef.current = drawings;
   drawPreviewZoneRef.current = drawPreviewZone;
   candleDataRef.current = candleData;
+
+  useEffect(() => {
+    if (!selectedSetupId) return;
+    const stillVisible = payload.layers.setup_candidates.some((candidate) => candidate.id === selectedSetupId);
+    if (!stillVisible) selectSetup(null);
+  }, [payload.layers.setup_candidates, selectSetup, selectedSetupId]);
 
   const recalcOverlays = useCallback(() => {
     const chart = chartRef.current;
@@ -453,6 +463,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   }, []);
 
   const beginManualAiLevelDrag = useCallback((event: ReactPointerEvent<HTMLElement>, box: SetupBox, level: ManualAiLevel) => {
+    if (manualAiEditSetupId !== box.candidate.id) return;
     const status = typeof box.candidate.metadata.manual_ai_plan_status === "string"
       ? box.candidate.metadata.manual_ai_plan_status
       : "draft";
@@ -484,7 +495,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           saving: false,
           error: null,
         });
-  }, []);
+  }, [manualAiEditSetupId]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -533,6 +544,21 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     });
   }, [manualAiPreviewBox]);
 
+  const exitManualAiSetupInteraction = useCallback(() => {
+    manualAiLevelDragRef.current = null;
+    setManualAiLevelEdit(null);
+    setManualAiEditSetupId(null);
+    selectSetup(null);
+  }, [selectSetup, setManualAiEditSetupId]);
+
+  useEffect(() => {
+    setManualAiLevelEdit((current) => {
+      if (!current || current.candidate.id === manualAiEditSetupId) return current;
+      manualAiLevelDragRef.current = null;
+      return null;
+    });
+  }, [manualAiEditSetupId]);
+
   const applyManualAiLevelEdit = useCallback(async () => {
     const edit = manualAiLevelEdit;
     if (!edit || edit.dragging || edit.saving) return;
@@ -556,7 +582,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         stop_loss: stopLoss,
         take_profit: takeProfit,
       });
-      setManualAiLevelEdit(null);
+      exitManualAiSetupInteraction();
       onEntityCreatedRef.current();
     } catch (error) {
       setManualAiLevelEdit((current) => current ? {
@@ -565,19 +591,37 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         error: error instanceof Error ? error.message : "Không thể cập nhật Manual AI levels.",
       } : current);
     }
-  }, [manualAiLevelEdit]);
+  }, [exitManualAiSetupInteraction, manualAiLevelEdit]);
 
   useEffect(() => {
-    if (!manualAiLevelEdit || manualAiLevelEdit.saving) return;
-    const cancel = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+    const handleManualAiSetupHotkey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && (selectedSetupId || manualAiEditSetupId || manualAiLevelEdit)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!manualAiLevelEdit?.saving) exitManualAiSetupInteraction();
+        return;
+      }
+      if (
+        event.key.toLowerCase() !== "e"
+        || event.repeat
+        || event.ctrlKey
+        || event.metaKey
+        || event.altKey
+        || isEditableHotkeyTarget(event.target)
+        || !selectedSetupId
+      ) return;
+      const candidate = payloadRef.current.layers.setup_candidates.find((item) => item.id === selectedSetupId);
+      const status = typeof candidate?.metadata.manual_ai_plan_status === "string"
+        ? candidate.metadata.manual_ai_plan_status
+        : "draft";
+      if (!candidate || candidate.playbook !== "manual_ai_v1" || !["draft", "approved", "armed"].includes(status)) return;
       event.preventDefault();
-      manualAiLevelDragRef.current = null;
-      setManualAiLevelEdit(null);
+      event.stopImmediatePropagation();
+      setManualAiEditSetupId(candidate.id);
     };
-    window.addEventListener("keydown", cancel, { capture: true });
-    return () => window.removeEventListener("keydown", cancel, { capture: true });
-  }, [manualAiLevelEdit]);
+    window.addEventListener("keydown", handleManualAiSetupHotkey, { capture: true });
+    return () => window.removeEventListener("keydown", handleManualAiSetupHotkey, { capture: true });
+  }, [exitManualAiSetupInteraction, manualAiEditSetupId, manualAiLevelEdit, selectedSetupId, setManualAiEditSetupId]);
 
   const timeFromClientX = useCallback((clientX: number): number | null => {
     const container = containerRef.current;
@@ -1091,14 +1135,18 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   const clearSelection = useCallback(() => {
     if (addEntityKindRef.current) return;
+    if (manualAiLevelEdit?.saving) return;
     lockCurrentViewport(chartRef.current, lockedViewportRef);
     draftZoneRef.current = null;
     measureStartRef.current = null;
     setMeasurePreview(null);
     setSelected(null);
+    setManualAiLevelEdit(null);
+    setManualAiEditSetupId(null);
+    selectSetup(null);
     restoreLockedViewport(chartRef.current, lockedViewportRef);
     scheduleOverlayRecalc();
-  }, [scheduleOverlayRecalc, setSelected]);
+  }, [manualAiLevelEdit?.saving, scheduleOverlayRecalc, selectSetup, setManualAiEditSetupId, setSelected]);
 
   const selectStructurePoint = useCallback(
     (point: StructurePoint) => {
@@ -1758,55 +1806,113 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           const planStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
             ? candidate.metadata.manual_ai_plan_status
             : "pending";
-          const label = `${planStatus === "draft" ? "DRAFT" : planStatus === "replace_requested" ? "REPLACING" : "PENDING"} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
+          const statusLabel = planStatus === "draft" ? "DRAFT" : planStatus === "replace_requested" ? "REPLACING" : "PENDING";
+          const compactLabel = `${candidate.direction === "long" ? "BUY" : "SELL"} · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
+          const detailLabel = `${statusLabel} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
           const canEdit = ["draft", "approved", "armed"].includes(planStatus);
+          const isSelected = selectedSetupId === candidate.id;
+          const isEditing = manualAiEditSetupId === candidate.id;
+          const isDimmed = selectedSetupId !== null && !isSelected;
           return (
-            <button
+            <div
               key={`manual-ai:${candidate.id}`}
-              className="pointer-events-auto absolute z-[34] overflow-visible border border-dashed border-yellow-300/80 bg-transparent text-left shadow-[0_0_6px_rgba(250,204,21,0.18)] transition hover:brightness-125"
+              aria-label={`${detailLabel}. Click để chọn setup.`}
+              className={`pointer-events-auto absolute overflow-visible border border-dashed bg-transparent text-left transition ${
+                isEditing
+                  ? "z-[40] border-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.28)]"
+                  : isSelected
+                    ? "z-[38] border-yellow-200 shadow-[0_0_10px_rgba(250,204,21,0.28)]"
+                    : "z-[32] border-yellow-300/55 shadow-[0_0_4px_rgba(250,204,21,0.12)] hover:border-yellow-200/90"
+              } ${isDimmed ? "opacity-35" : "opacity-100"}`}
               style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
-              title={`${label}\nEntry ${candidate.entry} · SL ${candidate.stop_loss} · TP ${candidate.take_profit[0]}\nExpires ${candidate.expires_at ?? "--"}`}
-              type="button"
+              title={`${detailLabel}\nEntry ${candidate.entry} · SL ${candidate.stop_loss} · TP ${candidate.take_profit[0]}\nExpires ${candidate.expires_at ?? "--"}`}
+              role="button"
+              tabIndex={0}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                selectSetup(candidate.id);
+                setInspectorTab("setups");
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                event.stopPropagation();
+                selectSetup(candidate.id);
                 setInspectorTab("setups");
               }}
             >
-              <span
-                className="absolute border border-dashed border-cyan-200/70 bg-cyan-400/14"
-                style={{ left: box.profit.x - box.x, top: box.profit.y - box.y, width: box.profit.width, height: box.profit.height }}
-              />
-              <span
-                className="absolute border border-dashed border-fuchsia-200/70 bg-fuchsia-500/14"
-                style={{ left: box.loss.x - box.x, top: box.loss.y - box.y, width: box.loss.width, height: box.loss.height }}
-              />
-              {canEdit ? (
+              {!isSelected ? (
+                <span
+                  className="pointer-events-none absolute z-10 border-t border-dashed border-cyan-100/75"
+                  style={{ top: box.entryY - box.y, left: 0, width: box.width }}
+                  title={`Entry ${candidate.entry?.toFixed(2) ?? "--"}`}
+                />
+              ) : null}
+              {isSelected ? (
                 <>
                   <span
-                    className="pointer-events-auto absolute z-20 h-3 -translate-y-1/2 cursor-ns-resize border-t border-cyan-100/90 hover:border-t-2 hover:border-white"
+                    className="pointer-events-none absolute border border-dashed border-cyan-200/70 bg-cyan-400/14"
+                    style={{ left: box.profit.x - box.x, top: box.profit.y - box.y, width: box.profit.width, height: box.profit.height }}
+                  />
+                  <span
+                    className="pointer-events-none absolute border border-dashed border-fuchsia-200/70 bg-fuchsia-500/14"
+                    style={{ left: box.loss.x - box.x, top: box.loss.y - box.y, width: box.loss.width, height: box.loss.height }}
+                  />
+                  <span
+                    className={`absolute z-20 h-3 -translate-y-1/2 border-t border-cyan-100/90 ${isEditing ? "pointer-events-auto cursor-ns-resize hover:border-t-2 hover:border-white" : "pointer-events-none"}`}
                     style={{ top: box.entryY - box.y, left: 0, width: Math.max(box.width + 112, 160) }}
-                    title="Kéo để dời Entry"
-                    onPointerDown={(event) => beginManualAiLevelDrag(event, box, "entry")}
+                    title={isEditing ? "Kéo để dời Entry" : "Entry · chọn Edit levels hoặc nhấn E để chỉnh"}
+                    onPointerDown={isEditing ? (event) => beginManualAiLevelDrag(event, box, "entry") : undefined}
                   ><span className="absolute right-0 top-1/2 -translate-y-1/2 rounded border border-cyan-300/50 bg-cyan-950/95 px-1.5 py-0.5 text-[9px] font-black text-cyan-100 shadow">ENTRY {candidate.entry?.toFixed(2)}</span></span>
                   <span
-                    className="pointer-events-auto absolute z-20 h-3 -translate-y-1/2 cursor-ns-resize border-t border-rose-300/90 hover:border-t-2 hover:border-white"
+                    className={`absolute z-20 h-3 -translate-y-1/2 border-t border-rose-300/90 ${isEditing ? "pointer-events-auto cursor-ns-resize hover:border-t-2 hover:border-white" : "pointer-events-none"}`}
                     style={{ top: box.stopY - box.y, left: 0, width: Math.max(box.width + 112, 160) }}
-                    title="Kéo để dời Stop Loss"
-                    onPointerDown={(event) => beginManualAiLevelDrag(event, box, "stopLoss")}
+                    title={isEditing ? "Kéo để dời Stop Loss" : "Stop Loss · chọn Edit levels hoặc nhấn E để chỉnh"}
+                    onPointerDown={isEditing ? (event) => beginManualAiLevelDrag(event, box, "stopLoss") : undefined}
                   ><span className="absolute right-0 top-1/2 -translate-y-1/2 rounded border border-rose-300/50 bg-rose-950/95 px-1.5 py-0.5 text-[9px] font-black text-rose-100 shadow">SL {candidate.stop_loss?.toFixed(2)}</span></span>
                   <span
-                    className="pointer-events-auto absolute z-20 h-3 -translate-y-1/2 cursor-ns-resize border-t border-emerald-300/90 hover:border-t-2 hover:border-white"
+                    className={`absolute z-20 h-3 -translate-y-1/2 border-t border-emerald-300/90 ${isEditing ? "pointer-events-auto cursor-ns-resize hover:border-t-2 hover:border-white" : "pointer-events-none"}`}
                     style={{ top: box.takeProfitY - box.y, left: 0, width: Math.max(box.width + 112, 160) }}
-                    title="Kéo để dời Take Profit"
-                    onPointerDown={(event) => beginManualAiLevelDrag(event, box, "takeProfit")}
+                    title={isEditing ? "Kéo để dời Take Profit" : "Take Profit · chọn Edit levels hoặc nhấn E để chỉnh"}
+                    onPointerDown={isEditing ? (event) => beginManualAiLevelDrag(event, box, "takeProfit") : undefined}
                   ><span className="absolute right-0 top-1/2 -translate-y-1/2 rounded border border-emerald-300/50 bg-emerald-950/95 px-1.5 py-0.5 text-[9px] font-black text-emerald-100 shadow">TP {candidate.take_profit[0]?.toFixed(2)}</span></span>
                 </>
               ) : null}
-              <span className="absolute right-0 top-[-24px] z-30 whitespace-nowrap rounded border border-yellow-200/80 bg-yellow-950/95 px-1.5 py-0.5 text-[9px] font-black text-yellow-100 shadow-lg">
-                {label}
+              {isSelected && canEdit ? (
+                <span
+                  className={`absolute bottom-1 right-1 z-30 rounded border px-1.5 py-0.5 text-[9px] font-black shadow-lg ${
+                    isEditing
+                      ? "border-cyan-200/80 bg-cyan-950/95 text-cyan-100"
+                      : "border-yellow-200/70 bg-yellow-950/95 text-yellow-100 hover:border-cyan-200 hover:text-cyan-100"
+                  }`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setManualAiEditSetupId(candidate.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setManualAiEditSetupId(candidate.id);
+                  }}
+                >
+                  {isEditing ? "EDITING · ESC" : "E · EDIT LEVELS"}
+                </span>
+              ) : null}
+              <span className={`absolute right-0 top-[-24px] z-30 whitespace-nowrap rounded border px-1.5 py-0.5 text-[9px] font-black shadow-lg ${
+                isSelected
+                  ? "border-yellow-200/80 bg-yellow-950/95 text-yellow-100"
+                  : candidate.direction === "long"
+                    ? "border-emerald-300/50 bg-emerald-950/90 text-emerald-100"
+                    : "border-rose-300/50 bg-rose-950/90 text-rose-100"
+              }`}>
+                {isSelected ? detailLabel : compactLabel}
               </span>
-            </button>
+            </div>
           );
         })}
         {tradeBoxes.map((box) => {
@@ -1895,7 +2001,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           saving={manualAiLevelEdit.saving}
           onLevelsChange={updateManualAiEditLevels}
           onApply={() => { void applyManualAiLevelEdit(); }}
-          onCancel={() => setManualAiLevelEdit(null)}
+          onCancel={exitManualAiSetupInteraction}
         />
       ) : null}
       {candleLabel !== null && !payload.replay?.enabled ? (

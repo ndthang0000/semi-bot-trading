@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { playbookControlledLayers } from "./chartStore";
+import { playbookControlledLayers, setupSelectionState } from "./chartStore";
 import { isZoneVisibleForPlaybooks, zoneDisplayName } from "../components/chart/chartCore";
 import type { PriceZone } from "../types";
 
@@ -56,6 +56,23 @@ describe("Liquidity Sweep V1 zone presentation", () => {
 
   it("keeps historical events available outside the liquidity playbook view", () => {
     expect(isZoneVisibleForPlaybooks(liquidityZone("swept"), ["zone_reaction_v2"])).toBe(true);
+  });
+});
+
+describe("Manual AI setup interaction state", () => {
+  it("keeps only one selected/editing setup at a time", () => {
+    expect(setupSelectionState(null, "setup-a")).toMatchObject({
+      selectedSetupId: "setup-a",
+      manualAiEditSetupId: null,
+    });
+    expect(setupSelectionState("setup-a", "setup-a")).toMatchObject({
+      selectedSetupId: "setup-a",
+      manualAiEditSetupId: "setup-a",
+    });
+    expect(setupSelectionState("setup-a", "setup-b")).toMatchObject({
+      selectedSetupId: "setup-b",
+      manualAiEditSetupId: null,
+    });
   });
 });
 

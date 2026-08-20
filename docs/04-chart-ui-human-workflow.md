@@ -140,6 +140,12 @@ Replay không hiển thị draft/live Manual AI hiện tại
 
 Ba đường Entry/SL/TP của setup Manual AI có handle kéo theo chiều dọc, nhãn giá
 riêng và vùng bắt chuột tối thiểu đủ rộng ngay cả khi box gần hết hạn rất hẹp.
+Để tránh rối khi có nhiều setup, overlay dùng progressive disclosure: setup chưa
+chọn chỉ hiện khung mảnh và badge BUY/SELL + RR; click chart hoặc card Setup mới
+highlight đúng một setup và hiện geometry Entry/SL/TP. Các setup còn lại được
+làm mờ. Handle chỉ nhận drag sau khi human bấm `Edit levels` hoặc hotkey `E`,
+giúp việc pan/zoom chart không vô tình sửa giá. `Esc`, Save, Cancel hoặc click
+vùng trống kết thúc interaction và đưa overlay về dạng compact.
 Kéo chỉ tạo preview trên chart; thả chuột mở panel nổi không khóa chart nên human
 có thể tiếp tục kéo cả ba mức hoặc nhập giá chính xác trước khi xác nhận. Không
 gửi request MT5 theo từng pixel. Với `draft`/`approved`, API cập nhật cả nhóm account ngay sau khi
