@@ -43,9 +43,12 @@ export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
 
       <aside
         className={[
-          "absolute inset-y-0 left-0 z-50 flex h-full w-12 flex-col items-center border-r border-ink-700 bg-ink-900/95 py-3 shadow-2xl shadow-black/35 backdrop-blur transition-transform duration-200",
+          "absolute inset-y-0 left-0 z-[70] flex h-full w-16 flex-col items-center border-r border-ink-700 bg-ink-900/95 pt-3 shadow-2xl shadow-black/35 backdrop-blur transition-transform duration-200",
+          activePage === "chart"
+            ? "pb-[calc(4.75rem+env(safe-area-inset-bottom))]"
+            : "pb-[max(1rem,env(safe-area-inset-bottom))]",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
-          "md:static md:z-auto md:translate-x-0 md:bg-ink-900 md:shadow-none md:backdrop-blur-none",
+          "md:static md:z-auto md:w-12 md:translate-x-0 md:bg-ink-900 md:py-3 md:shadow-none md:backdrop-blur-none",
         ].join(" ")}
       >
         {/* Logo mark */}
@@ -89,12 +92,12 @@ export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
 
         <button
           aria-label="Đóng menu điều hướng"
-          className="grid h-9 w-9 place-items-center rounded-md text-slate-500 transition hover:bg-ink-700 hover:text-slate-200 md:hidden"
+          className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-xl border border-blue-400/35 bg-ink-800 text-blue-300 shadow-[0_8px_24px_rgba(0,0,0,0.4)] transition hover:border-cyan-300/50 hover:bg-ink-700 hover:text-cyan-200 md:hidden"
           title="Đóng menu"
           type="button"
           onClick={() => setMobileOpen(false)}
         >
-          <PanelLeftClose size={18} />
+          <PanelLeftClose size={24} />
         </button>
       </aside>
     </>

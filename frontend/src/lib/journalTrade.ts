@@ -7,7 +7,20 @@ type LifecycleTrade = Pick<
   "status" | "closed_at" | "pnl_r" | "manual_ai_plan_status" | "manual_ai_expires_at"
 >;
 
+type TakeProfitTrade = Pick<TradeOrder, "take_profit">;
+
 const BROKER_EXPIRY_TOLERANCE_MS = 90_000;
+
+export function takeProfitPrices(trade: TakeProfitTrade): number[] {
+  return trade.take_profit.flatMap((target) => {
+    const price = typeof target === "number" ? target : target.price;
+    return typeof price === "number" && Number.isFinite(price) ? [price] : [];
+  });
+}
+
+export function firstTakeProfitPrice(trade: TakeProfitTrade): number | null {
+  return takeProfitPrices(trade)[0] ?? null;
+}
 
 function cancelledAtBrokerExpiry(trade: LifecycleTrade): boolean {
   if (!trade.closed_at || !trade.manual_ai_expires_at) return false;

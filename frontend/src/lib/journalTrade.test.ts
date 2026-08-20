@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { tradeLifecycleStatus } from "./journalTrade";
+import { firstTakeProfitPrice, takeProfitPrices, tradeLifecycleStatus } from "./journalTrade";
+
+describe("takeProfitPrices", () => {
+  it("normalizes numeric and object-shaped targets", () => {
+    const trade = { take_profit: [3040, { price: 3060 }, {}] };
+    expect(takeProfitPrices(trade)).toEqual([3040, 3060]);
+    expect(firstTakeProfitPrice(trade)).toBe(3040);
+  });
+
+  it("returns null when a trade has no usable target", () => {
+    expect(firstTakeProfitPrice({ take_profit: [] })).toBeNull();
+  });
+});
 
 describe("tradeLifecycleStatus", () => {
   it("does not call an expired Manual AI limit open", () => {

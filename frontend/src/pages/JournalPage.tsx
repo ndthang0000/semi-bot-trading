@@ -12,6 +12,8 @@ import {
 import { authFetch } from "../api/auth";
 import { isTradeReviewComplete, type WeeklyReviewGateState } from "../lib/weeklyReview";
 import {
+  firstTakeProfitPrice,
+  takeProfitPrices,
   tradeLifecycleBadgeClass,
   tradeLifecycleLabel,
   tradeLifecycleStatus,
@@ -34,11 +36,12 @@ type Filters = {
   direction: string;
   reviewed: string;
   account: string;
+  playbook: string;
   status: "all" | TradeLifecycleStatus;
 };
 
 const JOURNAL_FILTERS_STORAGE_KEY = "semi-bot-journal-filters-v2";
-const DEFAULT_FILTERS: Filters = { outcome: "all", direction: "all", reviewed: "all", account: "all", status: "all" };
+const DEFAULT_FILTERS: Filters = { outcome: "all", direction: "all", reviewed: "all", account: "all", playbook: "all", status: "all" };
 const STATUS_FILTERS: Array<{ value: "all" | TradeLifecycleStatus; label: string }> = [
   { value: "all", label: "All" },
   { value: "pending", label: "Pending limit" },
@@ -215,8 +218,9 @@ function DetailPanel({ trade, onClose, onSaved }: {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["trade-attachments", trade.id] }),
   });
 
-  const rr = trade.take_profit[0] && trade.entry_price && trade.stop_loss
-    ? Math.abs((Number(trade.take_profit[0]) - trade.entry_price) / (trade.entry_price - trade.stop_loss))
+  const firstTakeProfit = firstTakeProfitPrice(trade);
+  const rr = firstTakeProfit !== null && trade.entry_price !== null && trade.stop_loss !== null
+    ? Math.abs((firstTakeProfit - trade.entry_price) / (trade.entry_price - trade.stop_loss))
     : null;
   const lifecycleStatus = tradeLifecycleStatus(trade);
 
@@ -245,18 +249,18 @@ function DetailPanel({ trade, onClose, onSaved }: {
   };
 
   return (
-    <div className="flex h-full flex-col border-l border-ink-700 bg-ink-900 text-slate-100">
+    <div className="flex h-full min-w-0 flex-col border-l border-ink-700 bg-ink-900 text-slate-100">
       <div className="flex items-center justify-between border-b border-ink-700 px-4 py-3">
-        <div>
-          <div className="text-sm font-semibold">{trade.playbook}</div>
-          <div className="text-xs text-slate-500">{trade.id.slice(0, 24)}...</div>
+        <div className="min-w-0 pr-3">
+          <div className="truncate text-sm font-semibold">{trade.playbook}</div>
+          <div className="truncate text-xs text-slate-500">{trade.id}</div>
         </div>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-300" type="button">
+        <button onClick={onClose} className="flex-shrink-0 text-slate-500 hover:text-slate-300" type="button" aria-label="Close trade details">
           <X size={16} />
         </button>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto p-4">
+      <div className="flex-1 space-y-5 overflow-y-auto p-3 sm:p-4">
         <InfoSection title="Bot Decision" rows={[
           ["Account", trade.account_label || "Default"],
           ["Status", tradeLifecycleLabel(lifecycleStatus)],
@@ -265,7 +269,8 @@ function DetailPanel({ trade, onClose, onSaved }: {
           ["Entry", trade.entry_price?.toFixed(2) ?? "-"],
           ["Volume", `${trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })} lot`],
           ["Stop Loss", trade.stop_loss?.toFixed(2) ?? "-"],
-          ["Take Profit", typeof trade.take_profit[0] === "number" ? trade.take_profit[0].toFixed(2) : "-"],
+          ["Take Profit", takeProfitPrices(trade).map((price) => price.toFixed(2)).join(" / ") || "-"],
+          ["Close Price", trade.close_price?.toFixed(2) ?? "-"],
           ["R:R", rr ? `1:${rr.toFixed(2)}` : "-"],
           ["PnL (R)", trade.pnl_r !== null ? `${trade.pnl_r >= 0 ? "+" : ""}${trade.pnl_r.toFixed(2)}R` : "-"],
           ["Opened", fmt(trade.opened_at)],
@@ -344,11 +349,11 @@ function InfoSection({ title, rows, pnlR }: { title: string; rows: Array<[string
   return (
     <div>
       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+      <div className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
         {rows.map(([key, value]) => (
-          <div key={key} className="flex justify-between py-0.5">
-            <span className="text-slate-500">{key}</span>
-            <span className={`font-medium ${key === "PnL (R)" ? (pnlR ?? 0) >= 0 ? "text-green-400" : "text-red-400" : "text-slate-300"}`}>
+          <div key={key} className="flex min-w-0 justify-between gap-3 py-0.5">
+            <span className="flex-shrink-0 text-slate-500">{key}</span>
+            <span className={`min-w-0 break-words text-right font-medium ${key === "PnL (R)" ? (pnlR ?? 0) >= 0 ? "text-green-400" : "text-red-400" : "text-slate-300"}`}>
               {value}
             </span>
           </div>
@@ -405,7 +410,7 @@ function StructuredReviewSection(props: {
   return (
     <div>
       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{props.title}</div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {props.selects.map(([key, label, options]) => (
           <label key={key} className="block">
             <span className="mb-1 block text-xs text-slate-500">{label}</span>
@@ -442,7 +447,7 @@ function OperatorReviewSection(props: {
         selectedTags={props.selectedTags}
         onToggleTag={props.onToggleTag}
       />
-      <div className="mt-2 grid grid-cols-3 gap-2">
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
         {[
           ["emotion_score", "Emotion"],
           ["confidence_before", "Conf before"],
@@ -520,9 +525,9 @@ function ScreenshotsSection(props: {
 }) {
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Screenshots</div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           <button
             onClick={props.onCapture}
             disabled={props.uploading || !props.canCapture}
@@ -544,7 +549,7 @@ function ScreenshotsSection(props: {
         </div>
       </div>
       {props.loading ? <div className="text-xs text-slate-600">Loading screenshots...</div> : null}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {props.attachments.map((attachment) => (
           <div key={attachment.id} className="overflow-hidden rounded border border-ink-700 bg-ink-950">
             <AuthenticatedImage attachment={attachment} />
@@ -583,11 +588,13 @@ function AuthenticatedImage({ attachment }: { attachment: TradeReviewAttachment 
 function FilterBar({
   filters,
   accounts,
+  playbooks,
   statusCounts,
   onChange,
 }: {
   filters: Filters;
   accounts: string[];
+  playbooks: string[];
   statusCounts: Record<TradeLifecycleStatus, number>;
   onChange: (f: Filters) => void;
 }) {
@@ -618,7 +625,7 @@ function FilterBar({
         </button>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(280px,0.8fr)_minmax(620px,1.6fr)]">
+      <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(240px,0.7fr)_minmax(260px,0.8fr)_minmax(620px,1.6fr)]">
         <div>
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Account</div>
           <div className="flex flex-wrap gap-1.5">
@@ -632,6 +639,23 @@ function FilterBar({
                 type="button"
               >
                 {account}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Playbook</div>
+          <div className="flex flex-wrap gap-1.5">
+            <button className={btnCls(filters.playbook === "all")} onClick={() => set("playbook", "all")} type="button">All playbooks</button>
+            {playbooks.map((playbook) => (
+              <button
+                key={playbook}
+                className={btnCls(filters.playbook === playbook)}
+                onClick={() => set("playbook", playbook)}
+                title={playbook}
+                type="button"
+              >
+                {playbook.replace(/_/g, " ")}
               </button>
             ))}
           </div>
@@ -680,6 +704,7 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
   const reviewed = isTradeReviewComplete(trade.review);
   const accountLabel = trade.account_label || "Default";
   const lifecycleStatus = tradeLifecycleStatus(trade);
+  const takeProfits = takeProfitPrices(trade);
   return (
     <tr
       onClick={onClick}
@@ -708,6 +733,8 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
       </td>
       <td className="px-3 py-2 text-slate-400">{trade.entry_price?.toFixed(2) ?? "-"}</td>
       <td className="px-3 py-2 text-slate-400">{trade.stop_loss?.toFixed(2) ?? "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-slate-400">{takeProfits.map((price) => price.toFixed(2)).join(" / ") || "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-slate-400">{trade.close_price?.toFixed(2) ?? "-"}</td>
       <td className={`px-3 py-2 text-right font-semibold ${r !== null ? r >= 0 ? "text-green-400" : "text-red-400" : "text-slate-500"}`}>
         {r !== null ? `${r >= 0 ? "+" : ""}${r.toFixed(2)}R` : "--"}
       </td>
@@ -823,26 +850,32 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
     () => Array.from(new Set((data?.trades ?? []).map((trade) => trade.account_label || "Default"))).sort(),
     [data?.trades],
   );
+  const playbooks = useMemo(
+    () => Array.from(new Set((data?.trades ?? []).map((trade) => trade.playbook))).sort(),
+    [data?.trades],
+  );
   const statusCounts = useMemo(() => {
     const counts: Record<TradeLifecycleStatus, number> = { pending: 0, open: 0, closed: 0, expired: 0, cancelled: 0, failed: 0 };
     for (const trade of baseTrades) {
       if (filters.account !== "all" && (trade.account_label || "Default") !== filters.account) continue;
+      if (filters.playbook !== "all" && trade.playbook !== filters.playbook) continue;
       counts[tradeLifecycleStatus(trade)] += 1;
     }
     return counts;
-  }, [baseTrades, filters.account]);
+  }, [baseTrades, filters.account, filters.playbook]);
   const trades = useMemo(() => baseTrades.filter((trade) => {
     if (filters.account !== "all" && (trade.account_label || "Default") !== filters.account) return false;
+    if (filters.playbook !== "all" && trade.playbook !== filters.playbook) return false;
     if (filters.status !== "all" && tradeLifecycleStatus(trade) !== filters.status) return false;
     return true;
-  }), [baseTrades, filters.account, filters.status]);
+  }), [baseTrades, filters.account, filters.playbook, filters.status]);
 
   const selectedFresh = selected ? (trades.find((trade) => trade.id === selected.id) ?? selected) : null;
   const title = reviewGateActive ? "Weekly Review Required" : "Trade Journal";
 
   return (
-    <div className="flex h-full overflow-hidden bg-ink-950 text-slate-100">
-      <div className={`flex min-w-0 flex-col ${selectedFresh ? "w-[60%]" : "w-full"} transition-all`}>
+    <div className="relative flex h-full overflow-hidden bg-ink-950 text-slate-100">
+      <div className={`flex min-w-0 flex-col ${selectedFresh ? "w-full lg:w-[60%]" : "w-full"} transition-all`}>
         <div className="border-b border-ink-700 bg-ink-900 px-4 py-3">
           <h1 className="text-sm font-semibold">{title}</h1>
           <div className="text-xs text-slate-500">{reviewGateActive ? `${weeklyReviewGate?.dueCount ?? trades.length} closed trades need human review` : `${trades.length} trades`}</div>
@@ -872,14 +905,14 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
           <PatternsTab />
         ) : (
           <>
-            <FilterBar filters={filters} accounts={accounts} statusCounts={statusCounts} onChange={setFilters} />
+            <FilterBar filters={filters} accounts={accounts} playbooks={playbooks} statusCounts={statusCounts} onChange={setFilters} />
             <div className="flex-1 overflow-auto">
               {isLoading ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-500">Loading...</div>
               ) : trades.length === 0 ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-600">No trades found</div>
               ) : (
-                <table className="w-full min-w-[980px]">
+                <table className="w-full min-w-[1140px]">
                   <thead>
                     <tr className="border-b border-ink-700 bg-ink-900 text-xs text-slate-500">
                       <th className="px-3 py-2 text-left font-normal">Date (UTC)</th>
@@ -890,6 +923,8 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
                       <th className="px-3 py-2 text-right font-normal">Volume (lot)</th>
                       <th className="px-3 py-2 text-left font-normal">Entry</th>
                       <th className="px-3 py-2 text-left font-normal">SL</th>
+                      <th className="px-3 py-2 text-left font-normal">TP</th>
+                      <th className="px-3 py-2 text-left font-normal">Close</th>
                       <th className="px-3 py-2 text-right font-normal">PnL</th>
                       <th className="px-3 py-2 text-center font-normal">Review</th>
                     </tr>
@@ -912,7 +947,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
       </div>
 
       {selectedFresh ? (
-        <div className="w-[40%] min-w-[360px] flex-shrink-0">
+        <div className="fixed inset-0 z-50 w-full bg-ink-900 lg:static lg:z-auto lg:w-[40%] lg:min-w-[360px] lg:flex-shrink-0">
           <DetailPanel
             trade={selectedFresh}
             onClose={() => setSelected(null)}
