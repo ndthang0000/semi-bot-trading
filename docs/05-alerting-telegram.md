@@ -90,9 +90,17 @@ Moi message runtime bat dau bang emoji phan loai. Market alert dung chung hien
 `[SYSTEM]`; execution/risk/account alert hien account label, vi du:
 
 ```text
-⏳ [SYSTEM] [XAUUSD H1] [WAIT] zone-reaction-v2 LONG
+🎯 [SYSTEM] [XAUUSD H1] [SIGNAL READY] zone-reaction-v2 LONG
 🟢 [FTMO 100K 2-Step] [XAUUSD] [OPEN] Live order opened
 ```
+
+`SIGNAL READY` chi xac nhan strategy setup hop le, khong xac nhan broker da
+nhan lenh. Message nay ghi planned order type va nhac account worker van phai
+qua position/spread/news/risk gates. Neu gate runtime chan, worker luu mot
+`execution_event` va gui `[BLOCK]` theo account, nhung khong tao `trade_idea`
+hoac `trade_order`. Khi MT5 nhan pending limit, worker gui `[LIMIT]` kem ticket
+va expiry neu setup co timeout; market order chi gui `[OPEN]` sau khi broker
+chap nhan.
 
 Emoji chinh: `🎯` ready, `⏳` waiting, `🚫` blocked, `⚡` M15 recovery,
 `🗺️` zone, `📈` swing, `🚨` news, `🟢` opened/filled, `💰` TP,

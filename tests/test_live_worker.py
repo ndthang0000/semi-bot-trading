@@ -612,7 +612,10 @@ class TestExecuteCandidate(unittest.TestCase):
         # price=0 in result → fallback to exec_entry
         self.assertAlmostEqual(3000.0, orders[0]["entry_price"], places=2)
         alerts = self._conn.execute("SELECT * FROM alert_events").fetchall()
-        self.assertEqual([], alerts)
+        self.assertEqual(1, len(alerts))
+        payload = json.loads(alerts[0]["message_payload_json"])
+        self.assertEqual("pending", payload["outcome"])
+        self.assertEqual("Limit order placed", payload["title"])
 
     # ── MT5 failure ───────────────────────────────────────────────────────────
     def test_mt5_failure_execution_request_marked_failed(self):
@@ -1448,6 +1451,14 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         client = _fake_client(positions=1)
         self._run([_make_candidate()], env=env, client=client)
         self.assertEqual(0, self._order_count())
+        self.assertEqual(0, self._conn.execute("SELECT COUNT(*) c FROM trade_ideas").fetchone()["c"])
+        alert = self._conn.execute(
+            "SELECT message_payload_json FROM alert_events WHERE event_type = 'execution_event'"
+        ).fetchone()
+        self.assertIsNotNone(alert)
+        payload = json.loads(alert["message_payload_json"])
+        self.assertEqual("position_limit", payload["reason_code"])
+        self.assertIn("1/1", payload["reason"][0])
 
     def test_max_trades_today_reached_no_trade(self):
         env = _make_env(max_trades_per_day=0)

@@ -246,6 +246,7 @@ def alert_message_emoji(alert: AlertEvent) -> str:
         return {
             "opened": "🟢",
             "filled": "🟢",
+            "pending": "⏳",
             "take_profit": "💰",
             "stop_loss": "🔴",
             "closed": "🏁",
@@ -401,7 +402,7 @@ def _fmt_setup(alert: AlertEvent) -> str:
     trigger_tf = str(setup.get("trigger_timeframe") or "").upper()
 
     if status == "eligible":
-        status_tag = "[READY]"
+        status_tag = "[SIGNAL READY]"
     elif status == "blocked":
         status_tag = "[BLOCK]"
     else:
@@ -411,6 +412,10 @@ def _fmt_setup(alert: AlertEvent) -> str:
         sym_tf + " " + status_tag + " " + playbook + " " + direction,
         "Entry " + str(entry) + "  SL " + str(sl) + "  TP " + tp,
     ]
+    order_type = str(setup.get("order_type") or "market").upper()
+    lines.append("Planned order: " + order_type + " (not broker-confirmed)")
+    if setup.get("expires_at"):
+        lines.append("Expires: " + str(setup["expires_at"]))
     if zone_type:
         lines.append("Zone type: " + zone_type)
     if trigger_tf and trigger_tf != context_tf:
@@ -418,6 +423,8 @@ def _fmt_setup(alert: AlertEvent) -> str:
     reasons = _clean_reasons(p.get("reason"))
     if reasons:
         lines.append("- " + "\n- ".join(reasons))
+    if p.get("action"):
+        lines.append(str(p["action"]))
     chart = p.get("chart_url")
     if chart:
         lines.append(str(chart))
@@ -454,6 +461,7 @@ def _fmt_execution(alert: AlertEvent) -> str:
     outcome_tags = {
         "opened": "[OPEN]",
         "filled": "[FILLED]",
+        "pending": "[LIMIT]",
         "expired": "[EXPIRED]",
         "take_profit": "[TP]",
         "stop_loss": "[SL]",
@@ -484,6 +492,10 @@ def _fmt_execution(alert: AlertEvent) -> str:
     sym = "[" + alert.symbol + "]"
     lines = [sym + " " + tag + " " + title]
 
+    order_type = str(setup.get("order_type") or "").upper()
+    if order_type:
+        lines.append("Order: " + order_type)
+
     if direction and entry:
         price_line = direction + " @ " + str(entry)
         if sl:
@@ -497,6 +509,9 @@ def _fmt_execution(alert: AlertEvent) -> str:
     if pnl_r is not None:
         sign = "+" if float(pnl_r) >= 0 else ""
         lines.append("P&L: " + sign + f"{float(pnl_r):.2f}" + "R")
+
+    if setup.get("expires_at"):
+        lines.append("Expires: " + str(setup["expires_at"]))
 
     reasons = _clean_reasons(p.get("reason"), limit=2)
     if reasons:

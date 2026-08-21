@@ -902,7 +902,7 @@ function zoneTitleClass(zone: PriceZone): string {
 function statusLabel(status: string): string {
   if (status === "waiting") return "Waiting";
   if (status === "watching") return "Watching";
-  if (status === "eligible") return "Eligible";
+  if (status === "eligible") return "Signal ready";
   if (status === "blocked") return "Blocked";
   return status;
 }

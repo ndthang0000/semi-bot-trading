@@ -1314,11 +1314,13 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
                 "entry": candidate.get("entry"),
                 "stop_loss": candidate.get("stop_loss"),
                 "take_profit": candidate.get("take_profit"),
+                "order_type": metadata.get("order_type") or "market",
+                "expires_at": candidate.get("expires_at") or metadata.get("limit_order_expires_at"),
                 "context_timeframe": context_timeframe,
                 "trigger_timeframe": trigger_timeframe,
             },
             "reason": reasons,
-            "action": "Auto execution is enabled." if account_execution_is_enabled(conn, env) else "Execution is disabled; observe manually.",
+            "action": "Signal only; account workers still apply execution, position, spread, news, and risk gates.",
             "chart_url": env.chart_url_base,
         }
         queue_alert(
@@ -1827,10 +1829,6 @@ def maybe_execute_candidates(
                 env.max_spread_price,
             )
             return
-    if client.positions_count(broker_symbol) >= env.max_open_positions_per_symbol:
-        return
-    if live_trade_count_today(conn, config.symbol, account_label=env.account_label) >= env.max_trades_per_day:
-        return
     eligible = [candidate for candidate in candidates if candidate.get("status") == "eligible"]
     eligible = candidates_after_live_fvg_trade_count(
         conn,
@@ -1843,6 +1841,34 @@ def maybe_execute_candidates(
         return
     candidate = sorted(eligible, key=lambda item: float(item.get("score") or 0.0), reverse=True)[0]
     if live_candidate_already_executed(conn, str(candidate["id"]), account_label=env.account_label):
+        return
+    open_positions = client.positions_count(broker_symbol)
+    if open_positions >= env.max_open_positions_per_symbol:
+        queue_execution_gate_block(
+            conn,
+            config,
+            env,
+            candidate,
+            reason_code="position_limit",
+            reason=(
+                f"Existing {config.symbol} position: {open_positions}/{env.max_open_positions_per_symbol}. "
+                "No broker order was created."
+            ),
+        )
+        return
+    trades_today = live_trade_count_today(conn, config.symbol, account_label=env.account_label)
+    if trades_today >= env.max_trades_per_day:
+        queue_execution_gate_block(
+            conn,
+            config,
+            env,
+            candidate,
+            reason_code="daily_trade_limit",
+            reason=(
+                f"Daily live trade limit reached: {trades_today}/{env.max_trades_per_day}. "
+                "No broker order was created."
+            ),
+        )
         return
     try:
         pricing_plan = build_execution_pricing_plan(client, broker_symbol, candidate, env.max_entry_drift_price)
@@ -1901,6 +1927,42 @@ def maybe_execute_candidates(
         broker_symbol,
         lot_size=assessment.lot_size,
         pricing_plan=pricing_plan,
+    )
+
+
+def queue_execution_gate_block(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    candidate: dict[str, Any],
+    *,
+    reason_code: str,
+    reason: str,
+) -> bool:
+    """Persist and announce an account-specific execution gate without a fake trade."""
+    return queue_alert(
+        conn,
+        account_label=env.account_label,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="important",
+        entity_ids=[str(candidate.get("id"))],
+        payload={
+            "title": "Execution blocked",
+            "outcome": "blocked",
+            "reason_code": reason_code,
+            "setup": {
+                "playbook": candidate.get("playbook"),
+                "direction": candidate.get("direction"),
+                "entry": candidate.get("entry"),
+                "stop_loss": candidate.get("stop_loss"),
+                "take_profit": candidate.get("take_profit"),
+            },
+            "reason": [reason],
+            "chart_url": env.chart_url_base,
+        },
+        dedupe_key=f"execution-block:{env.account_label}:{candidate.get('id')}:{reason_code}",
     )
 
 
@@ -2463,32 +2525,34 @@ def execute_candidate(
             ),
         )
         conn.commit()
-        if exec_order_type != "limit":
-            queue_alert(
-                conn,
-                account_label=env.account_label,
-                symbol=config.symbol,
-                timeframe=config.strategy.timeframe,
-                event_type="execution_event",
-                severity="critical",
-                entity_ids=[idea_id, order_id],
-                payload={
-                    "title": "Live order sent",
-                    "outcome": "opened",
-                    "account": env.account_label,
-                    "setup": {
-                        "playbook": candidate["playbook"],
-                        "direction": direction,
-                        "order_type": exec_order_type,
-                        "entry": fill_price,
-                        "stop_loss": exec_stop,
-                        "take_profit": exec_take_profit,
-                        "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
-                    },
-                    "reason": [f"MT5 broker order id: {broker_order_id}"],
+        is_limit = exec_order_type == "limit"
+        queue_alert(
+            conn,
+            account_label=env.account_label,
+            symbol=config.symbol,
+            timeframe=config.strategy.timeframe,
+            event_type="execution_event",
+            severity="important" if is_limit else "critical",
+            entity_ids=[idea_id, order_id],
+            payload={
+                "title": "Limit order placed" if is_limit else "Market order opened",
+                "outcome": "pending" if is_limit else "opened",
+                "account": env.account_label,
+                "setup": {
+                    "playbook": candidate["playbook"],
+                    "direction": direction,
+                    "order_type": exec_order_type,
+                    "entry": fill_price,
+                    "stop_loss": exec_stop,
+                    "take_profit": exec_take_profit,
+                    "expires_at": pricing_plan.expires_at if pricing_plan else candidate.get("expires_at"),
+                    "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
                 },
-                dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",
-            )
+                "reason": [f"MT5 broker order id: {broker_order_id}"],
+                "chart_url": env.chart_url_base,
+            },
+            dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",
+        )
         return {"trade_idea_id": idea_id, "execution_request_id": request_id, "trade_order_id": order_id}
     except Exception as exc:
         conn.execute(
