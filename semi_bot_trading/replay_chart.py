@@ -16,6 +16,7 @@ from .chart import (
 from .config import AppConfig
 from .context import percentile_rank, rolling_average, score_bias_from_structure, score_macro_trend, true_ranges
 from .price_action import detect_price_action_patterns
+from .intraday_levels import build_intraday_map
 from .smc_zones import detect_smc_zones
 from .strategy import build_setup_candidates
 from .structure import CandleView, StructurePoint, SwingLevel, detect_break_structure, detect_swing_structure
@@ -232,6 +233,11 @@ def build_realtime_replay_payload(
             "setup_candidates": setup_candidates,
             "m15_triggers": m15_triggers,
             "m15_signal": m15_signal,
+            "intraday_map": build_intraday_map(
+                conn,
+                symbol,
+                replay_at,
+            ),
         },
     }
     if replay_enabled:

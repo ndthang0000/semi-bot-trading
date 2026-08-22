@@ -26,9 +26,9 @@ export function ReplayControls({
   const canStepForward = count > 0 && currentIndex < count - 1;
 
   return (
-    <section className="flex h-12 items-center justify-between border-b border-ink-700 bg-ink-900 px-4">
-      <div className="flex items-center gap-3">
-        <div className="text-sm font-semibold text-cyan-200">Replay Chart</div>
+    <section className="flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-700 bg-ink-900 px-2 py-1.5 sm:h-12 sm:flex-nowrap sm:justify-between sm:px-4 sm:py-0">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <div className="hidden text-sm font-semibold text-cyan-200 sm:block">Replay Chart</div>
         <button
           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-ink-700 bg-ink-850 text-slate-200 hover:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canStepBack}
@@ -56,10 +56,10 @@ export function ReplayControls({
         >
           <ChevronRight size={16} />
         </button>
-        <label className="flex items-center gap-2 text-xs text-slate-400">
-          sec/candle
+        <label className="flex items-center gap-1 text-xs text-slate-400 sm:gap-2">
+          <span className="hidden sm:inline">sec/candle</span>
           <input
-            className="h-8 w-20 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-8 w-14 rounded-md border border-ink-700 bg-ink-850 px-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-50 sm:w-20"
             min={0.1}
             step={0.1}
             type="number"
@@ -68,7 +68,7 @@ export function ReplayControls({
           />
         </label>
       </div>
-      <div className="text-xs text-slate-400">
+      <div className="w-full truncate text-right text-[10px] text-slate-400 sm:w-auto sm:text-xs">
         {currentTime ? (
           <>
             <span className="font-semibold text-slate-200">{currentIndex + 1}</span> / {count} · {formatReplayTime(currentTime)}

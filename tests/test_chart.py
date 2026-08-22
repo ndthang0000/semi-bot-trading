@@ -39,6 +39,9 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertIn("trades", payload["layers"])
         self.assertIn("setup_candidates", payload["layers"])
         self.assertIn("m15_signal", payload["layers"])
+        self.assertIn("intraday_map", payload["layers"])
+        self.assertEqual(payload["layers"]["intraday_map"]["current_session"], "Asia")
+        self.assertTrue(any(level["label"] == "Asia H" for level in payload["layers"]["intraday_map"]["levels"]))
         self.assertEqual(payload["layers"]["setup_candidates"], [])
         signal = payload["layers"]["m15_signal"]
         self.assertTrue(signal["candle_closed"])

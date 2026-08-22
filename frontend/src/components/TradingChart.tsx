@@ -62,6 +62,8 @@ import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, Z
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
 import { ChartDrawingControls, type PendingChartNote } from "./chart/ChartDrawingControls";
 import { ManualAiLevelEditDialog, type ManualAiEditableLevels } from "./chart/ManualAiLevelEditDialog";
+import { IntradayMapPanel } from "./chart/IntradayMapPanel";
+import { levelStatusLabel, selectIntradayLevels } from "./chart/intradayMap";
 import { type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import {
@@ -83,6 +85,7 @@ import type {
   ChartDrawingAnchor,
   ChartDrawingTool,
   ChartPayload,
+  IntradayLevel,
   M15TriggerOverlay,
   PriceZone,
   SetupCandidate,
@@ -144,6 +147,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
+  const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
@@ -158,6 +163,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [setupBoxes, setSetupBoxes] = useState<SetupBox[]>([]);
   const [manualAiLevelEdit, setManualAiLevelEdit] = useState<ManualAiLevelEditState | null>(null);
   const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
+  const [intradayLevelMarkers, setIntradayLevelMarkers] = useState<Array<{ level: IntradayLevel; y: number; bandY: number; bandHeight: number; plotWidth: number }>>([]);
   const [newsTimelineMarkers, setNewsTimelineMarkers] = useState<NewsTimelineMarker[]>([]);
   const [hoveredNewsMarker, setHoveredNewsMarker] = useState<NewsTimelineMarker | null>(null);
   const [hoveredZoneId, setHoveredZoneId] = useState<string | null>(null);
@@ -191,6 +197,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooksRef = useRef(selectedPlaybooks);
   const showHistoricalLiquiditySweepsRef = useRef(showHistoricalLiquiditySweeps);
   const showStructureRef = useRef(showStructure);
+  const showIntradayLevelsRef = useRef(showIntradayLevels);
+  const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
   const maxVisibleZonesRef = useRef(maxVisibleZones);
@@ -238,6 +246,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   selectedPlaybooksRef.current = selectedPlaybooks;
   showHistoricalLiquiditySweepsRef.current = showHistoricalLiquiditySweeps;
   showStructureRef.current = showStructure;
+  showIntradayLevelsRef.current = showIntradayLevels;
+  showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
   maxVisibleZonesRef.current = maxVisibleZones;
@@ -367,6 +377,47 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       if (x < -12 || x > plotWidth + 12 || y < -12 || y > height + 12) return [];
       return [{ trigger, x, y }];
     });
+    const rawIntradayLevels = showIntradayLevelsRef.current
+      ? selectIntradayLevels(
+          currentPayload.layers.intraday_map,
+          isMobileChartWidth(width),
+          showBrokenIntradayLevelsRef.current,
+        ).flatMap((level) => {
+          const y = series.priceToCoordinate(level.price);
+          const approachTop = series.priceToCoordinate(level.approach_high);
+          const approachBottom = series.priceToCoordinate(level.approach_low);
+          if (y === null || approachTop === null || approachBottom === null || y < -12 || y > height + 12) return [];
+          return [{
+            level,
+            y,
+            bandY: Math.min(approachTop, approachBottom),
+            bandHeight: Math.max(2, Math.abs(approachBottom - approachTop)),
+            plotWidth,
+          }];
+        })
+      : [];
+    const intradayLevels = rawIntradayLevels.reduce<typeof rawIntradayLevels>((visible, marker) => {
+      const overlappingIndex = visible.findIndex((other) => Math.abs(other.y - marker.y) < 13);
+      if (overlappingIndex < 0) {
+        visible.push(marker);
+        return visible;
+      }
+      const existing = visible[overlappingIndex];
+      const mergeTolerance = Math.max(0.05, (currentPayload.layers.intraday_map.approach_allowance ?? 0) * 0.1);
+      if (Math.abs(existing.level.price - marker.level.price) <= mergeTolerance) {
+        const labels = new Set([...existing.level.label.split(" / "), ...marker.level.label.split(" / ")]);
+        visible[overlappingIndex] = {
+          ...existing,
+          level: {
+            ...existing.level,
+            label: Array.from(labels).join(" / "),
+            status: existing.level.live || marker.level.live ? "live" : existing.level.status,
+            live: existing.level.live || marker.level.live,
+          },
+        };
+      }
+      return visible;
+    }, []);
     const newsMarkers = buildNewsTimelineMarkers(newsDataRef.current?.events ?? [], toUnixTime(lastCandle.time), plotWidth, height, timeScale);
     const chartDrawings = drawingsRef.current.flatMap((drawing) => {
       const draftAnchor = drawingDraftAnchorRef.current?.id === drawing.id ? drawingDraftAnchorRef.current.anchor : null;
@@ -387,6 +438,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setTradeBoxes(trades);
     setSetupBoxes(manualAiSetups);
     setM15TriggerMarkers(m15Triggers);
+    setIntradayLevelMarkers(intradayLevels);
     setNewsTimelineMarkers(newsMarkers);
     setRenderedDrawings(chartDrawings);
     setDrawingPlotWidth(plotWidth);
@@ -1506,9 +1558,13 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         if (visibleRange) {
           chart.timeScale().setVisibleLogicalRange(visibleRange);
         }
-        chart.priceScale("right").setAutoScale(false);
-        chart.priceScale("right").setVisibleRange(visiblePriceRange);
-        replayPriceRangeRef.current = visiblePriceRange;
+        if (manualViewportRef.current) {
+          chart.priceScale("right").setAutoScale(false);
+          chart.priceScale("right").setVisibleRange(visiblePriceRange);
+          replayPriceRangeRef.current = visiblePriceRange;
+        } else {
+          replayPriceRangeRef.current = applyReplayPriceViewport(chart, candleData, false);
+        }
       }
     } else if (previousViewKey !== viewKey) {
       lockedViewportRef.current = null;
@@ -1629,6 +1685,12 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           {drawError}
         </div>
       ) : null}
+      {showIntradayLevels && !addEntityKind ? (
+        <IntradayMapPanel
+          map={payload.layers.intraday_map}
+          bias={payload.layers.contexts.H1?.bias?.effective_value ?? "neutral"}
+        />
+      ) : null}
       <div className="pointer-events-none absolute inset-0">
         {zoneBoxes.map((box) => {
           const isSelected = selected?.kind === "zone" && selected.entity.id === box.zone.id;
@@ -1724,6 +1786,52 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
                   {box.zone.timeframe} {zoneDisplayName(box.zone)} · {box.zone.weight.toFixed(2)} · {formatZoneDate(box.zone.visual_start)}
                 </span>
               ) : null}
+            </div>
+          );
+        })}
+        {intradayLevelMarkers.map(({ level, y, bandY, bandHeight, plotWidth }) => {
+          const isHigh = level.side === "high";
+          const isBroken = level.status === "broken";
+          const isReclaimed = level.status === "reclaimed";
+          const isTestingFlip = level.status === "testing_flip";
+          const isTesting = level.status === "testing" || isTestingFlip;
+          const lineColor = isBroken
+            ? "rgba(100,116,139,0.45)"
+            : isTestingFlip
+              ? "rgba(250,204,21,0.88)"
+            : isReclaimed
+              ? "rgba(34,211,238,0.72)"
+              : isHigh
+                ? "rgba(251,113,133,0.72)"
+                : "rgba(52,211,153,0.72)";
+          return (
+            <div key={`intraday:${level.id}`} className={`absolute left-0 z-[22] ${isBroken ? "opacity-55" : ""}`} style={{ top: y, width: plotWidth }}>
+              {isTesting ? (
+                <span
+                  className={`absolute left-0 w-full ${isHigh ? "bg-rose-400/[0.07]" : "bg-emerald-400/[0.07]"}`}
+                  style={{ top: bandY - y, height: bandHeight }}
+                />
+              ) : null}
+              <span
+                className="absolute left-0 top-0 w-full border-t"
+                style={{ borderColor: lineColor, borderTopStyle: level.live || isBroken ? "dashed" : "solid" }}
+              />
+              <span
+                className={`absolute right-1 top-0 -translate-y-1/2 whitespace-nowrap rounded border bg-ink-950/92 px-1.5 py-0.5 font-mono text-[9px] font-bold shadow ${
+                  isBroken
+                    ? "border-slate-600 text-slate-400"
+                    : isTestingFlip
+                      ? "border-yellow-300/60 text-yellow-200"
+                    : isReclaimed
+                      ? "border-cyan-400/50 text-cyan-200"
+                      : isHigh
+                        ? "border-rose-400/45 text-rose-200"
+                        : "border-emerald-400/45 text-emerald-200"
+                }`}
+                title={`${level.label} ${level.price.toFixed(2)} · ${levelStatusLabel(level.status)} · ${level.distance_atr?.toFixed(2) ?? "--"} M15 ATR`}
+              >
+                {level.label} · {levelStatusLabel(level.status)} · {level.price.toFixed(2)}
+              </span>
             </div>
           );
         })}

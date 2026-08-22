@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildScaleAnchorData } from "./chartCore";
+import { buildScaleAnchorData, replayPriceRangeNeedsRecentering } from "./chartCore";
 import type { CandleDatum } from "./tradeOverlay";
 
 function candles(intervalSeconds: number): CandleDatum[] {
@@ -30,5 +30,17 @@ describe("buildScaleAnchorData", () => {
 
     expect(finalAnchorTime).toBe(lastTime + 18 * intervalSeconds);
     expect(anchors).toHaveLength(20);
+  });
+});
+
+describe("replay price viewport", () => {
+  it("recenters when a breakout candle leaves the inner viewport", () => {
+    const input = candles(3_600);
+    input[input.length - 1] = { ...input[input.length - 1], high: 2_180, close: 2_170 };
+    expect(replayPriceRangeNeedsRecentering({ from: 1_950, to: 2_100 }, input)).toBe(true);
+  });
+
+  it("keeps a stable viewport while the latest candle remains comfortably visible", () => {
+    expect(replayPriceRangeNeedsRecentering({ from: 1_950, to: 2_100 }, candles(3_600))).toBe(false);
   });
 });

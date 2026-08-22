@@ -71,6 +71,30 @@ Riêng trang Chart dùng mobile shell tới breakpoint dưới `1024px`, bao g�
 - Active zone: kéo ngang từ `start_time` tới candle hiện tại.
 - Closed/invalidated zone: kéo ngang từ `start_time` tới `end_time`, không kéo vô hạn sang phải.
 
+## Intraday liquidity map
+
+Chart payload có layer `intraday_map`, được tính từ nến M15 đã đóng tới đúng
+`as_of` để Realtime, cửa sổ lịch sử và Replay không nhìn trước dữ liệu. Layer
+hiển thị PDH/PDL, high/low ngày hiện tại, high/low Asia/London/New York và swing
+M15 đã confirmed gần nhất. Session dùng mốc UTC thống nhất với worker: Asia
+00:00-07:00; London range 07:00-17:00; New York range 12:00-21:00. Badge
+context tách riêng London-NY overlap 12:00-17:00.
+
+Level có lifecycle `live`, `unswept`, `testing`, `reclaimed`, `broken`,
+`testing_flip`, `stale`; trạng
+thái chỉ đổi theo nến M15 đã đóng. `testing` dùng approach allowance bằng
+`max(0.6, 0.25 * ATR(14) M15)`. UI vẽ high màu rose, low màu emerald,
+reclaimed màu cyan. Broken level mặc định ẩn; toggle `Nearby broken levels`
+chỉ hiện level cách giá tối đa 3 M15 ATR bằng màu xám và nhãn `FLIP?`.
+Khi giá quay lại approach band, level chuyển `TESTING FLIP` màu vàng và luôn
+được ưu tiên hiện; broken level xa hơn 5 M15 ATR chuyển `STALE`. Các toggle
+được lưu vào local storage.
+
+`Intraday Map` trên chart chỉ tóm tắt level gần nhất phía trên/dưới, H1 Bias và
+guidance có điều kiện. Nội dung phải luôn nhắc rằng liquidity level là nơi quan
+sát, không phải tín hiệu tự động Buy/Sell. Mobile giới hạn sáu level ưu tiên;
+desktop giới hạn mười và loại label đè nhau theo tọa độ giá.
+
 ## Import weekly-plan zones
 
 Zones panel có icon import cạnh bộ đếm zone. Modal nhận nguyên JSON envelope do

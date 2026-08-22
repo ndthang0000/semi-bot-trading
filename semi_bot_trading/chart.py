@@ -8,6 +8,7 @@ from typing import Any
 
 from .context import score_macro_trend
 from .indicators import latest_rsi_snapshot
+from .intraday_levels import build_intraday_map
 from .strategy import average_body, build_setup_candidates, candle_body
 from .zones import CandleSlice, latest_atr
 
@@ -1126,5 +1127,14 @@ def build_chart_payload(
             "setup_candidates": setup_candidates,
             "m15_triggers": m15_triggers,
             "m15_signal": m15_signal,
+            "intraday_map": build_intraday_map(
+                conn,
+                symbol,
+                (
+                    str(closed_strategy_candles[-1]["close_time"])
+                    if is_latest_mode and closed_strategy_candles
+                    else str(candles[-1]["close_time"])
+                ),
+            ),
         },
     }

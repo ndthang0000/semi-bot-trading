@@ -287,6 +287,8 @@ function MobileLayersPanel() {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
+  const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
@@ -296,6 +298,8 @@ function MobileLayersPanel() {
   const setShowZones = useChartStore((state) => state.setShowZones);
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
+  const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
+  const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
   const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
   const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
   const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
@@ -339,6 +343,13 @@ function MobileLayersPanel() {
         ))}
       </div>
       <MobileToggleRow checked={showStructure} disabled={structureRequired} label="Structure + ZigZag" onChange={setShowStructure} />
+      <MobileToggleRow checked={showIntradayLevels} label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
+      <MobileToggleRow
+        checked={showBrokenIntradayLevels}
+        disabled={!showIntradayLevels}
+        label="Nearby broken levels (≤3 ATR)"
+        onChange={setShowBrokenIntradayLevels}
+      />
       <label className="flex min-h-12 items-center gap-3 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-200">
         <span className="flex-1">Trades</span>
         <select
@@ -725,6 +736,8 @@ function LayerMenu() {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
+  const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
@@ -733,6 +746,8 @@ function LayerMenu() {
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setAllZoneTypesVisible = useChartStore((state) => state.setAllZoneTypesVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
+  const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
+  const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
   const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
   const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
   const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
@@ -749,7 +764,7 @@ function LayerMenu() {
   }, [open]);
 
   const visibleZoneCount = Object.values(zoneTypeVisibility).filter(Boolean).length;
-  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
+  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
   const allZonesVisible = visibleZoneCount === LAYER_ITEMS.length;
 
   return (
@@ -820,6 +835,14 @@ function LayerMenu() {
               />
             ))}
             <MenuCheck checked={showStructure} colorClass="bg-blue-400" label="Structure + ZigZag" onChange={setShowStructure} />
+            <MenuCheck checked={showIntradayLevels} colorClass="bg-amber-300" label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
+            <MenuCheck
+              checked={showBrokenIntradayLevels}
+              colorClass="bg-slate-500"
+              disabled={!showIntradayLevels}
+              label="Nearby broken levels (≤3 ATR)"
+              onChange={setShowBrokenIntradayLevels}
+            />
             <label className="flex items-center gap-2 rounded px-1.5 py-1 text-slate-300">
               <span className="h-2.5 w-2.5 rounded-sm bg-fuchsia-400" />
               <span className="flex-1">Trades</span>

@@ -45,6 +45,8 @@ type ChartState = {
   showZones: boolean;
   zoneTypeVisibility: ZoneTypeVisibility;
   showStructure: boolean;
+  showIntradayLevels: boolean;
+  showBrokenIntradayLevels: boolean;
   tradeVisibilityMode: TradeVisibilityMode;
   importantZonesOnly: boolean;
   maxVisibleZones: number;
@@ -67,6 +69,8 @@ type ChartState = {
   setZoneTypeVisible: (zoneType: ZoneVisibilityKey, visible: boolean) => void;
   setAllZoneTypesVisible: (visible: boolean) => void;
   setShowStructure: (showStructure: boolean) => void;
+  setShowIntradayLevels: (showIntradayLevels: boolean) => void;
+  setShowBrokenIntradayLevels: (show: boolean) => void;
   setTradeVisibilityMode: (mode: TradeVisibilityMode) => void;
   setImportantZonesOnly: (importantZonesOnly: boolean) => void;
   setMaxVisibleZones: (maxVisibleZones: number) => void;
@@ -94,6 +98,8 @@ export const useChartStore = create<ChartState>()(
       showZones: true,
       zoneTypeVisibility: defaultZoneTypeVisibility,
       showStructure: true,
+      showIntradayLevels: true,
+      showBrokenIntradayLevels: false,
       tradeVisibilityMode: "visible",
       importantZonesOnly: true,
       maxVisibleZones: 8,
@@ -172,6 +178,8 @@ export const useChartStore = create<ChartState>()(
         set((state) => ({
           showStructure: requiresStructureForPlaybooks(state.selectedPlaybooks) ? true : showStructure,
         })),
+      setShowIntradayLevels: (showIntradayLevels) => set({ showIntradayLevels }),
+      setShowBrokenIntradayLevels: (showBrokenIntradayLevels) => set({ showBrokenIntradayLevels }),
       setTradeVisibilityMode: (tradeVisibilityMode) => set({ tradeVisibilityMode }),
       setImportantZonesOnly: (importantZonesOnly) => set({ importantZonesOnly }),
       setMaxVisibleZones: (maxVisibleZones) => set({ maxVisibleZones: Math.min(Math.max(maxVisibleZones, 1), 40) }),
@@ -228,6 +236,8 @@ export const useChartStore = create<ChartState>()(
         showZones: state.showZones,
         zoneTypeVisibility: state.zoneTypeVisibility,
         showStructure: state.showStructure,
+        showIntradayLevels: state.showIntradayLevels,
+        showBrokenIntradayLevels: state.showBrokenIntradayLevels,
         tradeVisibilityMode: state.tradeVisibilityMode,
         importantZonesOnly: state.importantZonesOnly,
         maxVisibleZones: state.maxVisibleZones,

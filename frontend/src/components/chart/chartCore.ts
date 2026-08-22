@@ -498,9 +498,21 @@ export function applyReplayPriceViewport(
   if (candles.length === 0) return null;
 
   chart.priceScale("right").setAutoScale(false);
-  const nextRange = reset ? buildReplayPriceRange(candles) : chart.priceScale("right").getVisibleRange() ?? buildReplayPriceRange(candles);
+  const currentRange = chart.priceScale("right").getVisibleRange();
+  const nextRange = reset || !currentRange || replayPriceRangeNeedsRecentering(currentRange, candles)
+    ? buildReplayPriceRange(candles)
+    : currentRange;
   chart.priceScale("right").setVisibleRange(nextRange);
   return nextRange;
+}
+
+export function replayPriceRangeNeedsRecentering(range: PriceRange, candles: CandleDatum[]): boolean {
+  const last = candles.at(-1);
+  if (!last) return false;
+  const span = Math.max(range.to - range.from, 0.01);
+  const innerFrom = range.from + span * 0.08;
+  const innerTo = range.to - span * 0.08;
+  return last.low < innerFrom || last.high > innerTo || last.close < innerFrom || last.close > innerTo;
 }
 
 export function applyInitialPriceViewport(chart: IChartApi, candles: CandleDatum[]): PriceRange | null {

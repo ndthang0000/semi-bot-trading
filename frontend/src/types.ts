@@ -340,6 +340,37 @@ export type M15SignalSnapshot = {
   reason: string | null;
 };
 
+export type IntradayLevelStatus = "live" | "unswept" | "testing" | "swept" | "reclaimed" | "broken" | "testing_flip" | "stale";
+
+export type IntradayLevel = {
+  id: string;
+  kind: "previous_day" | "current_day" | "asia" | "london" | "new_york" | "m15_swing" | string;
+  label: string;
+  side: "high" | "low";
+  price: number;
+  period_start: string;
+  period_end: string;
+  status: IntradayLevelStatus;
+  priority: number;
+  live: boolean;
+  distance: number;
+  distance_atr: number | null;
+  approach_low: number;
+  approach_high: number;
+};
+
+export type IntradayMap = {
+  as_of: string;
+  timezone: "UTC" | string;
+  current_price: number | null;
+  current_session: string;
+  atr_m15: number | null;
+  approach_allowance: number | null;
+  nearest_above_id: string | null;
+  nearest_below_id: string | null;
+  levels: IntradayLevel[];
+};
+
 export type ChartPayload = {
   version: number;
   symbol: string;
@@ -364,6 +395,7 @@ export type ChartPayload = {
     setup_candidates: SetupCandidate[];
     m15_triggers: M15TriggerOverlay[];
     m15_signal: M15SignalSnapshot | null;
+    intraday_map: IntradayMap;
   };
   replay?: {
     enabled: boolean;
