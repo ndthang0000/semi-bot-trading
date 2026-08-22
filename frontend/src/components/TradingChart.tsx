@@ -61,6 +61,8 @@ import {
 import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
 import { ChartDrawingControls, type PendingChartNote } from "./chart/ChartDrawingControls";
+import { CandleInfoCard } from "./chart/CandleInfoCard";
+import { isCandleShapeHit } from "./chart/candleInfo";
 import { ManualAiLevelEditDialog, type ManualAiEditableLevels } from "./chart/ManualAiLevelEditDialog";
 import { IntradayMapPanel } from "./chart/IntradayMapPanel";
 import { levelStatusLabel, selectIntradayLevels } from "./chart/intradayMap";
@@ -81,6 +83,7 @@ import {
 } from "./chart/tradeOverlay";
 import type {
   AddEntityKind,
+  ChartCandle,
   ChartDrawing,
   ChartDrawingAnchor,
   ChartDrawingTool,
@@ -179,6 +182,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [pendingNote, setPendingNote] = useState<PendingChartNote | null>(null);
   const [noteContent, setNoteContent] = useState("");
   const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean; chartHeight: number } | null>(null);
+  const [selectedCandle, setSelectedCandle] = useState<ChartCandle | null>(null);
+  const [selectedCandleMarker, setSelectedCandleMarker] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [pointerY, setPointerY] = useState<number | null>(null);
   const scheduledRecalcRef = useRef<number | null>(null);
   const interactionRecalcRef = useRef<number | null>(null);
@@ -199,6 +204,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showStructureRef = useRef(showStructure);
   const showIntradayLevelsRef = useRef(showIntradayLevels);
   const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
+  const drawingToolRef = useRef(drawingTool);
+  const selectedCandleRef = useRef(selectedCandle);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
   const maxVisibleZonesRef = useRef(maxVisibleZones);
@@ -248,6 +255,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   showStructureRef.current = showStructure;
   showIntradayLevelsRef.current = showIntradayLevels;
   showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
+  drawingToolRef.current = drawingTool;
+  selectedCandleRef.current = selectedCandle;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
   maxVisibleZonesRef.current = maxVisibleZones;
@@ -264,6 +273,30 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     const stillVisible = payload.layers.setup_candidates.some((candidate) => candidate.id === selectedSetupId);
     if (!stillVisible) selectSetup(null);
   }, [payload.layers.setup_candidates, selectSetup, selectedSetupId]);
+
+  useEffect(() => {
+    if (!selectedCandle) return;
+    const refreshed = payload.layers.candles.find((candle) => candle.time === selectedCandle.time);
+    if (!refreshed) {
+      setSelectedCandle(null);
+      return;
+    }
+    if (
+      refreshed.open !== selectedCandle.open
+      || refreshed.high !== selectedCandle.high
+      || refreshed.low !== selectedCandle.low
+      || refreshed.close !== selectedCandle.close
+      || refreshed.volume !== selectedCandle.volume
+    ) {
+      setSelectedCandle(refreshed);
+    }
+  }, [payload.layers.candles, selectedCandle]);
+
+  useEffect(() => {
+    if (selected || selectedSetupId || manualAiEditSetupId || addEntityKind) {
+      setSelectedCandle(null);
+    }
+  }, [addEntityKind, manualAiEditSetupId, selected, selectedSetupId]);
 
   const recalcOverlays = useCallback(() => {
     const chart = chartRef.current;
@@ -431,6 +464,32 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       if (points.length !== effectiveAnchors.length) return [];
       return [{ drawing, points }];
     });
+    const selectedCandleValue = selectedCandleRef.current;
+    let selectedMarker: { x: number; y: number; width: number; height: number } | null = null;
+    if (selectedCandleValue) {
+      const selectedTime = toUnixTime(selectedCandleValue.time);
+      const x = timeScale.timeToCoordinate(selectedTime);
+      const highY = series.priceToCoordinate(selectedCandleValue.high);
+      const lowY = series.priceToCoordinate(selectedCandleValue.low);
+      if (x !== null && highY !== null && lowY !== null) {
+        const selectedIndex = candleDataRef.current.findIndex((candle) => Number(candle.time) === Number(selectedTime));
+        const neighbor = selectedIndex > 0
+          ? candleDataRef.current[selectedIndex - 1]
+          : candleDataRef.current[selectedIndex + 1];
+        const neighborX = neighbor ? timeScale.timeToCoordinate(neighbor.time) : null;
+        const barWidth = clampNumber(neighborX === null ? 8 : Math.abs(x - neighborX) * 0.72, 4, 16);
+        const top = Math.min(highY, lowY) - 3;
+        const bottom = Math.max(highY, lowY) + 3;
+        if (x >= -barWidth && x <= plotWidth + barWidth && bottom >= 0 && top <= height) {
+          selectedMarker = {
+            x: x - barWidth / 2,
+            y: Math.max(0, top),
+            width: barWidth,
+            height: Math.max(6, Math.min(height, bottom) - Math.max(0, top)),
+          };
+        }
+      }
+    }
 
     setZoneBoxes(zones);
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
@@ -442,6 +501,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setNewsTimelineMarkers(newsMarkers);
     setRenderedDrawings(chartDrawings);
     setDrawingPlotWidth(plotWidth);
+    setSelectedCandleMarker(selectedMarker);
 
     const priceY = series.priceToCoordinate(lastCandle.close);
     if (typeof priceY === "number" && priceY >= 0 && priceY <= height) {
@@ -461,6 +521,10 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       recalcOverlays();
     });
   }, [recalcOverlays]);
+
+  useEffect(() => {
+    scheduleOverlayRecalc();
+  }, [scheduleOverlayRecalc, selectedCandle]);
 
   const startOverlayInteractionSync = useCallback(() => {
     if (interactionRecalcRef.current !== null) return;
@@ -702,6 +766,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const changeDrawingTool = useCallback((tool: ChartDrawingTool) => {
     setAddEntityKind(null);
     setDrawingTool(tool);
+    setSelectedCandle(null);
     setSelectedDrawingId(null);
     setDrawingMessage(null);
     setMeasurePreview(null);
@@ -1372,6 +1437,62 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
     const resizeObserver = new ResizeObserver(scheduleOverlayRecalc);
     resizeObserver.observe(container);
+    const selectCandleAtClick: Parameters<IChartApi["subscribeClick"]>[0] = (param) => {
+      if (drawingToolRef.current !== "cursor" || addEntityKindRef.current) return;
+      const clickedSeriesData = param.seriesData.get(candleSeries);
+      const clickedTime = chartTimeToUnix(param.time);
+      if (!clickedSeriesData || clickedTime === null || !param.point) {
+        setSelectedCandle(null);
+        return;
+      }
+      const candle = payloadRef.current.layers.candles.find(
+        (item) => Number(toUnixTime(item.time)) === Number(clickedTime),
+      );
+      if (!candle) {
+        setSelectedCandle(null);
+        return;
+      }
+      const candleX = chart.timeScale().timeToCoordinate(toUnixTime(candle.time));
+      const openY = candleSeries.priceToCoordinate(candle.open);
+      const highY = candleSeries.priceToCoordinate(candle.high);
+      const lowY = candleSeries.priceToCoordinate(candle.low);
+      const closeY = candleSeries.priceToCoordinate(candle.close);
+      const candleIndex = candleDataRef.current.findIndex(
+        (item) => Number(item.time) === Number(clickedTime),
+      );
+      const neighbor = candleIndex > 0
+        ? candleDataRef.current[candleIndex - 1]
+        : candleDataRef.current[candleIndex + 1];
+      const neighborX = neighbor ? chart.timeScale().timeToCoordinate(neighbor.time) : null;
+      const bodyWidth = clampNumber(
+        candleX === null || neighborX === null ? 8 : Math.abs(candleX - neighborX) * 0.72,
+        4,
+        16,
+      );
+      if (
+        candleX === null
+        || openY === null
+        || highY === null
+        || lowY === null
+        || closeY === null
+        || !isCandleShapeHit({
+          pointerX: param.point.x,
+          pointerY: param.point.y,
+          candleX,
+          openY,
+          highY,
+          lowY,
+          closeY,
+          bodyWidth,
+        })
+      ) {
+        setSelectedCandle(null);
+        return;
+      }
+      setSelectedDrawingId(null);
+      setSelectedCandle((current) => current?.time === candle.time ? null : candle);
+    };
+    chart.subscribeClick(selectCandleAtClick);
     const syncViewportAndOverlay = () => {
       lastViewportRef.current = readCurrentViewport(chart);
       scheduleOverlayRecalc();
@@ -1425,6 +1546,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
     return () => {
       resizeObserver.disconnect();
+      chart.unsubscribeClick(selectCandleAtClick);
       chart.timeScale().unsubscribeVisibleTimeRangeChange(syncViewportAndOverlay);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(syncViewportAndOverlay);
       container.removeEventListener("pointerdown", startChartInteraction);
@@ -1612,6 +1734,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   }, [newsData, scheduleOverlayRecalc]);
 
   const compactViewport = isMobileChartWidth(containerRef.current?.clientWidth ?? window.innerWidth);
+  const selectedCandleAtrTimeframe = payload.layers.atr[payload.timeframe]?.value !== undefined ? payload.timeframe : "M15";
+  const selectedCandleAtr = payload.layers.atr[selectedCandleAtrTimeframe]?.value ?? null;
   const displayedSetupBoxes = manualAiLevelEdit
     ? setupBoxes.map((box) => box.candidate.id === manualAiLevelEdit.candidate.id ? manualAiLevelEdit.previewBox : box)
     : setupBoxes;
@@ -1631,6 +1755,17 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         className="absolute inset-0"
         onClick={clearSelection}
       />
+      {selectedCandleMarker ? (
+        <div
+          className="pointer-events-none absolute z-[16] rounded-sm border border-cyan-200/90 bg-cyan-300/10 shadow-[0_0_8px_rgba(103,232,249,0.45)]"
+          style={{
+            left: selectedCandleMarker.x,
+            top: selectedCandleMarker.y,
+            width: selectedCandleMarker.width,
+            height: selectedCandleMarker.height,
+          }}
+        />
+      ) : null}
       <ChartDrawingControls
         drawings={renderedDrawings}
         measure={measurePreview}
@@ -1646,6 +1781,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         onDelete={(drawing) => void removeDrawing(drawing)}
         onMoveStart={beginMoveDrawing}
         onSelect={(drawing) => {
+          setSelectedCandle(null);
           setSelectedDrawingId(drawing.id);
           setSelected(null);
         }}
@@ -2099,6 +2235,16 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           );
         })}
       </div>
+      {selectedCandle && drawingTool === "cursor" && !addEntityKind ? (
+        <CandleInfoCard
+          atr={selectedCandleAtr}
+          atrTimeframe={selectedCandleAtrTimeframe}
+          candle={selectedCandle}
+          timeframe={payload.timeframe}
+          timezone={payload.layers.intraday_map.timezone || "UTC"}
+          onClose={() => setSelectedCandle(null)}
+        />
+      ) : null}
       {manualAiLevelEdit && !manualAiLevelEdit.dragging ? (
         <ManualAiLevelEditDialog
           side={manualAiLevelEdit.candidate.direction === "long" ? "buy" : "sell"}

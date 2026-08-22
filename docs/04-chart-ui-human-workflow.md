@@ -95,6 +95,21 @@ guidance có điều kiện. Nội dung phải luôn nhắc rằng liquidity lev
 sát, không phải tín hiệu tự động Buy/Sell. Mobile giới hạn sáu level ưu tiên;
 desktop giới hạn mười và loại label đè nhau theo tọa độ giá.
 
+## Inspect candle
+
+Ở tool `Cursor`, click/tap trực tiếp vào body hoặc wick của một candle để mở thẻ
+thông tin OHLC, range, body, upper/lower wick, volume và tỷ lệ range so với ATR
+khả dụng của timeframe. Wick có hit tolerance nhỏ để không quá khó chọn trên màn
+hình cảm ứng, nhưng click vào khoảng trống trong cùng cột thời gian không chọn
+candle. Candle được chọn có viền cyan mảnh; realtime refresh cập nhật lại thẻ nếu
+candle đó chưa đóng.
+
+Selection này chỉ tồn tại trong chart UI, không được lưu xuống database và không
+ảnh hưởng strategy, setup hay execution. Click lại candle, click vùng trống, chọn
+zone/trade/drawing khác, đổi drawing tool hoặc nhấn `Esc` để đóng thẻ. Khi một
+drawing tool hoặc chế độ tạo zone đang active, candle selection bị vô hiệu hóa để
+không tranh pointer event.
+
 ## Import weekly-plan zones
 
 Zones panel có icon import cạnh bộ đếm zone. Modal nhận nguyên JSON envelope do
