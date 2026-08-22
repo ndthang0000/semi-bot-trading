@@ -1341,7 +1341,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       color: "#1f6fff",
       crosshairMarkerVisible: false,
       lastValueVisible: false,
-      lineWidth: 2,
+      lineWidth: 1,
       priceLineVisible: false,
     });
 
