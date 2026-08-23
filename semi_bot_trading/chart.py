@@ -120,6 +120,12 @@ def load_manual_ai_setup_candidates(
                     "order_type": "limit",
                     "entry_source": entry_source,
                     "entry_options": raw_candidate.get("entry_options") or [],
+                    "original_status": raw_candidate.get("original_status"),
+                    "original_blocked_reasons": raw_candidate.get("original_blocked_reasons") or [],
+                    "soft_blocked_reasons": raw_candidate.get("soft_blocked_reasons") or [],
+                    "hard_blocked_reasons": raw_candidate.get("hard_blocked_reasons") or [],
+                    "human_override": bool(raw_candidate.get("human_override")),
+                    "override_reason": raw_candidate.get("override_reason") or "",
                     "expiry_hours": (
                         float(raw_candidate["expires_in_minutes"]) / 60
                         if plan_playbook == "h1_impulse_retest_v1"

@@ -2,6 +2,7 @@ import { AlertTriangle, Loader2, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { approveManualAiPlan, fetchManualAiWorkers, importManualAiPlans, type ManualAiWorker } from "../../api/manualAi";
 import type { SetupCandidate } from "../../types";
+import { reviewH1Execution } from "./h1ExecutionReview";
 
 type Props = {
   candidate: SetupCandidate;
@@ -16,12 +17,16 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
   const [acceptRisk, setAcceptRisk] = useState(false);
   const [dynamicLot, setDynamicLot] = useState(false);
   const [competingExposure, setCompetingExposure] = useState(false);
+  const [overrideAccepted, setOverrideAccepted] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [draftPlanId, setDraftPlanId] = useState<string | null>(null);
   const expiryHours = Number(candidate.metadata.expiry_hours ?? 6);
   const signalClose = String(candidate.metadata.created_at ?? new Date().toISOString());
   const entrySource = String(candidate.metadata.entry_source ?? "strategy_calculated");
+  const executionReview = useMemo(() => reviewH1Execution(candidate), [candidate]);
+  const requiresOverride = executionReview.softBlockedReasons.length > 0;
   const expired = useMemo(() => {
     const value = candidate.metadata.limit_expires_at;
     return typeof value === "string" && Date.parse(value) <= Date.now();
@@ -59,6 +64,10 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             signal_candle_time: candidate.metadata.signal_candle_time,
             atr: candidate.metadata.atr,
             entry_options: candidate.metadata.entry_options,
+            original_status: candidate.metadata.original_status,
+            original_blocked_reasons: candidate.metadata.original_blocked_reasons,
+            human_override: requiresOverride,
+            override_reason: requiresOverride ? overrideReason.trim() : "",
           },
           candidates: [{
             client_id: `h1-impulse-${Date.now()}`,
@@ -79,6 +88,12 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             ],
             entry_source: entrySource,
             entry_options: candidate.metadata.entry_options,
+            original_status: executionReview.originalBlocked ? "blocked" : "eligible",
+            original_blocked_reasons: Array.isArray(candidate.metadata.original_blocked_reasons) ? candidate.metadata.original_blocked_reasons : [],
+            soft_blocked_reasons: executionReview.softBlockedReasons,
+            hard_blocked_reasons: executionReview.hardBlockedReasons,
+            human_override: requiresOverride,
+            override_reason: requiresOverride ? overrideReason.trim() : "",
             entry_reason: `H1 impulse entry from ${entrySource}`,
             stop_reason: "H1 wick invalidation plus ATR buffer; human-confirmed levels",
             target_reason: `${candidate.risk_reward?.toFixed(2) ?? "--"}R target selected by trader`,
@@ -100,7 +115,9 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
           accepts_one_percent_risk: acceptRisk,
           confirms_lot_not_fixed: dynamicLot,
           competing_exposure: competingExposure,
-          comment: `Approved H1 Impulse Retest; entry source=${entrySource}`,
+          comment: requiresOverride
+            ? `H1 blocked setup overridden: ${overrideReason.trim()}`
+            : `Approved H1 Impulse Retest; entry source=${entrySource}`,
         },
       });
       onSubmitted(approved.plans[0]?.id ?? planId);
@@ -111,7 +128,19 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
     }
   };
 
-  const ready = !expired && calm && acceptRisk && dynamicLot && !competingExposure && selectedWorkers.length > 0;
+  const overrideReady = !requiresOverride || (
+    executionReview.softBlockedReasons.length > 0
+    && overrideAccepted
+    && overrideReason.trim().length >= 20
+  );
+  const ready = !expired
+    && executionReview.hardBlockedReasons.length === 0
+    && overrideReady
+    && calm
+    && acceptRisk
+    && dynamicLot
+    && !competingExposure
+    && selectedWorkers.length > 0;
   return (
     <div className="fixed inset-0 z-[110] grid place-items-center bg-black/75 p-3 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}>
       <section className="max-h-[94vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-cyan-400/30 bg-ink-950 p-5 shadow-2xl">
@@ -124,7 +153,37 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
           <Level label="ENTRY" value={candidate.entry} /><Level label="SL" value={candidate.stop_loss} /><Level label="TP" value={candidate.take_profit[0]} /><Level label="EXPIRY" value={`${expiryHours}h`} />
         </div>
         <div className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2 text-xs text-cyan-100">Entry source: <strong>{entrySource.replace(/_/g, " ")}</strong></div>
+        {executionReview.softBlockedReasons.length > 0 ? (
+          <ReviewReasons
+            icon="⚠"
+            reasons={executionReview.softBlockedReasons}
+            title="Soft blocks · trader may override"
+            tone="amber"
+          />
+        ) : null}
+        {executionReview.hardBlockedReasons.length > 0 ? (
+          <ReviewReasons
+            icon="⛔"
+            reasons={executionReview.hardBlockedReasons}
+            title="Hard blocks · must be resolved"
+            tone="rose"
+          />
+        ) : null}
         {expired ? <div className="mt-3 rounded-lg border border-rose-400/35 bg-rose-400/10 p-3 text-xs text-rose-200"><AlertTriangle className="mr-2 inline" size={14} />Signal đã hết expiry; không thể gửi MT5.</div> : null}
+        {requiresOverride ? (
+          <div className="mt-4 grid gap-2 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] p-3">
+            <div className="text-xs font-bold uppercase tracking-wide text-amber-200">Human override audit</div>
+            <textarea
+              className="min-h-20 rounded-md border border-ink-600 bg-ink-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-300"
+              maxLength={2000}
+              placeholder="Giải thích vì sao signal vẫn hợp lệ dù bị soft block (tối thiểu 20 ký tự)…"
+              value={overrideReason}
+              onChange={(event) => setOverrideReason(event.target.value)}
+            />
+            <div className="text-right text-[10px] text-slate-500">{overrideReason.trim().length}/20 minimum</div>
+            <Check checked={overrideAccepted} label="Tôi đã đọc từng soft block và chủ động chấp nhận override." onChange={setOverrideAccepted} />
+          </div>
+        ) : null}
         <div className="mt-4 grid gap-2 rounded-lg border border-ink-700 p-3">
           <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Worker accounts</div>
           {workers.map((worker) => <label key={worker.label} className="flex items-center justify-between text-sm text-slate-200"><span className="flex items-center gap-2"><input checked={selectedWorkers.includes(worker.label)} className="accent-cyan-400" type="checkbox" onChange={(event) => setSelectedWorkers((current) => event.target.checked ? [...current, worker.label] : current.filter((item) => item !== worker.label))} />{worker.label}</span><span className="text-xs text-slate-500">{worker.execution.worker_status}</span></label>)}
@@ -136,7 +195,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
           <Check checked={competingExposure} label="Đang có exposure XAUUSD cạnh tranh (phải bỏ chọn để gửi)." onChange={setCompetingExposure} danger />
         </div>
         {error ? <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-400/10 p-3 text-xs text-rose-200">{error}</div> : null}
-        <div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border border-ink-600 px-4 py-2 text-sm text-slate-300" disabled={busy} type="button" onClick={onClose}>Cancel</button><button className="inline-flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-ink-950 disabled:opacity-35" disabled={busy || !ready} type="button" onClick={() => { void submit(); }}>{busy ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}Approve & arm</button></div>
+        <div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border border-ink-600 px-4 py-2 text-sm text-slate-300" disabled={busy} type="button" onClick={onClose}>Cancel</button><button className="inline-flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-ink-950 disabled:opacity-35" disabled={busy || !ready} type="button" onClick={() => { void submit(); }}>{busy ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}{requiresOverride ? "Override & arm" : "Approve & arm"}</button></div>
       </section>
     </div>
   );
@@ -144,3 +203,10 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
 
 function Level({ label, value }: { label: string; value: number | string | null | undefined }) { return <div className="rounded border border-ink-700 bg-ink-900 p-2"><div className="text-[9px] text-slate-500">{label}</div><div className="mt-1 font-bold text-slate-100">{typeof value === "number" ? value.toFixed(2) : value ?? "--"}</div></div>; }
 function Check({ checked, label, onChange, danger = false }: { checked: boolean; label: string; onChange: (value: boolean) => void; danger?: boolean }) { return <label className={danger ? "text-rose-200" : "text-slate-200"}><input checked={checked} className="mr-2 accent-cyan-400" type="checkbox" onChange={(event) => onChange(event.target.checked)} />{label}</label>; }
+
+function ReviewReasons({ icon, reasons, title, tone }: { icon: string; reasons: string[]; title: string; tone: "amber" | "rose" }) {
+  const className = tone === "amber"
+    ? "border-amber-400/30 bg-amber-400/[0.06] text-amber-100"
+    : "border-rose-400/35 bg-rose-400/[0.08] text-rose-100";
+  return <div className={`mt-3 rounded-lg border p-3 text-xs ${className}`}><div className="font-bold">{icon} {title}</div><ul className="mt-2 list-disc space-y-1 pl-4">{reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>;
+}

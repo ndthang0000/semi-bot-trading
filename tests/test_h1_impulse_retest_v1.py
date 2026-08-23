@@ -146,6 +146,8 @@ class H1ImpulseRetestV1Test(unittest.TestCase):
         self.assertGreater(preview["entry"], preview["stop_loss"])
         self.assertTrue(any("previous H1 high" in reason for reason in preview["blocked_reason"]))
         self.assertTrue(any("BUY LIMIT" in reason for reason in preview["blocked_reason"]))
+        self.assertTrue(any("previous H1 high" in reason for reason in preview["soft_blocked_reason"]))
+        self.assertTrue(any("BUY LIMIT" in reason for reason in preview["hard_blocked_reason"]))
 
     def test_outcome_waits_for_fill_then_records_win(self) -> None:
         preview = {

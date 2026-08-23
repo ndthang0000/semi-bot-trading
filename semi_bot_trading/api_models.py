@@ -84,6 +84,12 @@ class ManualAiCandidate(BaseModel):
     confidence: float = Field(ge=0, le=1)
     entry_source: str = Field(default="human_custom", min_length=1, max_length=100)
     entry_options: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    original_status: Literal["eligible", "blocked"] | None = None
+    original_blocked_reasons: list[str] = Field(default_factory=list, max_length=20)
+    soft_blocked_reasons: list[str] = Field(default_factory=list, max_length=20)
+    hard_blocked_reasons: list[str] = Field(default_factory=list, max_length=20)
+    human_override: bool = False
+    override_reason: str = Field(default="", max_length=2_000)
 
 
 class ManualAiPlanImportRequest(BaseModel):

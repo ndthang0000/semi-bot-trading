@@ -496,6 +496,16 @@ class TestBuildExecutionPricingPlan(unittest.TestCase):
         self.assertEqual("2026-01-01T03:00:00+00:00", plan.expires_at)
         self.assertEqual("impulse_retest_limit", plan.drift_action)
 
+    def test_strategy_limit_rejects_entry_on_wrong_side_of_broker_price(self):
+        candidate = _make_candidate(
+            metadata={"order_type": "limit", "entry_model": "impulse_retest_limit"},
+            entry=3000.0,
+        )
+        client = _fake_client(current_price=2999.0)
+
+        with self.assertRaisesRegex(ValueError, "BUY LIMIT entry"):
+            build_execution_pricing_plan(client, "XAUUSDm", candidate, 2.0)
+
     # ── max_entry_drift_price = 0 disables all drift logic ───────────────────
     def test_drift_disabled_when_max_zero(self):
         """max_entry_drift_price=0 → always market at signal, no reprice."""

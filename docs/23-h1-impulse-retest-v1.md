@@ -145,6 +145,30 @@ dời SL của phần còn lại về Entry với BE buffer `0`. TP cuối của
 nguyên. Snapshot đã khóa không bị account-level setting thay đổi giữa vòng đời
 trade.
 
+### Blocked setup review
+
+Calculator phân loại lý do block thành hai nhóm và vẫn giữ `blocked_reason` tổng
+để tương thích với chart/Telegram:
+
+- `soft_blocked_reason`: rule đánh giá chất lượng signal như Body/ATR,
+  Range/ATR, Body/range, close location, close-side wick và breakout nến H1
+  trước. Trader có thể gửi dưới dạng discretionary override sau khi nhập lý do
+  tối thiểu 20 ký tự và xác nhận đã đọc từng soft block.
+- `hard_blocked_reason`: doji, geometry Entry/SL/TP sai, stop size ngoài
+  `0.5–1.2 ATR`, limit nằm sai phía reference price hoặc signal hết hạn. Những
+  lỗi này khóa execution cho tới khi levels được sửa hoặc setup bị loại bỏ.
+
+`Review blocked setup` mở màn hình audit để trader thấy cả hai nhóm. Mỗi lần
+Entry/SL/TP thay đổi, UI tính lại geometry, RR, stop/ATR, limit side và expiry;
+Backend kiểm tra lại geometry, RR, H1 ATR stop bounds, override acknowledgement
+và override reason trước khi tạo draft. Worker còn kiểm tra BUY LIMIT/SELL LIMIT
+so với giá broker ngay trước khi gửi MT5.
+
+Plan lưu `original_status`, toàn bộ blocked reasons, soft/hard reasons,
+`human_override` và `override_reason` trong raw payload/context snapshot. Setup
+đã persist hiển thị badge `HUMAN OVERRIDE`, giúp journal phân biệt signal eligible
+tự nhiên với quyết định discretionary.
+
 ## Historical outcome preview
 
 Sau khi dựng một setup eligible, calculator duyệt các nến H1 đã đóng sau signal

@@ -2398,6 +2398,13 @@ def build_execution_pricing_plan(
     drift_action = "market_favorable_or_flat"
 
     if requested_order_type == "limit":
+        valid_limit_side = signal_entry < current_price if direction == "long" else signal_entry > current_price
+        if not valid_limit_side:
+            order_name = "BUY LIMIT" if direction == "long" else "SELL LIMIT"
+            relation = "below" if direction == "long" else "above"
+            raise ValueError(
+                f"{order_name} entry {signal_entry:.2f} must be {relation} current broker price {current_price:.2f}"
+            )
         order_type = "limit"
         drift_action = str(metadata.get("entry_model") or "limit_from_strategy")
     # Positive drift means price moved against the planned entry. Small adverse

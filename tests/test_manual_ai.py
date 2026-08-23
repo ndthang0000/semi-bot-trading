@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -88,6 +89,8 @@ class ManualAiApiTest(unittest.TestCase):
             client = authenticated_test_client(root, config_path)
             payload = copy.deepcopy(envelope(client_id="h1-impulse-test", expires_in_minutes=720))
             payload["playbook"] = "h1_impulse_retest_v1"
+            payload["market_context"]["atr"] = 20
+            payload["candidates"][0]["original_status"] = "eligible"
             payload["candidates"][0]["entry_source"] = "fib_0.5"
             payload["candidates"][0]["entry_options"] = [
                 {"source": "fib_0.5", "label": "Fib 0.5", "price": 2000.0}
@@ -131,6 +134,76 @@ class ManualAiApiTest(unittest.TestCase):
                 json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2042, "entry_source": "human_custom"},
             )
             self.assertEqual(422, rejected_rr.status_code)
+
+    def test_h1_blocked_plan_requires_safe_human_override_audit(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = copy.deepcopy(envelope(client_id="h1-soft-override"))
+            payload["playbook"] = "h1_impulse_retest_v1"
+            payload["market_context"]["atr"] = 20
+            candidate = payload["candidates"][0]
+            candidate.update(
+                {
+                    "original_status": "blocked",
+                    "original_blocked_reasons": ["Body/range is below minimum."],
+                    "soft_blocked_reasons": ["Body/range is below minimum."],
+                    "hard_blocked_reasons": [],
+                }
+            )
+
+            missing_override = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(422, missing_override.status_code, missing_override.text)
+
+            candidate["human_override"] = True
+            candidate["override_reason"] = "too short"
+            short_reason = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(422, short_reason.status_code, short_reason.text)
+
+            candidate["override_reason"] = "Structure and liquidity context support this retest despite the candle ratio."
+            accepted = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(200, accepted.status_code, accepted.text)
+            plan_id = accepted.json()["plans"][0]["id"]
+            with connect(db_path) as conn:
+                row = conn.execute("SELECT raw_payload_json FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+            persisted_candidate = json.loads(row["raw_payload_json"])["candidates"][0]
+            self.assertTrue(persisted_candidate["human_override"])
+            self.assertEqual(candidate["override_reason"], persisted_candidate["override_reason"])
+
+    def test_h1_plan_rejects_hard_blocks_and_stop_outside_atr_limits(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = copy.deepcopy(envelope(client_id="h1-hard-block"))
+            payload["playbook"] = "h1_impulse_retest_v1"
+            payload["market_context"]["atr"] = 20
+            candidate = payload["candidates"][0]
+            candidate["original_status"] = "blocked"
+            candidate["soft_blocked_reasons"] = ["Close location is below minimum."]
+            candidate["hard_blocked_reasons"] = ["Signal has expired."]
+            candidate["human_override"] = True
+            candidate["override_reason"] = "I accept the soft candle-quality exception after reviewing context."
+
+            hard_blocked = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(422, hard_blocked.status_code, hard_blocked.text)
+
+            candidate["hard_blocked_reasons"] = []
+            payload["market_context"]["atr"] = 100
+            bad_stop = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(422, bad_stop.status_code, bad_stop.text)
+
+            payload["market_context"]["atr"] = 20
+            candidate["soft_blocked_reasons"] = []
+            candidate["human_override"] = False
+            candidate["override_reason"] = ""
+            resolved = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(200, resolved.status_code, resolved.text)
 
     def test_import_recalculates_rr_and_approval_requires_discipline(self) -> None:
         with TemporaryDirectory() as temp_dir:

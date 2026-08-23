@@ -36,6 +36,8 @@ describe("h1 impulse preview adapter", () => {
       limit_placement_valid: true,
       broke_previous_edge: true,
       blocked_reason: [],
+      soft_blocked_reason: [],
+      hard_blocked_reason: [],
       outcome: { status: "win", filled_at: "fill", exited_at: "exit", bars_to_fill: 2, bars_held: 4, result_r: 2.5 },
       signal: { open: 100, high: 112, low: 100, close: 111, range: 12, body: 11, upper_wick: 1, lower_wick: 0, body_atr_ratio: 1.1, range_atr_ratio: 1.2, body_range_ratio: 0.92, close_location: 0.92, close_side_wick_ratio: 0.08, opposite_wick_ratio: 0 },
       previous: { open: 100, high: 105, low: 98, close: 102, entry_stop_distance: 6, entry_stop_distance_atr: 0.6 },
@@ -48,5 +50,6 @@ describe("h1 impulse preview adapter", () => {
     expect(candidate.entry).toBe(105);
     expect(candidate.expires_at).toBe(preview.expires_at);
     expect(candidate.metadata.outcome).toEqual(preview.outcome);
+    expect(candidate.metadata.original_status).toBe("eligible");
   });
 });

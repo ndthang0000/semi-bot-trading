@@ -129,13 +129,14 @@ def build_h1_impulse_preview(
     body = abs(close - open_price)
     upper_wick = high - max(open_price, close)
     lower_wick = min(open_price, close) - low
-    blocked: list[str] = []
+    soft_blocked: list[str] = []
+    hard_blocked: list[str] = []
 
     if candle_range <= 0:
         raise ValueError("Signal candle range must be greater than zero")
     if close == open_price:
         direction = "neutral"
-        blocked.append("Signal candle is a doji; direction cannot be determined.")
+        hard_blocked.append("Signal candle is a doji; direction cannot be determined.")
     else:
         direction = "long" if close > open_price else "short"
 
@@ -151,12 +152,12 @@ def build_h1_impulse_preview(
     signal_close_time = str(signal.get("close_time"))
     expires_at = (datetime.fromisoformat(signal_close_time) + timedelta(hours=expiry_hours)).isoformat()
 
-    _require_min(blocked, body_atr_ratio, config.min_body_atr, "Body/ATR")
-    _require_min(blocked, range_atr_ratio, config.min_range_atr, "Range/ATR")
-    _require_max(blocked, range_atr_ratio, config.max_range_atr, "Range/ATR")
-    _require_min(blocked, body_range_ratio, config.min_body_range_ratio, "Body/range")
-    _require_min(blocked, close_location, config.min_close_location, "Directional close location")
-    _require_max(blocked, close_side_wick_ratio, config.max_close_side_wick_ratio, "Close-side wick/range")
+    _require_min(soft_blocked, body_atr_ratio, config.min_body_atr, "Body/ATR")
+    _require_min(soft_blocked, range_atr_ratio, config.min_range_atr, "Range/ATR")
+    _require_max(soft_blocked, range_atr_ratio, config.max_range_atr, "Range/ATR")
+    _require_min(soft_blocked, body_range_ratio, config.min_body_range_ratio, "Body/range")
+    _require_min(soft_blocked, close_location, config.min_close_location, "Directional close location")
+    _require_max(soft_blocked, close_side_wick_ratio, config.max_close_side_wick_ratio, "Close-side wick/range")
 
     stop_buffer = atr * config.stop_buffer_atr
     min_stop_distance = atr * config.min_stop_atr
@@ -169,7 +170,7 @@ def build_h1_impulse_preview(
         previous_stop_distance = previous_entry - stop_loss
         broke_previous_edge = close > previous_high
         if not broke_previous_edge:
-            blocked.append("Bullish signal did not close above the previous H1 high.")
+            soft_blocked.append("Bullish signal did not close above the previous H1 high.")
         entry, entry_source = _long_entry(
             stop_loss,
             previous_entry,
@@ -182,16 +183,16 @@ def build_h1_impulse_preview(
         take_profit = entry + risk_reward * stop_distance
         limit_placement_valid = reference_price is None or entry < reference_price
         if entry <= stop_loss:
-            blocked.append("LONG entry must be above stop loss.")
+            hard_blocked.append("LONG entry must be above stop loss.")
         if reference_price is not None and not limit_placement_valid:
-            blocked.append("LONG entry is not below the reference price, so it is not a valid BUY LIMIT.")
+            hard_blocked.append("LONG entry is not below the reference price, so it is not a valid BUY LIMIT.")
     elif direction == "short":
         stop_loss = high + stop_buffer
         previous_entry = previous_low
         previous_stop_distance = stop_loss - previous_entry
         broke_previous_edge = close < previous_low
         if not broke_previous_edge:
-            blocked.append("Bearish signal did not close below the previous H1 low.")
+            soft_blocked.append("Bearish signal did not close below the previous H1 low.")
         entry, entry_source = _short_entry(
             stop_loss,
             previous_entry,
@@ -204,9 +205,9 @@ def build_h1_impulse_preview(
         take_profit = entry - risk_reward * stop_distance
         limit_placement_valid = reference_price is None or entry > reference_price
         if entry >= stop_loss:
-            blocked.append("SHORT entry must be below stop loss.")
+            hard_blocked.append("SHORT entry must be below stop loss.")
         if reference_price is not None and not limit_placement_valid:
-            blocked.append("SHORT entry is not above the reference price, so it is not a valid SELL LIMIT.")
+            hard_blocked.append("SHORT entry is not above the reference price, so it is not a valid SELL LIMIT.")
     else:
         stop_loss = low - stop_buffer
         previous_entry = previous_high
@@ -219,11 +220,11 @@ def build_h1_impulse_preview(
         limit_placement_valid = False
 
     if stop_distance < min_stop_distance:
-        blocked.append(
+        hard_blocked.append(
             f"Final stop distance {stop_distance / atr:.2f} ATR is below the {config.min_stop_atr:.2f} ATR minimum."
         )
     if stop_distance > max_stop_distance:
-        blocked.append(
+        hard_blocked.append(
             f"Final stop distance {stop_distance / atr:.2f} ATR exceeds the {config.max_stop_atr:.2f} ATR maximum."
         )
 
@@ -240,6 +241,7 @@ def build_h1_impulse_preview(
         max_stop_atr=config.max_stop_atr,
     )
 
+    blocked = [*soft_blocked, *hard_blocked]
     return {
         "schema_version": 1,
         "playbook": "h1_impulse_retest_v1",
@@ -269,6 +271,8 @@ def build_h1_impulse_preview(
         "limit_placement_valid": limit_placement_valid,
         "broke_previous_edge": broke_previous_edge,
         "blocked_reason": blocked,
+        "soft_blocked_reason": soft_blocked,
+        "hard_blocked_reason": hard_blocked,
         "signal": {
             "open": _round(open_price),
             "high": _round(high),

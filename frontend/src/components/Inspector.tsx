@@ -852,6 +852,11 @@ function SetupCard({
         <span>{candidate.zone_reaction_state}</span>
         {candidate.risk_reward ? <span>RR {candidate.risk_reward.toFixed(2)}</span> : null}
       </div>
+      {candidate.metadata.human_override === true ? (
+        <div className="mt-1 inline-flex rounded border border-amber-300/35 bg-amber-300/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">
+          Human override
+        </div>
+      ) : null}
       <div className="mt-1 truncate text-[10px] font-medium text-cyan-200/80">Entry source · {entrySource}</div>
       {previewOutcome ? (
         <div className={`mt-2 flex items-center justify-between rounded border px-2 py-1.5 text-[10px] font-bold ${previewOutcomeClass(previewOutcome.status)}`}>
@@ -941,8 +946,8 @@ function SetupCard({
       </div>
       <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
       <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-        {isH1ImpulsePreview && candidate.metadata.execution_plan !== true && candidate.status === "eligible" ? (
-          <SetupAction label="Send limit to MT5" onClick={onExecute} />
+        {isH1ImpulsePreview && candidate.metadata.execution_plan !== true ? (
+          <SetupAction label={candidate.status === "blocked" ? "Review blocked setup" : "Send limit to MT5"} onClick={onExecute} />
         ) : null}
         {isH1ImpulsePreview && candidate.metadata.execution_plan !== true ? (
           <SetupAction label="Remove preview" onClick={onReject} />

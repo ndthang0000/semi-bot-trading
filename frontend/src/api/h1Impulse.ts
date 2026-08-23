@@ -42,6 +42,8 @@ export type H1ImpulsePreview = {
   limit_placement_valid: boolean;
   broke_previous_edge: boolean;
   blocked_reason: string[];
+  soft_blocked_reason: string[];
+  hard_blocked_reason: string[];
   outcome: {
     status: "blocked" | "unfilled" | "expired_unfilled" | "open" | "win" | "loss" | "ambiguous";
     filled_at: string | null;
@@ -154,6 +156,11 @@ export function h1ImpulsePreviewToSetupCandidate(preview: H1ImpulsePreview): Set
       atr: preview.atr,
       atr_period: preview.atr_period,
       stop_distance_atr: preview.stop_distance_atr,
+      reference_price: preview.reference_price,
+      original_status: preview.status,
+      original_blocked_reasons: preview.blocked_reason,
+      soft_blocked_reasons: preview.soft_blocked_reason,
+      hard_blocked_reasons: preview.hard_blocked_reason,
       parameters: preview.parameters,
       preview_only: true,
     },

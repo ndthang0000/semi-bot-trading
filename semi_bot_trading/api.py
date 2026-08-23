@@ -265,7 +265,11 @@ def manual_ai_payload_with_entry_source(raw_json: str, client_id: str, entry_sou
     return json.dumps(payload, sort_keys=True)
 
 
-def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tuple[Any, float, str]]:
+def validate_manual_ai_envelope(
+    request: ManualAiPlanImportRequest,
+    *,
+    h1_preview_config: Any | None = None,
+) -> list[tuple[Any, float, str]]:
     as_of = require_timezone_aware_iso(request.as_of, "as_of")
     if request.symbol.upper() != "XAUUSD":
         raise HTTPException(status_code=422, detail="Manual AI V1 currently supports XAUUSD only")
@@ -303,6 +307,54 @@ def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tupl
                     f"{minimum_rr:.1f} and {maximum_rr:.1f}; calculated={risk_reward:.3f}"
                 ),
             )
+        if request.playbook == "h1_impulse_retest_v1":
+            if candidate.hard_blocked_reasons:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": f"candidates[{index}] still has hard execution blocks",
+                        "hard_blocked_reasons": candidate.hard_blocked_reasons,
+                    },
+                )
+            try:
+                atr = float(request.market_context.get("atr") or 0)
+            except (TypeError, ValueError):
+                atr = 0
+            if atr <= 0:
+                raise HTTPException(status_code=422, detail=f"candidates[{index}] requires a valid H1 ATR snapshot")
+            min_stop_atr = float(getattr(h1_preview_config, "min_stop_atr", 0.5))
+            max_stop_atr = float(getattr(h1_preview_config, "max_stop_atr", 1.2))
+            stop_distance_atr = risk / atr
+            if not min_stop_atr <= stop_distance_atr <= max_stop_atr:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"candidates[{index}] stop distance must be between {min_stop_atr:.2f} and "
+                        f"{max_stop_atr:.2f} H1 ATR; calculated={stop_distance_atr:.3f}"
+                    ),
+                )
+            if candidate.original_status == "blocked":
+                if candidate.soft_blocked_reasons:
+                    if not candidate.human_override:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"candidates[{index}] requires an explicit human override",
+                        )
+                    if len(candidate.override_reason.strip()) < 20:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"candidates[{index}] override_reason must contain at least 20 characters",
+                        )
+                elif candidate.human_override:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"candidates[{index}] has no remaining soft block to override",
+                    )
+            elif candidate.human_override:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"candidates[{index}] cannot override an H1 setup that was originally eligible",
+                )
         for condition_index, condition in enumerate(candidate.cancel_conditions):
             if condition.type.endswith(("below", "above")) and condition.price is None:
                 raise HTTPException(
@@ -1893,7 +1945,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         return conflicts
 
     def insert_manual_ai_envelope(request: ManualAiPlanImportRequest, source: str) -> dict[str, Any]:
-        validated = validate_manual_ai_envelope(request)
+        validated = validate_manual_ai_envelope(
+            request,
+            h1_preview_config=h1_impulse_preview_config_from_strategy(config.strategy),
+        )
         now = utc_now_iso()
         raw_payload = request.model_dump(mode="json")
         context_snapshot = {
@@ -2118,6 +2173,24 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 request.take_profit,
                 plan_playbook,
             )
+            if plan_playbook == "h1_impulse_retest_v1":
+                market_context = raw_payload.get("market_context") if isinstance(raw_payload, dict) else None
+                try:
+                    atr = float(market_context.get("atr") or 0) if isinstance(market_context, dict) else 0
+                except (TypeError, ValueError):
+                    atr = 0
+                if atr <= 0:
+                    raise HTTPException(status_code=422, detail="H1 ATR snapshot is required to edit H1 Impulse levels")
+                preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
+                stop_distance_atr = abs(request.entry_price - request.stop_loss) / atr
+                if not preview_config.min_stop_atr <= stop_distance_atr <= preview_config.max_stop_atr:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"H1 Impulse stop distance must be between {preview_config.min_stop_atr:.2f} and "
+                            f"{preview_config.max_stop_atr:.2f} ATR; calculated={stop_distance_atr:.3f}"
+                        ),
+                    )
             group_rows = conn.execute(
                 """
                 SELECT * FROM manual_ai_plans
