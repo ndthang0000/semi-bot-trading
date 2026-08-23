@@ -37,7 +37,12 @@ export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 
 export type TradeVisibilityMode = "visible" | "hidden" | "all" | "off";
 
-export type PlaybookKey = "zone_reaction_v2" | "sr_breakout_v1" | "manual_ai_v1" | "liquidity_sweep_reclaim_v1";
+export type PlaybookKey =
+  | "zone_reaction_v2"
+  | "sr_breakout_v1"
+  | "manual_ai_v1"
+  | "liquidity_sweep_reclaim_v1"
+  | "h1_impulse_retest_v1";
 
 export type AddEntityKind =
   | "support"
@@ -371,6 +376,18 @@ export type IntradayMap = {
   levels: IntradayLevel[];
 };
 
+export type H1ImpulseMarker = {
+  time: string;
+  close_time: string;
+  direction: "long" | "short";
+  status: "candidate" | "eligible";
+  body_atr_ratio: number;
+  range_atr_ratio: number;
+  body_range_ratio: number;
+  entry_source: string;
+  blocked_reason: string[];
+};
+
 export type ChartPayload = {
   version: number;
   symbol: string;
@@ -393,6 +410,7 @@ export type ChartPayload = {
     rsi: Record<string, RsiSnapshot>;
     trades: TradeOrder[];
     setup_candidates: SetupCandidate[];
+    h1_impulse_markers: H1ImpulseMarker[];
     m15_triggers: M15TriggerOverlay[];
     m15_signal: M15SignalSnapshot | null;
     intraday_map: IntradayMap;

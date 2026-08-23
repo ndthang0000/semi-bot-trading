@@ -10,6 +10,10 @@ from .context import score_macro_trend
 from .indicators import latest_rsi_snapshot
 from .intraday_levels import build_intraday_map
 from .strategy import average_body, build_setup_candidates, candle_body
+from .strategy.h1_impulse_retest_v1 import (
+    build_h1_impulse_markers,
+    h1_impulse_preview_config_from_strategy,
+)
 from .zones import CandleSlice, latest_atr
 
 
@@ -24,9 +28,6 @@ def load_manual_ai_setup_candidates(
     as_of: str,
 ) -> list[dict[str, Any]]:
     """Expose unfilled Manual AI plans through the normal setup layer."""
-    if allowed_playbooks is not None and "manual_ai_v1" not in allowed_playbooks:
-        return []
-
     rows = conn.execute(
         """
         SELECT * FROM manual_ai_plans
@@ -48,6 +49,9 @@ def load_manual_ai_setup_candidates(
         if group is None:
             continue
         raw_payload = json.loads(row["raw_payload_json"] or "{}")
+        plan_playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
+        if allowed_playbooks is not None and plan_playbook not in allowed_playbooks:
+            continue
         raw_candidates = raw_payload.get("candidates") if isinstance(raw_payload, dict) else []
         raw_candidate = next(
             (
@@ -77,12 +81,13 @@ def load_manual_ai_setup_candidates(
         stop_loss = float(replacement.get("stop_loss", row["stop_loss"]))
         take_profit = float(replacement.get("take_profit", row["take_profit"]))
         risk_reward = float(replacement.get("risk_reward", row["risk_reward"]))
+        entry_source = str(replacement.get("entry_source") or raw_candidate.get("entry_source") or "strategy_calculated")
         candidates.append(
             {
                 "id": str(row["id"]),
                 "symbol": str(row["symbol"]),
-                "timeframe": "M5",
-                "playbook": "manual_ai_v1",
+                "timeframe": "H1" if plan_playbook == "h1_impulse_retest_v1" else "M5",
+                "playbook": plan_playbook,
                 "direction": "long" if row["side"] == "buy" else "short",
                 "status": "waiting_confirmation",
                 "zone_reaction_state": "limit_pending",
@@ -95,12 +100,14 @@ def load_manual_ai_setup_candidates(
                 "related_zone_ids": [],
                 "trigger_point_ids": [],
                 "reason": [
-                    str(raw_candidate.get("entry_reason") or f"Manual AI {plan_status} limit plan")
+                    str(raw_candidate.get("entry_reason") or f"{plan_playbook} {plan_status} limit plan")
                 ],
                 "blocked_reason": [],
                 "expires_at": str(row["expires_at"]),
                 "metadata": {
                     "manual_ai": True,
+                    "execution_plan": True,
+                    "h1_impulse_preview": plan_playbook == "h1_impulse_retest_v1",
                     "manual_ai_plan_status": plan_status,
                     "manual_ai_replace_pending": plan_status == "replace_requested",
                     "manual_ai_replace_error": row["replacement_error"],
@@ -111,6 +118,14 @@ def load_manual_ai_setup_candidates(
                     "account_label": row["account_label"],
                     "account_labels": account_labels,
                     "order_type": "limit",
+                    "entry_source": entry_source,
+                    "entry_options": raw_candidate.get("entry_options") or [],
+                    "expiry_hours": (
+                        float(raw_candidate["expires_in_minutes"]) / 60
+                        if plan_playbook == "h1_impulse_retest_v1"
+                        and isinstance(raw_candidate.get("expires_in_minutes"), (int, float))
+                        else None
+                    ),
                     "partial_take_profit": json.loads(row["partial_take_profit_json"] or "{}"),
                     "cancel_conditions": json.loads(row["cancel_conditions_json"] or "[]"),
                 },
@@ -372,6 +387,35 @@ def build_atr_snapshot(
             "as_of": candles[-1]["time"] if candles else None,
         }
     return result
+
+
+def build_h1_impulse_marker_layer(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    visible_candles: list[dict[str, Any]],
+    strategy_config: Any | None,
+) -> list[dict[str, Any]]:
+    if timeframe != "H1" or strategy_config is None or not visible_candles:
+        return []
+    try:
+        config = h1_impulse_preview_config_from_strategy(strategy_config)
+    except AttributeError:
+        # Lightweight test/CLI configs may intentionally omit this research playbook.
+        return []
+    history = load_chart_candles(
+        conn,
+        symbol,
+        "H1",
+        len(visible_candles) + config.atr_period + 2,
+        end=str(visible_candles[-1]["time"]),
+    )
+    return build_h1_impulse_markers(
+        history,
+        visible_start=str(visible_candles[0]["time"]),
+        visible_end=str(visible_candles[-1]["time"]),
+        config=config,
+    )
 
 
 def build_rsi_snapshot(
@@ -1125,6 +1169,13 @@ def build_chart_payload(
             "rsi": build_rsi_snapshot(conn, symbol, ["H1"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
+            "h1_impulse_markers": build_h1_impulse_marker_layer(
+                conn,
+                symbol,
+                timeframe,
+                candles,
+                strategy_config,
+            ),
             "m15_triggers": m15_triggers,
             "m15_signal": m15_signal,
             "intraday_map": build_intraday_map(

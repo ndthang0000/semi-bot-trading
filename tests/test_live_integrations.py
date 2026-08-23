@@ -18,6 +18,8 @@ from semi_bot_trading.live_worker import (
     LiveWorkerState,
     _queue_new_swing_alerts,
     queue_m15_recovery_alert,
+    queue_h1_impulse_body_alert,
+    queue_new_h1_impulse_alert,
     queue_setup_alerts,
     run_live_detectors,
     run_live_iteration,
@@ -27,6 +29,188 @@ from semi_bot_trading.runtime_env import load_runtime_env
 
 
 class LiveIntegrationTest(unittest.TestCase):
+    def test_h1_impulse_body_alert_queues_once_above_threshold(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO", live_run_detectors=True)
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                start = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
+                candles = []
+                for index in range(16):
+                    open_time = start + timedelta(hours=index)
+                    is_signal = index == 15
+                    candles.append(
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe="H1",
+                            open_time=open_time,
+                            close_time=open_time + timedelta(hours=1),
+                            open=100.0,
+                            high=106.0 if is_signal else 102.0,
+                            low=99.0,
+                            close=105.0 if is_signal else 101.0,
+                            volume=100,
+                            source="test",
+                        )
+                    )
+                upsert_candles(conn, candles)
+
+                self.assertTrue(queue_h1_impulse_body_alert(conn, config, env))
+                self.assertFalse(queue_h1_impulse_body_alert(conn, config, env))
+                alerts = pending_alerts(conn, "FTMO")
+                message = format_alert_message(alerts[0])
+            finally:
+                conn.close()
+
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("h1_impulse_signal", alerts[0].event_type)
+        self.assertEqual("eligible", alerts[0].payload["classification"])
+        self.assertIn("ELIGIBLE LONG", message)
+        self.assertIn("Body", message)
+        self.assertIn("Suggested expiry", message)
+
+    def test_h1_impulse_alert_classifies_body_candidate_as_needs_review(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO", live_run_detectors=True)
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                start = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
+                candles = []
+                for index in range(16):
+                    open_time = start + timedelta(hours=index)
+                    is_signal = index == 15
+                    candles.append(
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe="H1",
+                            open_time=open_time,
+                            close_time=open_time + timedelta(hours=1),
+                            open=105.0 if is_signal else 100.0,
+                            high=106.0 if is_signal else 102.0,
+                            low=99.0,
+                            close=100.0 if is_signal else 101.0,
+                            volume=100,
+                            source="test",
+                        )
+                    )
+                upsert_candles(conn, candles)
+
+                self.assertTrue(queue_h1_impulse_body_alert(conn, config, env))
+                alert = pending_alerts(conn, "FTMO")[0]
+                message = format_alert_message(alert)
+            finally:
+                conn.close()
+
+        self.assertEqual("needs_review", alert.payload["classification"])
+        self.assertTrue(alert.payload["blocked_reason"])
+        self.assertIn("NEEDS REVIEW SHORT", message)
+        self.assertIn("Blocked:", message)
+
+    def test_h1_impulse_alert_includes_exact_minimum_body_atr(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO", live_run_detectors=True)
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                start = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
+                candles = []
+                for index in range(16):
+                    open_time = start + timedelta(hours=index)
+                    is_signal = index == 15
+                    candles.append(
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe="H1",
+                            open_time=open_time,
+                            close_time=open_time + timedelta(hours=1),
+                            open=100.0,
+                            high=109.0 if is_signal else 105.0,
+                            low=99.0 if is_signal else 95.0,
+                            close=108.0 if is_signal else 100.0,
+                            volume=100,
+                            source="test",
+                        )
+                    )
+                upsert_candles(conn, candles)
+
+                with patch("semi_bot_trading.live_worker.latest_atr", return_value=10.0):
+                    queued = queue_h1_impulse_body_alert(conn, config, env)
+                alert = pending_alerts(conn, "FTMO")[0]
+            finally:
+                conn.close()
+
+        self.assertTrue(queued)
+        self.assertEqual(0.8, alert.payload["body_atr_ratio"])
+
+    def test_h1_impulse_system_alert_is_deduped_across_accounts(self) -> None:
+        config = load_config()
+        ftmo = replace(load_runtime_env(), account_label="FTMO", live_run_detectors=True)
+        exness = replace(load_runtime_env(), account_label="Exness", live_run_detectors=True)
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                start = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
+                upsert_candles(
+                    conn,
+                    [
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe="H1",
+                            open_time=start + timedelta(hours=index),
+                            close_time=start + timedelta(hours=index + 1),
+                            open=100.0,
+                            high=106.0 if index == 15 else 102.0,
+                            low=99.0,
+                            close=105.0 if index == 15 else 101.0,
+                            volume=100,
+                            source="test",
+                        )
+                        for index in range(16)
+                    ],
+                )
+
+                self.assertTrue(queue_h1_impulse_body_alert(conn, config, ftmo))
+                self.assertFalse(queue_h1_impulse_body_alert(conn, config, exness))
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM alert_events WHERE event_type = 'h1_impulse_signal'"
+                ).fetchone()["count"]
+            finally:
+                conn.close()
+
+        self.assertEqual(1, total)
+
+    def test_h1_impulse_close_tracking_baselines_restart_then_handles_only_new_h1(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO", live_run_detectors=True)
+        state = LiveWorkerState()
+        with (
+            patch(
+                "semi_bot_trading.live_worker.latest_closed_candle_time",
+                side_effect=["2026-08-20T10:00:00+00:00", "2026-08-20T11:00:00+00:00"],
+            ),
+            patch("semi_bot_trading.live_worker.queue_h1_impulse_body_alert", return_value=True) as queue,
+        ):
+            self.assertFalse(queue_new_h1_impulse_alert(None, config, env, state))
+            self.assertTrue(queue_new_h1_impulse_alert(None, config, env, state))
+
+        queue.assert_called_once_with(
+            None,
+            config,
+            env,
+            signal_open_time="2026-08-20T11:00:00+00:00",
+        )
+        self.assertEqual("2026-08-20T11:00:00+00:00", state.last_closed_h1)
+
     def test_m15_recovery_alert_combines_directions_and_dedupes(self) -> None:
         config = load_config()
         env = replace(load_runtime_env(), account_label="Exness")

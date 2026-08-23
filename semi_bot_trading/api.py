@@ -21,6 +21,7 @@ from .api_models import (
     ChartDrawingCreateRequest,
     ChartDrawingUpdateRequest,
     ContextOverrideRequest,
+    H1ImpulsePreviewRequest,
     LoginRequest,
     LogoutRequest,
     ManualAiApproveRequest,
@@ -60,7 +61,7 @@ from .auth import (
     store_refresh_token,
     verify_password,
 )
-from .chart import build_chart_payload, trade_order_row_to_chart
+from .chart import build_atr_snapshot, build_chart_payload, load_chart_candles, trade_order_row_to_chart
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
 from .db import connect, init_db
@@ -70,6 +71,11 @@ from .runtime_env import load_runtime_env
 from .smc_zones import apply_persisted_fvg_mitigation
 from .spread import spread_summary
 from .strategy.types import DEFAULT_TRADE_MODES_BY_ZONE_TYPE, TRADE_MODES
+from .strategy.h1_impulse_retest_v1 import (
+    build_h1_impulse_preview,
+    evaluate_h1_impulse_preview,
+    h1_impulse_preview_config_from_strategy,
+)
 
 
 MAX_CHART_LIMIT = 15_000
@@ -159,6 +165,7 @@ def chart_drawing_row_to_api(row: Any) -> dict[str, Any]:
 
 def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
     context_snapshot = json_loads(row["context_snapshot_json"], {})
+    raw_payload = json_loads(row["raw_payload_json"], {})
     expires_in_minutes: int | None = None
     try:
         as_of = datetime.fromisoformat(str(context_snapshot["as_of"]))
@@ -171,7 +178,7 @@ def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
         "client_id": row["client_id"],
         "account_label": row["account_label"],
         "symbol": row["symbol"],
-        "playbook": "manual_ai_v1",
+        "playbook": str(raw_payload.get("playbook") or "manual_ai_v1"),
         "side": row["side"],
         "status": row["status"],
         "execution_state": row["execution_state"],
@@ -194,10 +201,29 @@ def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
         "updated_at": row["updated_at"],
         "replacement_levels": json_loads(row["replacement_levels_json"], {}),
         "replacement_error": row["replacement_error"],
+        "entry_source": manual_ai_entry_source(raw_payload, str(row["client_id"])),
     }
 
 
-def validate_manual_ai_levels(side: str, entry_price: float, stop_loss: float, take_profit: float) -> float:
+def manual_ai_entry_source(raw_payload: dict[str, Any], client_id: str) -> str:
+    candidates = raw_payload.get("candidates") if isinstance(raw_payload, dict) else None
+    for candidate in candidates if isinstance(candidates, list) else []:
+        if isinstance(candidate, dict) and str(candidate.get("client_id")) == client_id:
+            return str(candidate.get("entry_source") or "human_custom")
+    return "human_custom"
+
+
+def playbook_risk_reward_limits(playbook: str) -> tuple[float, float]:
+    return (1.5, 4.0)
+
+
+def validate_manual_ai_levels(
+    side: str,
+    entry_price: float,
+    stop_loss: float,
+    take_profit: float,
+    playbook: str = "manual_ai_v1",
+) -> float:
     valid_geometry = (
         stop_loss < entry_price < take_profit
         if side == "buy"
@@ -207,10 +233,14 @@ def validate_manual_ai_levels(side: str, entry_price: float, stop_loss: float, t
         raise HTTPException(status_code=422, detail=f"Invalid {side} price geometry")
     risk = abs(entry_price - stop_loss)
     risk_reward = abs(take_profit - entry_price) / risk
-    if not 1.5 <= risk_reward <= 4.0:
+    minimum_rr, maximum_rr = playbook_risk_reward_limits(playbook)
+    if not minimum_rr <= risk_reward <= maximum_rr:
         raise HTTPException(
             status_code=422,
-            detail=f"Manual AI risk/reward must be between 1.5 and 4.0; calculated={risk_reward:.3f}",
+            detail=(
+                f"{playbook} risk/reward must be between {minimum_rr:.1f} and {maximum_rr:.1f}; "
+                f"calculated={risk_reward:.3f}"
+            ),
         )
     return risk_reward
 
@@ -223,6 +253,16 @@ def manual_ai_cancel_conditions_for_new_stop(raw_json: str, old_stop: float, new
         if abs(float(condition["price"]) - old_stop) <= 1e-9:
             condition["price"] = new_stop
     return json.dumps(conditions, sort_keys=True)
+
+
+def manual_ai_payload_with_entry_source(raw_json: str, client_id: str, entry_source: str) -> str:
+    payload = json_loads(raw_json, {})
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    for candidate in candidates if isinstance(candidates, list) else []:
+        if isinstance(candidate, dict) and str(candidate.get("client_id")) == client_id:
+            candidate["entry_source"] = entry_source
+            candidate["entry_reason"] = f"Human selected entry source: {entry_source}"
+    return json.dumps(payload, sort_keys=True)
 
 
 def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tuple[Any, float, str]]:
@@ -254,10 +294,14 @@ def validate_manual_ai_envelope(request: ManualAiPlanImportRequest) -> list[tupl
         risk = abs(candidate.entry_price - candidate.stop_loss)
         reward = abs(candidate.take_profit - candidate.entry_price)
         risk_reward = reward / risk
-        if not 1.5 <= risk_reward <= 4.0:
+        minimum_rr, maximum_rr = playbook_risk_reward_limits(request.playbook)
+        if not minimum_rr <= risk_reward <= maximum_rr:
             raise HTTPException(
                 status_code=422,
-                detail=f"candidates[{index}] risk/reward must be between 1.5 and 4.0; calculated={risk_reward:.3f}",
+                detail=(
+                    f"candidates[{index}] {request.playbook} risk/reward must be between "
+                    f"{minimum_rr:.1f} and {maximum_rr:.1f}; calculated={risk_reward:.3f}"
+                ),
             )
         for condition_index, condition in enumerate(candidate.cancel_conditions):
             if condition.type.endswith(("below", "above")) and condition.price is None:
@@ -451,6 +495,85 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 return payload
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/playbooks/h1-impulse-retest/preview")
+    def preview_h1_impulse_retest(
+        body: H1ImpulsePreviewRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        signal_time = require_timezone_aware_iso(body.signal_candle_time, "signal_candle_time")
+        as_of = require_timezone_aware_iso(body.as_of, "as_of") if body.as_of else datetime.now(UTC)
+        if signal_time > as_of:
+            raise HTTPException(status_code=422, detail="signal_candle_time cannot be after as_of")
+
+        symbol = body.symbol.strip().upper()
+        preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
+        atr_period = preview_config.atr_period
+        with connect(config.database) as conn:
+            init_db(conn)
+            candles = load_chart_candles(
+                conn,
+                symbol,
+                "H1",
+                atr_period + 2,
+                end=body.signal_candle_time,
+            )
+            if not candles or require_timezone_aware_iso(str(candles[-1]["time"]), "candle.open_time") != signal_time:
+                raise HTTPException(status_code=404, detail="Selected H1 candle was not found")
+            if len(candles) < 2:
+                raise HTTPException(status_code=422, detail="Previous H1 candle is required")
+
+            signal = candles[-1]
+            close_time = require_timezone_aware_iso(str(signal["close_time"]), "candle.close_time")
+            if close_time > as_of:
+                raise HTTPException(status_code=422, detail="Selected H1 candle has not closed at as_of")
+
+            atr_snapshot = build_atr_snapshot(
+                conn,
+                symbol,
+                ["H1"],
+                period=atr_period,
+                end=body.signal_candle_time,
+            )["H1"]
+            atr = atr_snapshot["value"]
+            if atr is None or float(atr) <= 0:
+                raise HTTPException(status_code=422, detail="H1 ATR is unavailable for the selected candle")
+
+            reference_price = float(signal["close"])
+            try:
+                preview = build_h1_impulse_preview(
+                    signal=signal,
+                    previous=candles[-2],
+                    atr=float(atr),
+                    reference_price=reference_price,
+                    risk_reward=body.risk_reward,
+                    config=preview_config,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+            future_candles = [
+                candle
+                for candle in load_chart_candles(
+                    conn,
+                    symbol,
+                    "H1",
+                    15_000,
+                    start=str(signal["close_time"]),
+                    end=as_of.isoformat(),
+                )
+                if require_timezone_aware_iso(str(candle["close_time"]), "candle.close_time") <= as_of
+            ]
+            outcome = evaluate_h1_impulse_preview(preview, future_candles)
+
+        return {
+            **preview,
+            "symbol": symbol,
+            "as_of": as_of.isoformat(),
+            "atr_as_of": atr_snapshot["as_of"],
+            "outcome": outcome,
+            "preview_only": True,
+        }
 
     @app.get("/api/replay/timeline")
     def replay_timeline(
@@ -1986,8 +2109,14 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+            raw_payload = json_loads(row["raw_payload_json"], {})
+            plan_playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
             risk_reward = validate_manual_ai_levels(
-                str(row["side"]), request.entry_price, request.stop_loss, request.take_profit
+                str(row["side"]),
+                request.entry_price,
+                request.stop_loss,
+                request.take_profit,
+                plan_playbook,
             )
             group_rows = conn.execute(
                 """
@@ -2012,6 +2141,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     "stop_loss": request.stop_loss,
                     "take_profit": request.take_profit,
                     "risk_reward": risk_reward,
+                    "entry_source": request.entry_source,
                     "requested_at": now,
                 },
                 sort_keys=True,
@@ -2028,7 +2158,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                         """
                         UPDATE manual_ai_plans
                         SET entry_price = ?, stop_loss = ?, take_profit = ?, risk_reward = ?,
-                            cancel_conditions_json = ?, replacement_levels_json = '{}',
+                            cancel_conditions_json = ?, raw_payload_json = ?, replacement_levels_json = '{}',
                             replacement_error = NULL, updated_at = ?
                         WHERE id = ?
                         """,
@@ -2041,6 +2171,11 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                                 str(group_row["cancel_conditions_json"]),
                                 float(group_row["stop_loss"]),
                                 request.stop_loss,
+                            ),
+                            manual_ai_payload_with_entry_source(
+                                str(group_row["raw_payload_json"]),
+                                str(group_row["client_id"]),
+                                request.entry_source,
                             ),
                             now,
                             group_row["id"],

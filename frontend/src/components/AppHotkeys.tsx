@@ -95,6 +95,7 @@ export function AppHotkeys({ activePage, reviewLocked }: AppHotkeysProps) {
           "sr_breakout_v1",
           "manual_ai_v1",
           "liquidity_sweep_reclaim_v1",
+          "h1_impulse_retest_v1",
         ];
         const currentIndex = selectedPlaybooks.length === 1 ? order.indexOf(selectedPlaybooks[0]) : -1;
         const nextIndex = action.direction === 1

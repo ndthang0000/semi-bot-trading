@@ -1,4 +1,4 @@
-import type { M15TriggerOverlay, PriceZone, StructurePoint } from "../../types";
+import type { H1ImpulseMarker, M15TriggerOverlay, PriceZone, StructurePoint } from "../../types";
 
 export type ZoneBox = {
   zone: PriceZone;
@@ -21,6 +21,12 @@ export type SwingDot = StructureDot & {
 
 export type M15TriggerMarker = {
   trigger: M15TriggerOverlay;
+  x: number;
+  y: number;
+};
+
+export type H1ImpulseChartMarker = {
+  marker: H1ImpulseMarker;
   x: number;
   y: number;
 };

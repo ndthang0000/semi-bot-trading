@@ -1,4 +1,5 @@
-import { X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
+import { useState } from "react";
 import type { ChartCandle } from "../../types";
 import { candleMetrics, formatCandleTime } from "./candleInfo";
 
@@ -8,10 +9,26 @@ type Props = {
   timezone: string;
   atr: number | null;
   atrTimeframe: string;
+  canPreviewH1Impulse?: boolean;
+  previewLoading?: boolean;
+  previewError?: string | null;
+  onPreviewH1Impulse?: (riskReward: number) => void;
   onClose: () => void;
 };
 
-export function CandleInfoCard({ candle, timeframe, timezone, atr, atrTimeframe, onClose }: Props) {
+export function CandleInfoCard({
+  candle,
+  timeframe,
+  timezone,
+  atr,
+  atrTimeframe,
+  canPreviewH1Impulse = false,
+  previewLoading = false,
+  previewError = null,
+  onPreviewH1Impulse,
+  onClose,
+}: Props) {
+  const [riskReward, setRiskReward] = useState(2.5);
   const metrics = candleMetrics(candle, atr);
   const directionClass =
     metrics.direction === "bullish"
@@ -61,6 +78,37 @@ export function CandleInfoCard({ candle, timeframe, timezone, atr, atrTimeframe,
         <InfoRow label={`Range/${atrTimeframe} ATR`} value={metrics.rangeAtr === null ? "--" : `${metrics.rangeAtr.toFixed(2)}x`} />
         <InfoRow label="Volume" value={candle.volume === null ? "--" : candle.volume.toLocaleString("en-US")} />
       </div>
+      {canPreviewH1Impulse && onPreviewH1Impulse ? (
+        <div className="mt-3 border-t border-ink-700/80 pt-2">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="mr-auto text-[10px] text-slate-500">Target RR</span>
+            {[1.5, 2, 2.5, 3, 4].map((option) => (
+              <button
+                key={option}
+                className={`h-7 rounded border px-2 font-mono text-[10px] font-bold ${
+                  riskReward === option
+                    ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100"
+                    : "border-ink-700 text-slate-400 hover:border-slate-500"
+                }`}
+                type="button"
+                onClick={() => setRiskReward(option)}
+              >
+                {option}R
+              </button>
+            ))}
+          </div>
+          <button
+            className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-cyan-300/40 bg-cyan-300/10 font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-300/15 disabled:cursor-wait disabled:opacity-60"
+            disabled={previewLoading}
+            type="button"
+            onClick={() => onPreviewH1Impulse(riskReward)}
+          >
+            <Sparkles size={14} />
+            {previewLoading ? "Đang dựng setup…" : "Add setup preview to chart"}
+          </button>
+          {previewError ? <div className="mt-2 text-[10px] leading-4 text-rose-300">{previewError}</div> : null}
+        </div>
+      ) : null}
       <p className="mt-2 text-[9px] text-slate-500">Click lại nến, vùng trống hoặc nhấn Esc để đóng.</p>
     </section>
   );

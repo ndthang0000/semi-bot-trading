@@ -208,6 +208,21 @@ class StrategyConfig:
     liquidity_sweep_reclaim_v1_timeout_minutes: int = 15
     liquidity_sweep_reclaim_v1_max_sweep_atr: float = 1.0
     liquidity_sweep_reclaim_v1_sl_buffer_atr: float = 0.2
+    h1_impulse_retest_v1_atr_period: int = 14
+    h1_impulse_retest_v1_stop_buffer_atr: float = 0.1
+    h1_impulse_retest_v1_min_stop_atr: float = 0.5
+    h1_impulse_retest_v1_max_stop_atr: float = 1.2
+    h1_impulse_retest_v1_min_body_atr: float = 0.8
+    h1_impulse_retest_v1_min_range_atr: float = 0.9
+    h1_impulse_retest_v1_max_range_atr: float = 2.5
+    h1_impulse_retest_v1_min_body_range_ratio: float = 0.6
+    h1_impulse_retest_v1_min_close_location: float = 0.75
+    h1_impulse_retest_v1_max_close_side_wick_ratio: float = 0.2
+    h1_impulse_retest_v1_expiry_medium_body_atr: float = 1.2
+    h1_impulse_retest_v1_expiry_large_body_atr: float = 1.6
+    h1_impulse_retest_v1_expiry_hours_small: int = 6
+    h1_impulse_retest_v1_expiry_hours_medium: int = 12
+    h1_impulse_retest_v1_expiry_hours_large: int = 18
 
 
 @dataclass(frozen=True)
@@ -266,6 +281,11 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
     sr_breakout_v1 = strategy_playbooks.get("sr_breakout_v1", {}) if isinstance(strategy_playbooks, dict) else {}
     liquidity_sweep_reclaim_v1 = (
         strategy_playbooks.get("liquidity_sweep_reclaim_v1", {})
+        if isinstance(strategy_playbooks, dict)
+        else {}
+    )
+    h1_impulse_retest_v1 = (
+        strategy_playbooks.get("h1_impulse_retest_v1", {})
         if isinstance(strategy_playbooks, dict)
         else {}
     )
@@ -496,6 +516,31 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             liquidity_sweep_reclaim_v1_sl_buffer_atr=float(
                 liquidity_sweep_reclaim_v1.get("sl_buffer_atr", 0.2)
             ),
+            h1_impulse_retest_v1_atr_period=int(h1_impulse_retest_v1.get("atr_period", 14)),
+            h1_impulse_retest_v1_stop_buffer_atr=float(h1_impulse_retest_v1.get("stop_buffer_atr", 0.1)),
+            h1_impulse_retest_v1_min_stop_atr=float(h1_impulse_retest_v1.get("min_stop_atr", 0.5)),
+            h1_impulse_retest_v1_max_stop_atr=float(h1_impulse_retest_v1.get("max_stop_atr", 1.2)),
+            h1_impulse_retest_v1_min_body_atr=float(h1_impulse_retest_v1.get("min_body_atr", 0.8)),
+            h1_impulse_retest_v1_min_range_atr=float(h1_impulse_retest_v1.get("min_range_atr", 0.9)),
+            h1_impulse_retest_v1_max_range_atr=float(h1_impulse_retest_v1.get("max_range_atr", 2.5)),
+            h1_impulse_retest_v1_min_body_range_ratio=float(
+                h1_impulse_retest_v1.get("min_body_range_ratio", 0.6)
+            ),
+            h1_impulse_retest_v1_min_close_location=float(
+                h1_impulse_retest_v1.get("min_close_location", 0.75)
+            ),
+            h1_impulse_retest_v1_max_close_side_wick_ratio=float(
+                h1_impulse_retest_v1.get("max_close_side_wick_ratio", 0.2)
+            ),
+            h1_impulse_retest_v1_expiry_medium_body_atr=float(
+                h1_impulse_retest_v1.get("expiry_medium_body_atr", 1.2)
+            ),
+            h1_impulse_retest_v1_expiry_large_body_atr=float(
+                h1_impulse_retest_v1.get("expiry_large_body_atr", 1.6)
+            ),
+            h1_impulse_retest_v1_expiry_hours_small=int(h1_impulse_retest_v1.get("expiry_hours_small", 6)),
+            h1_impulse_retest_v1_expiry_hours_medium=int(h1_impulse_retest_v1.get("expiry_hours_medium", 12)),
+            h1_impulse_retest_v1_expiry_hours_large=int(h1_impulse_retest_v1.get("expiry_hours_large", 18)),
         ),
         backtest=BacktestConfig(
             spread=float(backtest.get("spread", 0.30)),

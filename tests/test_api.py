@@ -37,6 +37,42 @@ def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
 
 
 class ApiTest(unittest.TestCase):
+    def test_h1_impulse_preview_is_read_only_and_uses_historical_atr(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_h1_impulse_preview_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            try:
+                response = client.post(
+                    "/api/playbooks/h1-impulse-retest/preview",
+                    json={
+                        "symbol": "XAUUSD",
+                        "signal_candle_time": "2026-08-20T15:00:00+00:00",
+                        "as_of": "2026-08-20T16:00:00+00:00",
+                        "risk_reward": 2.5,
+                    },
+                )
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+            with connect(db_path) as conn:
+                idea_count = conn.execute("SELECT COUNT(*) AS count FROM trade_ideas").fetchone()["count"]
+
+        payload = response.json()
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(payload["preview_only"])
+        self.assertEqual("h1_impulse_retest_v1", payload["playbook"])
+        self.assertEqual("eligible", payload["status"])
+        self.assertEqual("previous_h1_high", payload["entry_source"])
+        self.assertEqual("2026-08-20T15:00:00+00:00", payload["signal_candle_time"])
+        self.assertEqual(14, payload["atr_period"])
+        self.assertEqual("unfilled", payload["outcome"]["status"])
+        self.assertGreater(payload["atr"], 0)
+        self.assertEqual(0, idea_count)
+
     def test_account_daily_profit_controls_and_close_all_command(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1343,6 +1379,58 @@ def seed_candles(db_path: Path) -> None:
             VALUES ('h1-s1', 'XAUUSD', 'H1', 'swing_v1', 'confirmed', 'HH', 2005,
                     '2026-01-01T00:15:00+00:00', 1.0, '[]', '{}')
             """
+        )
+        conn.commit()
+
+
+def seed_h1_impulse_preview_candles(db_path: Path) -> None:
+    start = datetime(2026, 8, 20, tzinfo=UTC)
+    rows: list[tuple[object, ...]] = []
+    for index in range(14):
+        opened = start + timedelta(hours=index)
+        rows.append(
+            (
+                f"preview-base-{index}",
+                opened.isoformat(),
+                (opened + timedelta(hours=1)).isoformat(),
+                100,
+                105,
+                95,
+                100,
+            )
+        )
+    rows.extend(
+        [
+            (
+                "preview-previous",
+                (start + timedelta(hours=14)).isoformat(),
+                (start + timedelta(hours=15)).isoformat(),
+                100,
+                106,
+                98,
+                102,
+            ),
+            (
+                "preview-signal",
+                (start + timedelta(hours=15)).isoformat(),
+                (start + timedelta(hours=16)).isoformat(),
+                101,
+                112,
+                99,
+                111,
+            ),
+        ]
+    )
+    with connect(db_path) as conn:
+        init_db(conn)
+        conn.executemany(
+            """
+            INSERT INTO candles (
+                id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source
+            )
+            VALUES (?, 'XAUUSD', 'H1', ?, ?, ?, ?, ?, ?, 100, 'test')
+            """,
+            rows,
         )
         conn.commit()
 

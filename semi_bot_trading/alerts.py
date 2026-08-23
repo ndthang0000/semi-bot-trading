@@ -19,6 +19,7 @@ SYSTEM_ALERT_EVENT_TYPES = {
     "bias_changed",
     "liquidity_sweep",
     "m15_recovery",
+    "h1_impulse_signal",
     "new_swing",
     "new_zone",
     "news_alert",
@@ -87,6 +88,50 @@ def queue_alert(
         if "alert_events.account_label, alert_events.dedupe_key" not in str(exc):
             raise
         return False
+
+
+def queue_system_alert(
+    conn: Connection,
+    *,
+    account_label: str,
+    symbol: str,
+    timeframe: str,
+    event_type: str,
+    severity: str,
+    entity_ids: list[str],
+    payload: dict[str, Any],
+    dedupe_key: str,
+) -> bool:
+    """Queue one shared system event even when several account workers run."""
+    try:
+        conn.execute(
+            """
+            INSERT INTO system_alert_claims (dedupe_key, event_type, claimed_by, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (dedupe_key, event_type, account_label, utc_now_iso()),
+        )
+    except IntegrityError:
+        return False
+    try:
+        queued = queue_alert(
+            conn,
+            account_label=account_label,
+            symbol=symbol,
+            timeframe=timeframe,
+            event_type=event_type,
+            severity=severity,
+            entity_ids=entity_ids,
+            payload=payload,
+            dedupe_key=dedupe_key,
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    if not queued:
+        conn.execute("DELETE FROM system_alert_claims WHERE dedupe_key = ?", (dedupe_key,))
+        conn.commit()
+    return queued
 
 
 def pending_alerts(conn: Connection, account_label: str, limit: int = 20) -> list[AlertEvent]:
@@ -210,6 +255,8 @@ def format_alert_message(alert: AlertEvent) -> str:
         return _fmt_swing(alert)
     if et == "m15_recovery":
         return _fmt_recovery(alert)
+    if et == "h1_impulse_signal":
+        return _fmt_h1_impulse(alert)
     if et == "news_alert":
         return _fmt_news(alert)
     return _fmt_generic(alert)
@@ -259,6 +306,7 @@ def alert_message_emoji(alert: AlertEvent) -> str:
         "new_zone": "🗺️",
         "new_swing": "📈",
         "m15_recovery": "⚡",
+        "h1_impulse_signal": "⭐" if alert.payload.get("classification") == "eligible" else "☆",
         "news_alert": "🚨",
         "liquidity_sweep": "🌊",
         "approaching_zone": "👀",
@@ -533,6 +581,36 @@ def _fmt_news(alert: AlertEvent) -> str:
     title = str(p.get("title", "Tin tức sắp ra"))
     reasons = p.get("reason") or []
     lines = [title] + [str(r) for r in reasons if r]
+    return "\n".join(lines)
+
+
+def _fmt_h1_impulse(alert: AlertEvent) -> str:
+    payload = alert.payload
+    classification = str(payload.get("classification") or "needs_review")
+    direction = str(payload.get("direction") or "neutral").upper()
+    status = "ELIGIBLE" if classification == "eligible" else "NEEDS REVIEW"
+    lines = [f"[{alert.symbol} H1] H1 Impulse · {status} {direction}"]
+    lines.append(
+        f"Body {float(payload.get('body', 0)):.2f} = {float(payload.get('body_atr_ratio', 0)):.2f} ATR"
+        f" · Range {float(payload.get('range_atr_ratio', 0)):.2f} ATR"
+        f" · Body/range {float(payload.get('body_range_ratio', 0)):.0%}"
+    )
+    lines.append(
+        f"Entry source: {str(payload.get('entry_source') or 'unavailable').replace('_', ' ')}"
+        f" · Suggested expiry: {int(payload.get('expiry_hours', 0))}h"
+    )
+    blocked = payload.get("blocked_reason")
+    if isinstance(blocked, list) and blocked:
+        lines.append("Blocked:\n- " + "\n- ".join(str(reason) for reason in blocked))
+    ohlc = payload.get("ohlc")
+    if isinstance(ohlc, dict):
+        lines.append(
+            f"O {float(ohlc.get('open', 0)):.2f} · H {float(ohlc.get('high', 0)):.2f}"
+            f" · L {float(ohlc.get('low', 0)):.2f} · C {float(ohlc.get('close', 0)):.2f}"
+        )
+    chart = payload.get("chart_url")
+    if chart:
+        lines.append(str(chart))
     return "\n".join(lines)
 
 

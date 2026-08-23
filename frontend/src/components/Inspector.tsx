@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { History, Layers, MousePointer2, Target } from "lucide-react";
+import { History, Layers, Maximize2, Minimize2, MousePointer2, Sigma, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
-import { cancelManualAiPlan, rejectManualAiPlan } from "../api/manualAi";
+import { cancelManualAiPlan, rejectManualAiPlan, updateManualAiPlanLevels } from "../api/manualAi";
 import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tradeHistoryFilters";
 import { compactTime, localDateTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
@@ -12,6 +12,9 @@ import { ZoneEditor } from "./inspector/ZoneEditor";
 import { ZoneImportModal } from "./inspector/ZoneImportModal";
 import { MysticImportIcon } from "./inspector/MysticImportIcon";
 import { isZoneVisibleForPlaybooks } from "./chart/chartCore";
+import { canonicalH1EntrySource, h1EntrySourceKind } from "./chart/h1EntrySources";
+import { H1ImpulseExecuteModal } from "./chart/H1ImpulseExecuteModal";
+import { h1SetupExpiryDuration } from "./chart/setupExpiry";
 
 type InspectorProps = {
   payload: ChartPayload | undefined;
@@ -38,13 +41,19 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const h1ImpulsePreviews = useChartStore((state) => state.h1ImpulsePreviews);
   const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const zones = payload?.layers.zones ?? [];
-  const setupCandidates = payload?.layers.setup_candidates ?? [];
+  const setupCandidates = [
+    ...(payload?.layers.setup_candidates ?? []),
+    ...(selectedPlaybooks.includes("h1_impulse_retest_v1")
+      ? h1ImpulsePreviews.filter((candidate) => candidate.symbol === symbol)
+      : []),
+  ];
   const layerFilteredZones = showZones
     ? zones.filter(
         (zone) =>
@@ -576,10 +585,14 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   const manualAiEditSetupId = useChartStore((state) => state.manualAiEditSetupId);
   const selectSetup = useChartStore((state) => state.selectSetup);
   const setManualAiEditSetupId = useChartStore((state) => state.setManualAiEditSetupId);
+  const removeH1ImpulsePreview = useChartStore((state) => state.removeH1ImpulsePreview);
+  const updateH1ImpulsePreviewLevels = useChartStore((state) => state.updateH1ImpulsePreviewLevels);
   const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
   const [rejectedIds, setRejectedIds] = useState<Set<string>>(new Set());
   const [disabledPlaybooks, setDisabledPlaybooks] = useState<Set<string>>(new Set());
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
+  const [updatingEntryIds, setUpdatingEntryIds] = useState<Set<string>>(new Set());
+  const [executeCandidate, setExecuteCandidate] = useState<SetupCandidate | null>(null);
   const visibleCandidates = candidates.filter(
     (candidate) => !rejectedIds.has(candidate.id) && !disabledPlaybooks.has(candidate.playbook),
   );
@@ -605,7 +618,8 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   }, [m15Triggers]);
 
   const disableCandidatePlaybook = async (candidate: SetupCandidate) => {
-    if (candidate.playbook !== "manual_ai_v1") {
+    const brokerPlan = candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true;
+    if (!brokerPlan) {
       setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook));
       return;
     }
@@ -627,7 +641,11 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   };
 
   const rejectCandidate = async (candidate: SetupCandidate) => {
-    if (candidate.playbook !== "manual_ai_v1") {
+    if (candidate.playbook === "h1_impulse_retest_v1" && candidate.metadata.execution_plan !== true) {
+      removeH1ImpulsePreview(candidate.id);
+      return;
+    }
+    if (candidate.playbook !== "manual_ai_v1" && candidate.metadata.execution_plan !== true) {
       setRejectedIds((current) => addSetValue(current, candidate.id));
       return;
     }
@@ -648,8 +666,67 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
     }
   };
 
+  const selectCandidateEntrySource = async (
+    candidate: SetupCandidate,
+    option: { source: string; label: string; price: number },
+  ) => {
+    const currentTakeProfit = candidate.take_profit[0];
+    if (candidate.stop_loss === null || candidate.entry === null || typeof currentTakeProfit !== "number") return;
+    const oldRisk = Math.abs(candidate.entry - candidate.stop_loss);
+    const oldReward = Math.abs(currentTakeProfit - candidate.entry);
+    const riskReward = candidate.risk_reward ?? (oldRisk > 0 ? oldReward / oldRisk : 2.5);
+    const newRisk = Math.abs(option.price - candidate.stop_loss);
+    if (newRisk <= 0) {
+      showToast("error", "Entry source tạo SL size bằng 0 nên không thể áp dụng.");
+      return;
+    }
+    const takeProfit = roundSetupPrice(
+      candidate.direction === "long"
+        ? option.price + newRisk * riskReward
+        : option.price - newRisk * riskReward,
+    );
+    if (candidate.metadata.execution_plan !== true) {
+      updateH1ImpulsePreviewLevels(candidate.id, option.price, candidate.stop_loss, takeProfit, option.source);
+      showToast("success", `Đã chọn ${option.label}; TP giữ nguyên ${riskReward.toFixed(2)}R.`);
+      return;
+    }
+    setUpdatingEntryIds((current) => addSetValue(current, candidate.id));
+    try {
+      const result = await updateManualAiPlanLevels(candidate.id, {
+        entry_price: option.price,
+        stop_loss: candidate.stop_loss,
+        take_profit: takeProfit,
+        entry_source: option.source,
+      });
+      showToast(
+        "success",
+        result.requires_broker_replace
+          ? `Đã yêu cầu cancel & replace theo ${option.label}.`
+          : `Đã cập nhật Entry theo ${option.label}.`,
+      );
+      onChanged();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Không thể đổi Entry source");
+    } finally {
+      setUpdatingEntryIds((current) => removeSetValue(current, candidate.id));
+    }
+  };
+
   return (
-    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
+    <>
+      {executeCandidate ? (
+        <H1ImpulseExecuteModal
+          candidate={executeCandidate}
+          onClose={() => setExecuteCandidate(null)}
+          onSubmitted={() => {
+            removeH1ImpulsePreview(executeCandidate.id);
+            setExecuteCandidate(null);
+            showToast("success", "Đã duyệt H1 limit plan. Worker sẽ kiểm tra guardrails rồi gửi pending order tới MT5.");
+            onChanged();
+          }}
+        />
+      ) : null}
+      <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
       <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
         <Target size={14} />
         Setups
@@ -674,6 +751,10 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
                       watched={watchedIds.has(candidate.id)}
                       onFocus={() => focusCandidate(candidate)}
                       onEdit={() => setManualAiEditSetupId(candidate.id)}
+                      onExecute={() => setExecuteCandidate(candidate)}
+                      entryOptions={readSetupEntryOptions(candidate.metadata.entry_options)}
+                      entryBusy={updatingEntryIds.has(candidate.id)}
+                      onEntrySourceSelect={(option) => { void selectCandidateEntrySource(candidate, option); }}
                       onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
                       onReject={() => { void rejectCandidate(candidate); }}
                       disableBusy={cancellingIds.has(candidate.id)}
@@ -686,7 +767,8 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </>
   );
 }
 
@@ -698,6 +780,10 @@ function SetupCard({
   watched,
   onFocus,
   onEdit,
+  onExecute,
+  entryOptions,
+  entryBusy,
+  onEntrySourceSelect,
   onToggleWatch,
   onReject,
   onDisablePlaybook,
@@ -710,6 +796,10 @@ function SetupCard({
   watched: boolean;
   onFocus: () => void;
   onEdit: () => void;
+  onExecute: () => void;
+  entryOptions: Array<{ source: string; label: string; price: number }>;
+  entryBusy: boolean;
+  onEntrySourceSelect: (option: { source: string; label: string; price: number }) => void;
   onToggleWatch: () => void;
   onReject: () => void;
   onDisablePlaybook: () => void;
@@ -718,8 +808,25 @@ function SetupCard({
   const manualAiPlanStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
     ? candidate.metadata.manual_ai_plan_status
     : "draft";
+  const isH1ImpulsePreview = candidate.playbook === "h1_impulse_retest_v1";
   const canEditLevels = candidate.playbook === "manual_ai_v1"
-    && ["draft", "approved", "armed"].includes(manualAiPlanStatus);
+    ? ["draft", "approved", "armed"].includes(manualAiPlanStatus)
+    : isH1ImpulsePreview && (candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(manualAiPlanStatus));
+  const previewOutcome = readPreviewOutcome(candidate);
+  const entrySource = setupEntrySource(candidate);
+  const rawEntrySource = typeof candidate.metadata.entry_source === "string" ? candidate.metadata.entry_source : "strategy_calculated";
+  const selectedEntryOptionSource = canonicalH1EntrySource(rawEntrySource);
+  const stopSize = candidate.entry !== null && candidate.stop_loss !== null
+    ? Math.abs(candidate.entry - candidate.stop_loss)
+    : null;
+  const atr = typeof candidate.metadata.atr === "number" && candidate.metadata.atr > 0 ? candidate.metadata.atr : null;
+  const orderedEntryOptions = candidate.stop_loss === null
+    ? entryOptions
+    : [...entryOptions].sort((left, right) => {
+        const distanceDelta = Math.abs(left.price - candidate.stop_loss!) - Math.abs(right.price - candidate.stop_loss!);
+        return distanceDelta !== 0 ? distanceDelta : left.label.localeCompare(right.label);
+      });
+  const expiryDuration = h1SetupExpiryDuration(candidate);
   return (
     <div
       className={`min-w-0 overflow-hidden rounded-md border p-3 text-left transition ${
@@ -745,6 +852,13 @@ function SetupCard({
         <span>{candidate.zone_reaction_state}</span>
         {candidate.risk_reward ? <span>RR {candidate.risk_reward.toFixed(2)}</span> : null}
       </div>
+      <div className="mt-1 truncate text-[10px] font-medium text-cyan-200/80">Entry source · {entrySource}</div>
+      {previewOutcome ? (
+        <div className={`mt-2 flex items-center justify-between rounded border px-2 py-1.5 text-[10px] font-bold ${previewOutcomeClass(previewOutcome.status)}`}>
+          <span>{previewOutcome.status.toUpperCase()}</span>
+          <span>{previewOutcome.resultR === null ? previewOutcome.detail : `${previewOutcome.resultR > 0 ? "+" : ""}${previewOutcome.resultR.toFixed(2)}R`}</span>
+        </div>
+      ) : null}
       {candidate.entry && candidate.stop_loss ? (
         <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
           <span>Entry {price(candidate.entry)}</span>
@@ -752,9 +866,56 @@ function SetupCard({
           {candidate.take_profit[0] ? <span>TP {price(candidate.take_profit[0])}</span> : null}
         </div>
       ) : null}
+      {stopSize !== null ? (
+        <div className="mt-1 text-[11px] font-semibold text-amber-200/90">
+          SL size {price(stopSize)}{atr ? ` · ${(stopSize / atr).toFixed(2)} ATR` : ""}
+        </div>
+      ) : null}
+      {isH1ImpulsePreview && orderedEntryOptions.length > 0 ? (
+        <div className="mt-2 rounded border border-cyan-400/15 bg-black/15 p-2">
+          <div className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-cyan-200/70">Quick Entry source</div>
+          <div className="flex flex-wrap gap-1">
+            {orderedEntryOptions.map((option) => {
+              const optionStopSize = candidate.stop_loss === null ? null : Math.abs(option.price - candidate.stop_loss);
+              const selected = selectedEntryOptionSource === option.source;
+              return (
+                <button
+                  key={option.source}
+                  className={`rounded border px-1.5 py-1 text-left text-[9px] font-semibold transition disabled:cursor-wait disabled:opacity-45 ${
+                    selected
+                      ? "border-cyan-300 bg-cyan-300/15 text-cyan-100"
+                      : "border-ink-700 bg-ink-950 text-slate-400 hover:border-cyan-400/60 hover:text-cyan-100"
+                  }`}
+                  aria-pressed={selected}
+                  disabled={!canEditLevels || entryBusy}
+                  title={`${option.label} · Entry ${price(option.price)}${optionStopSize === null ? "" : ` · SL size ${price(optionStopSize)}`}`}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEntrySourceSelect(option);
+                  }}
+                >
+                  <span className="flex items-center gap-1">
+                    <EntrySourceIcon source={option.source} />
+                    <span>{option.label}</span>
+                  </span>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-1 font-mono font-normal">
+                    <span className={selected ? "text-cyan-100/75" : "text-slate-500"}>E {price(option.price)}</span>
+                    {optionStopSize !== null ? (
+                      <span className="rounded border border-amber-300/25 bg-amber-300/10 px-1 py-px font-bold text-amber-200">
+                        SL {price(optionStopSize)}{atr ? ` · ${(optionStopSize / atr).toFixed(2)} ATR` : ""}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       {candidate.expires_at ? (
         <div className="mt-1 text-[11px] font-medium text-amber-300/90">
-          Hết hạn {localDateTime(candidate.expires_at)}
+          Hết hạn {localDateTime(candidate.expires_at)}{expiryDuration ? ` (${expiryDuration})` : ""}
         </div>
       ) : null}
       {typeof candidate.metadata.manual_ai_replace_error === "string" ? (
@@ -776,19 +937,41 @@ function SetupCard({
         </div>
       ) : null}
       <div className="mt-1 truncate text-[11px] text-slate-500">
-        {(candidate.blocked_reason[0] ?? candidate.reason[0] ?? "--")}
+        {setupPrimaryReason(candidate)}
       </div>
       <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
       <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+        {isH1ImpulsePreview && candidate.metadata.execution_plan !== true && candidate.status === "eligible" ? (
+          <SetupAction label="Send limit to MT5" onClick={onExecute} />
+        ) : null}
+        {isH1ImpulsePreview && candidate.metadata.execution_plan !== true ? (
+          <SetupAction label="Remove preview" onClick={onReject} />
+        ) : null}
         {canEditLevels && focused ? (
           <SetupAction active={editing} label={editing ? "Editing levels" : "Edit levels"} onClick={onEdit} />
         ) : null}
-        <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} />
-        <SetupAction label="Reject" onClick={onReject} />
-        <SetupAction label={candidate.playbook === "manual_ai_v1" ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} />
+        {!isH1ImpulsePreview ? <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} /> : null}
+        {!isH1ImpulsePreview || candidate.metadata.execution_plan === true ? <SetupAction label="Reject" onClick={onReject} /> : null}
+        {!isH1ImpulsePreview || candidate.metadata.execution_plan === true ? <SetupAction label={candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} /> : null}
       </div>
     </div>
   );
+}
+
+function EntrySourceIcon({ source }: { source: string }) {
+  const className = "size-3 shrink-0";
+  switch (h1EntrySourceKind(source)) {
+    case "previous":
+      return <History aria-hidden="true" className={className} />;
+    case "fibonacci":
+      return <Sigma aria-hidden="true" className={className} />;
+    case "minimum":
+      return <Minimize2 aria-hidden="true" className={className} />;
+    case "maximum":
+      return <Maximize2 aria-hidden="true" className={className} />;
+    default:
+      return <MousePointer2 aria-hidden="true" className={className} />;
+  }
 }
 
 function SetupAction({ active = false, disabled = false, label, onClick }: { active?: boolean; disabled?: boolean; label: string; onClick: () => void }) {
@@ -915,9 +1098,59 @@ function setupCardClass(status: SetupCandidate["status"]): string {
   return "border-ink-700 bg-ink-850";
 }
 
+function readPreviewOutcome(candidate: SetupCandidate): { status: string; resultR: number | null; detail: string } | null {
+  const value = candidate.metadata.outcome;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const outcome = value as Record<string, unknown>;
+  if (typeof outcome.status !== "string") return null;
+  const barsToFill = typeof outcome.bars_to_fill === "number" ? outcome.bars_to_fill : null;
+  const barsHeld = typeof outcome.bars_held === "number" ? outcome.bars_held : null;
+  const modified = outcome.status === "modified";
+  return {
+    status: outcome.status,
+    resultR: typeof outcome.result_r === "number" ? outcome.result_r : null,
+    detail: modified ? "Levels changed" : barsToFill === null ? "Not filled" : `fill ${barsToFill}h · held ${barsHeld ?? 0}h`,
+  };
+}
+
+function readSetupEntryOptions(value: unknown): Array<{ source: string; label: string; price: number }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const option = item as Record<string, unknown>;
+    if (typeof option.source !== "string" || typeof option.label !== "string" || typeof option.price !== "number") return [];
+    return [{ source: option.source, label: option.label, price: option.price }];
+  });
+}
+
+function setupPrimaryReason(candidate: SetupCandidate): string {
+  if (candidate.blocked_reason[0]) return candidate.blocked_reason[0];
+  return candidate.reason.find((reason) => !reason.toLowerCase().startsWith("entry source:")) ?? "--";
+}
+
+function roundSetupPrice(value: number): number {
+  return Math.round(value * 100_000) / 100_000;
+}
+
+function setupEntrySource(candidate: SetupCandidate): string {
+  for (const key of ["entry_source", "entry_model", "trigger_method"]) {
+    const value = candidate.metadata[key];
+    if (typeof value === "string" && value.trim()) return value.replace(/_/g, " ");
+  }
+  return candidate.reason.find((reason) => reason.toLowerCase().includes("entry")) ?? "strategy calculated";
+}
+
+function previewOutcomeClass(status: string): string {
+  if (status === "win") return "border-emerald-400/35 bg-emerald-400/10 text-emerald-200";
+  if (status === "loss") return "border-rose-400/35 bg-rose-400/10 text-rose-200";
+  if (status === "ambiguous") return "border-amber-400/35 bg-amber-400/10 text-amber-200";
+  return "border-cyan-400/30 bg-cyan-400/[0.07] text-cyan-200";
+}
+
 function playbookLabel(value: string): string {
   if (value === "sr_breakout_v1") return "SR Breakout V1";
   if (value === "zone_reaction_v2") return "Zone Reaction V2";
+  if (value === "h1_impulse_retest_v1") return "H1 Impulse Retest V1";
   return value
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

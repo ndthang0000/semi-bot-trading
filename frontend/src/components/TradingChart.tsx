@@ -8,10 +8,11 @@ import {
   LineSeries,
   LineStyle,
 } from "lightweight-charts";
-import { ArrowDown, ArrowUp, Newspaper } from "lucide-react";
+import { ArrowDown, ArrowUp, Newspaper, Star } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
 import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
+import { h1ImpulsePreviewToSetupCandidate, previewH1Impulse } from "../api/h1Impulse";
 import { updateManualAiPlanLevels } from "../api/manualAi";
 import { isEditableHotkeyTarget } from "../lib/appHotkeys";
 import { copyTextToClipboard } from "../lib/clipboard";
@@ -58,7 +59,7 @@ import {
   type PriceRange,
   type ViewportState,
 } from "./chart/chartCore";
-import type { M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
+import type { H1ImpulseChartMarker, M15TriggerMarker, StructureDot, SwingDot, ZoneBox, ZoneDragMode, ZoneDragState } from "./chart/chartTypes";
 import { CandleCountdown, NewsTimelineTooltip, type NewsTimelineMarker } from "./chart/chartWidgets";
 import { ChartDrawingControls, type PendingChartNote } from "./chart/ChartDrawingControls";
 import { CandleInfoCard } from "./chart/CandleInfoCard";
@@ -121,6 +122,7 @@ type ManualAiLevelEditState = {
   level: ManualAiLevel;
   original: ManualAiEditableLevels;
   levels: ManualAiEditableLevels;
+  entrySource: string;
   previewBox: SetupBox;
   status: string;
   dragging: boolean;
@@ -145,6 +147,10 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectSetup = useChartStore((state) => state.selectSetup);
   const setManualAiEditSetupId = useChartStore((state) => state.setManualAiEditSetupId);
   const setInspectorTab = useChartStore((state) => state.setInspectorTab);
+  const toggleSelectedPlaybook = useChartStore((state) => state.toggleSelectedPlaybook);
+  const h1ImpulsePreviews = useChartStore((state) => state.h1ImpulsePreviews);
+  const addH1ImpulsePreview = useChartStore((state) => state.addH1ImpulsePreview);
+  const updateH1ImpulsePreviewLevels = useChartStore((state) => state.updateH1ImpulsePreviewLevels);
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
@@ -152,6 +158,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showStructure = useChartStore((state) => state.showStructure);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
+  const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
+  const h1ImpulseEligibleOnly = useChartStore((state) => state.h1ImpulseEligibleOnly);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
@@ -166,6 +174,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [setupBoxes, setSetupBoxes] = useState<SetupBox[]>([]);
   const [manualAiLevelEdit, setManualAiLevelEdit] = useState<ManualAiLevelEditState | null>(null);
   const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
+  const [h1ImpulseChartMarkers, setH1ImpulseChartMarkers] = useState<H1ImpulseChartMarker[]>([]);
   const [intradayLevelMarkers, setIntradayLevelMarkers] = useState<Array<{ level: IntradayLevel; y: number; bandY: number; bandHeight: number; plotWidth: number }>>([]);
   const [newsTimelineMarkers, setNewsTimelineMarkers] = useState<NewsTimelineMarker[]>([]);
   const [hoveredNewsMarker, setHoveredNewsMarker] = useState<NewsTimelineMarker | null>(null);
@@ -184,6 +193,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [candleLabel, setCandleLabel] = useState<{ priceY: number; scaleWidth: number; isUp: boolean; chartHeight: number } | null>(null);
   const [selectedCandle, setSelectedCandle] = useState<ChartCandle | null>(null);
   const [selectedCandleMarker, setSelectedCandleMarker] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [h1PreviewLoading, setH1PreviewLoading] = useState(false);
+  const [h1PreviewError, setH1PreviewError] = useState<string | null>(null);
   const [pointerY, setPointerY] = useState<number | null>(null);
   const scheduledRecalcRef = useRef<number | null>(null);
   const interactionRecalcRef = useRef<number | null>(null);
@@ -204,8 +215,11 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showStructureRef = useRef(showStructure);
   const showIntradayLevelsRef = useRef(showIntradayLevels);
   const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
+  const showH1ImpulseCandidatesRef = useRef(showH1ImpulseCandidates);
+  const h1ImpulseEligibleOnlyRef = useRef(h1ImpulseEligibleOnly);
   const drawingToolRef = useRef(drawingTool);
   const selectedCandleRef = useRef(selectedCandle);
+  const h1ImpulsePreviewsRef = useRef(h1ImpulsePreviews);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
   const maxVisibleZonesRef = useRef(maxVisibleZones);
@@ -255,8 +269,11 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   showStructureRef.current = showStructure;
   showIntradayLevelsRef.current = showIntradayLevels;
   showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
+  showH1ImpulseCandidatesRef.current = showH1ImpulseCandidates;
+  h1ImpulseEligibleOnlyRef.current = h1ImpulseEligibleOnly;
   drawingToolRef.current = drawingTool;
   selectedCandleRef.current = selectedCandle;
+  h1ImpulsePreviewsRef.current = h1ImpulsePreviews;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
   maxVisibleZonesRef.current = maxVisibleZones;
@@ -270,9 +287,10 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   useEffect(() => {
     if (!selectedSetupId) return;
-    const stillVisible = payload.layers.setup_candidates.some((candidate) => candidate.id === selectedSetupId);
+    const stillVisible = payload.layers.setup_candidates.some((candidate) => candidate.id === selectedSetupId)
+      || h1ImpulsePreviews.some((candidate) => candidate.id === selectedSetupId);
     if (!stillVisible) selectSetup(null);
-  }, [payload.layers.setup_candidates, selectSetup, selectedSetupId]);
+  }, [h1ImpulsePreviews, payload.layers.setup_candidates, selectSetup, selectedSetupId]);
 
   useEffect(() => {
     if (!selectedCandle) return;
@@ -384,12 +402,16 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       return box ? [box] : [];
     });
     const trades = groupTradeBoxesByCandidate(tradeBoxes);
-    const manualAiSetups = currentPayload.layers.setup_candidates.flatMap((candidate) => {
-      if (
-        candidate.metadata.manual_ai !== true
-        || candidate.metadata.execution_state !== "primary"
-        || candidate.status !== "waiting_confirmation"
-      ) return [];
+    const visibleSetupCandidates = [
+      ...currentPayload.layers.setup_candidates,
+      ...(selectedPlaybooksRef.current.includes("h1_impulse_retest_v1") ? h1ImpulsePreviewsRef.current : []),
+    ];
+    const chartSetups = visibleSetupCandidates.flatMap((candidate) => {
+      const isManualAi = candidate.metadata.manual_ai === true
+        && candidate.metadata.execution_state === "primary"
+        && candidate.status === "waiting_confirmation";
+      const isH1ImpulsePreview = candidate.metadata.h1_impulse_preview === true;
+      if (!isManualAi && !isH1ImpulsePreview) return [];
       const box = setupToBox(
         candidate,
         currentPayload.range.start,
@@ -410,6 +432,20 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       if (x < -12 || x > plotWidth + 12 || y < -12 || y > height + 12) return [];
       return [{ trigger, x, y }];
     });
+    const h1Markers = selectedPlaybooksRef.current.includes("h1_impulse_retest_v1")
+      && showH1ImpulseCandidatesRef.current
+      && currentPayload.timeframe === "H1"
+      ? (currentPayload.layers.h1_impulse_markers ?? []).flatMap((marker) => {
+          if (h1ImpulseEligibleOnlyRef.current && marker.status !== "eligible") return [];
+          const candle = currentPayload.layers.candles.find((item) => item.time === marker.time);
+          if (!candle) return [];
+          const x = timeScale.timeToCoordinate(toUnixTime(marker.time));
+          const anchorPrice = marker.direction === "short" ? candle.high : candle.low;
+          const y = series.priceToCoordinate(anchorPrice);
+          if (x === null || y === null || x < -12 || x > plotWidth + 12 || y < -12 || y > height + 12) return [];
+          return [{ marker, x, y }];
+        })
+      : [];
     const rawIntradayLevels = showIntradayLevelsRef.current
       ? selectIntradayLevels(
           currentPayload.layers.intraday_map,
@@ -495,8 +531,9 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setStructureDots(visibleStructurePoints.filter((dot) => !readSwingType(dot.point)));
     setSwingDots(visibleSwings);
     setTradeBoxes(trades);
-    setSetupBoxes(manualAiSetups);
+    setSetupBoxes(chartSetups);
     setM15TriggerMarkers(m15Triggers);
+    setH1ImpulseChartMarkers(h1Markers);
     setIntradayLevelMarkers(intradayLevels);
     setNewsTimelineMarkers(newsMarkers);
     setRenderedDrawings(chartDrawings);
@@ -524,7 +561,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   useEffect(() => {
     scheduleOverlayRecalc();
-  }, [scheduleOverlayRecalc, selectedCandle]);
+  }, [h1ImpulsePreviews, scheduleOverlayRecalc, selectedCandle, selectedPlaybooks]);
 
   const startOverlayInteractionSync = useCallback(() => {
     if (interactionRecalcRef.current !== null) return;
@@ -583,7 +620,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     const status = typeof box.candidate.metadata.manual_ai_plan_status === "string"
       ? box.candidate.metadata.manual_ai_plan_status
       : "draft";
-    if (!["draft", "approved", "armed"].includes(status)) {
+    const isLocalH1Preview = box.candidate.metadata.h1_impulse_preview === true && box.candidate.metadata.execution_plan !== true;
+    if (!isLocalH1Preview && !["draft", "approved", "armed"].includes(status)) {
       setDrawError(`Manual AI đang ở trạng thái ${status}; hãy chờ worker hoàn tất rồi thử lại.`);
       return;
     }
@@ -605,6 +643,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           level,
           original,
           levels: original,
+          entrySource: typeof box.candidate.metadata.entry_source === "string" ? box.candidate.metadata.entry_source : "strategy_calculated",
           previewBox: box,
           status,
           dragging: true,
@@ -625,7 +664,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         if (!current || current.candidate.id !== dragging.candidateId) return current;
         const levels = { ...current.levels, [dragging.level]: roundPrice(price) };
         const previewBox = manualAiPreviewBox(current.candidate, levels);
-        return previewBox ? { ...current, levels, previewBox, error: null } : current;
+        return previewBox ? { ...current, levels, entrySource: "human_custom", previewBox, error: null } : current;
       });
     };
     const finish = () => {
@@ -656,7 +695,24 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         takeProfit: roundPrice(levels.takeProfit),
       };
       const previewBox = manualAiPreviewBox(current.candidate, rounded);
-      return previewBox ? { ...current, levels: rounded, previewBox, error: null } : current;
+      return previewBox ? { ...current, levels: rounded, entrySource: "human_custom", previewBox, error: null } : current;
+    });
+  }, [manualAiPreviewBox]);
+
+  const selectSetupEntrySource = useCallback((source: string, entry: number) => {
+    setManualAiLevelEdit((current) => {
+      if (!current || current.saving) return current;
+      const roundedEntry = roundPrice(entry);
+      const risk = Math.abs(roundedEntry - current.levels.stopLoss);
+      const rr = current.candidate.risk_reward ?? 2.5;
+      const takeProfit = roundPrice(
+        current.candidate.direction === "long"
+          ? roundedEntry + risk * rr
+          : roundedEntry - risk * rr,
+      );
+      const levels = { ...current.levels, entry: roundedEntry, takeProfit };
+      const previewBox = manualAiPreviewBox(current.candidate, levels);
+      return previewBox ? { ...current, levels, entrySource: source, previewBox, error: null } : current;
     });
   }, [manualAiPreviewBox]);
 
@@ -687,16 +743,25 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       setManualAiLevelEdit({ ...edit, error: `Mức giá ${isBuy ? "BUY" : "SELL"} không đúng thứ tự Entry/SL/TP.` });
       return;
     }
-    if (rr < 1.5 || rr > 4) {
-      setManualAiLevelEdit({ ...edit, error: `R:R mới là ${rr.toFixed(2)}R; Manual AI chỉ cho phép 1.5R–4.0R.` });
+    const isH1Impulse = edit.candidate.playbook === "h1_impulse_retest_v1";
+    const rrMin = 1.5;
+    const rrMax = 4;
+    if (rr < rrMin || rr > rrMax) {
+      setManualAiLevelEdit({ ...edit, error: `R:R mới là ${rr.toFixed(2)}R; playbook chỉ cho phép ${rrMin.toFixed(1)}R–${rrMax.toFixed(1)}R.` });
       return;
     }
     setManualAiLevelEdit({ ...edit, saving: true, error: null });
     try {
+      if (isH1Impulse && edit.candidate.metadata.execution_plan !== true) {
+        updateH1ImpulsePreviewLevels(edit.candidate.id, entry, stopLoss, takeProfit, edit.entrySource);
+        exitManualAiSetupInteraction();
+        return;
+      }
       await updateManualAiPlanLevels(edit.candidate.id, {
         entry_price: entry,
         stop_loss: stopLoss,
         take_profit: takeProfit,
+        entry_source: edit.entrySource,
       });
       exitManualAiSetupInteraction();
       onEntityCreatedRef.current();
@@ -707,7 +772,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         error: error instanceof Error ? error.message : "Không thể cập nhật Manual AI levels.",
       } : current);
     }
-  }, [exitManualAiSetupInteraction, manualAiLevelEdit]);
+  }, [exitManualAiSetupInteraction, manualAiLevelEdit, updateH1ImpulsePreviewLevels]);
 
   useEffect(() => {
     const handleManualAiSetupHotkey = (event: KeyboardEvent) => {
@@ -726,11 +791,16 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         || isEditableHotkeyTarget(event.target)
         || !selectedSetupId
       ) return;
-      const candidate = payloadRef.current.layers.setup_candidates.find((item) => item.id === selectedSetupId);
+      const candidate = [
+        ...payloadRef.current.layers.setup_candidates,
+        ...h1ImpulsePreviewsRef.current,
+      ].find((item) => item.id === selectedSetupId);
       const status = typeof candidate?.metadata.manual_ai_plan_status === "string"
         ? candidate.metadata.manual_ai_plan_status
         : "draft";
-      if (!candidate || candidate.playbook !== "manual_ai_v1" || !["draft", "approved", "armed"].includes(status)) return;
+      const editableH1Preview = candidate?.playbook === "h1_impulse_retest_v1"
+        && (candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(status));
+      if (!candidate || (candidate.playbook !== "manual_ai_v1" && !editableH1Preview) || (!editableH1Preview && !["draft", "approved", "armed"].includes(status))) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       setManualAiEditSetupId(candidate.id);
@@ -1312,12 +1382,16 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     scheduleOverlayRecalc();
   }, [
     drawings,
+    h1ImpulseEligibleOnly,
     importantZonesOnly,
     maxVisibleZones,
     payload,
     scheduleOverlayRecalc,
     selectedPlaybooks,
+    showBrokenIntradayLevels,
     showHistoricalLiquiditySweeps,
+    showH1ImpulseCandidates,
+    showIntradayLevels,
     showStructure,
     showZones,
     tradeVisibilityMode,
@@ -1736,6 +1810,35 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const compactViewport = isMobileChartWidth(containerRef.current?.clientWidth ?? window.innerWidth);
   const selectedCandleAtrTimeframe = payload.layers.atr[payload.timeframe]?.value !== undefined ? payload.timeframe : "M15";
   const selectedCandleAtr = payload.layers.atr[selectedCandleAtrTimeframe]?.value ?? null;
+  const selectedH1ImpulseMarker = selectedCandle
+    ? (payload.layers.h1_impulse_markers ?? []).find((marker) => marker.time === selectedCandle.time) ?? null
+    : null;
+  const canPreviewSelectedH1Impulse = payload.timeframe === "H1"
+    && selectedPlaybooks.includes("h1_impulse_retest_v1")
+    && selectedH1ImpulseMarker !== null;
+  const addH1SetupPreview = useCallback(async (riskReward: number) => {
+    if (!selectedCandle || !canPreviewSelectedH1Impulse) return;
+    setH1PreviewLoading(true);
+    setH1PreviewError(null);
+    try {
+      const preview = await previewH1Impulse({
+        symbol: payload.symbol,
+        signalCandleTime: selectedCandle.time,
+        riskReward,
+        asOf: payload.replay?.as_of ?? payload.range.end,
+      });
+      const candidate = h1ImpulsePreviewToSetupCandidate(preview);
+      addH1ImpulsePreview(candidate);
+      toggleSelectedPlaybook("h1_impulse_retest_v1", true);
+      selectSetup(candidate.id);
+      setInspectorTab("setups");
+      setSelectedCandle(null);
+    } catch (error) {
+      setH1PreviewError(error instanceof Error ? error.message : "Không thể dựng H1 setup preview.");
+    } finally {
+      setH1PreviewLoading(false);
+    }
+  }, [addH1ImpulsePreview, canPreviewSelectedH1Impulse, payload.range.end, payload.replay?.as_of, payload.symbol, selectSetup, selectedCandle, setInspectorTab, toggleSelectedPlaybook]);
   const displayedSetupBoxes = manualAiLevelEdit
     ? setupBoxes.map((box) => box.candidate.id === manualAiLevelEdit.candidate.id ? manualAiLevelEdit.previewBox : box)
     : setupBoxes;
@@ -2023,6 +2126,50 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
             </div>
           );
         })}
+        {h1ImpulseChartMarkers.map(({ marker, x, y }) => {
+          const eligible = marker.status === "eligible";
+          const short = marker.direction === "short";
+          const className = eligible
+            ? "text-amber-300 drop-shadow-[0_0_5px_rgba(252,211,77,0.8)]"
+            : "text-slate-400 drop-shadow-[0_0_4px_rgba(148,163,184,0.55)]";
+          const blocked = marker.blocked_reason.length > 0 ? `\n${marker.blocked_reason.join("\n")}` : "";
+          return (
+            <button
+              key={`${marker.time}:${marker.status}`}
+              className={`group pointer-events-auto absolute z-[27] flex h-5 w-5 -translate-x-1/2 items-center justify-center transition hover:z-[60] hover:scale-110 ${
+                short ? "-translate-y-[calc(100%+6px)]" : "translate-y-[6px]"
+              } ${className}`}
+              style={{ left: x, top: y }}
+              type="button"
+              onClick={() => {
+                const candle = payload.layers.candles.find((item) => item.time === marker.time);
+                if (!candle) return;
+                setSelected(null);
+                selectSetup(null);
+                setManualAiEditSetupId(null);
+                setSelectedDrawingId(null);
+                setSelectedCandle(candle);
+              }}
+            >
+              <Star fill="currentColor" size={eligible ? 15 : 13} strokeWidth={2.2} />
+              <span className="sr-only">H1 {marker.status} {marker.direction}</span>
+              <span
+                className={`pointer-events-none absolute left-1/2 z-[60] w-64 -translate-x-1/2 rounded-md border border-ink-600 bg-ink-950/95 px-2.5 py-2 text-left text-[10px] font-normal leading-4 text-slate-200 opacity-0 shadow-xl transition-opacity delay-0 duration-150 group-hover:opacity-100 group-hover:delay-[850ms] ${
+                  short ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                }`}
+                role="tooltip"
+              >
+                <span className={`block font-bold ${eligible ? "text-amber-200" : "text-slate-300"}`}>
+                  H1 {eligible ? "ELIGIBLE" : "NEEDS REVIEW"} · {marker.direction.toUpperCase()}
+                </span>
+                <span className="mt-0.5 block text-slate-400">
+                  Body {marker.body_atr_ratio.toFixed(2)} ATR · Range {marker.range_atr_ratio.toFixed(2)} ATR
+                </span>
+                {blocked ? <span className="mt-1 block whitespace-pre-line text-rose-200/85">{blocked.trim()}</span> : null}
+              </span>
+            </button>
+          );
+        })}
         {newsTimelineMarkers.map((marker) => {
           const { event, x, y } = marker;
           const className =
@@ -2047,26 +2194,41 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         ) : null}
         {displayedSetupBoxes.map((box) => {
           const candidate = box.candidate;
+          const isH1ImpulsePreview = candidate.metadata.h1_impulse_preview === true;
+          const previewOutcome = readObject(candidate.metadata.outcome);
+          const outcomeStatus = typeof previewOutcome.status === "string" ? previewOutcome.status : "open";
+          const resultR = typeof previewOutcome.result_r === "number" ? previewOutcome.result_r : null;
+          const entrySource = setupEntrySourceLabel(candidate);
           const planStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
             ? candidate.metadata.manual_ai_plan_status
             : "pending";
-          const statusLabel = planStatus === "draft" ? "DRAFT" : planStatus === "replace_requested" ? "REPLACING" : "PENDING";
-          const compactLabel = `${candidate.direction === "long" ? "BUY" : "SELL"} · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
-          const detailLabel = `${statusLabel} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
-          const canEdit = ["draft", "approved", "armed"].includes(planStatus);
+          const statusLabel = isH1ImpulsePreview
+            ? `${outcomeStatus.toUpperCase()}${resultR === null ? "" : ` ${resultR > 0 ? "+" : ""}${resultR.toFixed(2)}R`}`
+            : planStatus === "draft" ? "DRAFT" : planStatus === "replace_requested" ? "REPLACING" : "PENDING";
+          const compactLabel = isH1ImpulsePreview
+            ? `${statusLabel} · ${candidate.direction === "long" ? "BUY" : "SELL"}`
+            : `${candidate.direction === "long" ? "BUY" : "SELL"} · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
+          const detailLabel = isH1ImpulsePreview
+            ? `${statusLabel} · H1 Impulse · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`
+            : `${statusLabel} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`;
+          const canEdit = isH1ImpulsePreview
+            ? candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(planStatus)
+            : ["draft", "approved", "armed"].includes(planStatus);
           const isSelected = selectedSetupId === candidate.id;
           const isEditing = manualAiEditSetupId === candidate.id;
           const isDimmed = selectedSetupId !== null && !isSelected;
           return (
             <div
-              key={`manual-ai:${candidate.id}`}
+              key={`setup:${candidate.id}`}
               aria-label={`${detailLabel}. Click để chọn setup.`}
               className={`pointer-events-auto absolute overflow-visible border border-dashed bg-transparent text-left transition ${
                 isEditing
                   ? "z-[40] border-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.28)]"
                   : isSelected
                     ? "z-[38] border-yellow-200 shadow-[0_0_10px_rgba(250,204,21,0.28)]"
-                    : "z-[32] border-yellow-300/55 shadow-[0_0_4px_rgba(250,204,21,0.12)] hover:border-yellow-200/90"
+                    : isH1ImpulsePreview
+                      ? `z-[32] ${h1PreviewBoxClass(outcomeStatus)}`
+                      : "z-[32] border-yellow-300/55 shadow-[0_0_4px_rgba(250,204,21,0.12)] hover:border-yellow-200/90"
               } ${isDimmed ? "opacity-35" : "opacity-100"}`}
               style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
               title={`${detailLabel}\nEntry ${candidate.entry} · SL ${candidate.stop_loss} · TP ${candidate.take_profit[0]}\nExpires ${candidate.expires_at ?? "--"}`}
@@ -2149,7 +2311,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
               ) : null}
               <span className={`absolute right-0 top-[-24px] z-30 whitespace-nowrap rounded border px-1.5 py-0.5 text-[9px] font-black shadow-lg ${
                 isSelected
-                  ? "border-yellow-200/80 bg-yellow-950/95 text-yellow-100"
+                  ? isH1ImpulsePreview ? h1PreviewLabelClass(outcomeStatus) : "border-yellow-200/80 bg-yellow-950/95 text-yellow-100"
                   : candidate.direction === "long"
                     ? "border-emerald-300/50 bg-emerald-950/90 text-emerald-100"
                     : "border-rose-300/50 bg-rose-950/90 text-rose-100"
@@ -2240,19 +2402,29 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           atr={selectedCandleAtr}
           atrTimeframe={selectedCandleAtrTimeframe}
           candle={selectedCandle}
+          canPreviewH1Impulse={canPreviewSelectedH1Impulse}
+          previewError={h1PreviewError}
+          previewLoading={h1PreviewLoading}
           timeframe={payload.timeframe}
           timezone={payload.layers.intraday_map.timezone || "UTC"}
+          onPreviewH1Impulse={(riskReward) => { void addH1SetupPreview(riskReward); }}
           onClose={() => setSelectedCandle(null)}
         />
       ) : null}
       {manualAiLevelEdit && !manualAiLevelEdit.dragging ? (
         <ManualAiLevelEditDialog
+          playbook={manualAiLevelEdit.candidate.playbook}
           side={manualAiLevelEdit.candidate.direction === "long" ? "buy" : "sell"}
           status={manualAiLevelEdit.status}
           levels={manualAiLevelEdit.levels}
           original={manualAiLevelEdit.original}
           error={manualAiLevelEdit.error}
           saving={manualAiLevelEdit.saving}
+          entrySource={manualAiLevelEdit.entrySource}
+          entryOptions={readEntryOptions(manualAiLevelEdit.candidate.metadata.entry_options)}
+          rrMin={1.5}
+          rrMax={4}
+          onEntrySourceSelect={selectSetupEntrySource}
           onLevelsChange={updateManualAiEditLevels}
           onApply={() => { void applyManualAiLevelEdit(); }}
           onCancel={exitManualAiSetupInteraction}
@@ -2271,6 +2443,38 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       ) : null}
     </div>
   );
+}
+
+function h1PreviewBoxClass(status: string): string {
+  if (status === "win") return "border-emerald-300/80 shadow-[0_0_10px_rgba(52,211,153,0.24)] hover:border-emerald-200";
+  if (status === "loss") return "border-rose-300/80 shadow-[0_0_10px_rgba(251,113,133,0.24)] hover:border-rose-200";
+  if (status === "ambiguous") return "border-amber-300/80 shadow-[0_0_10px_rgba(251,191,36,0.24)] hover:border-amber-200";
+  return "border-cyan-300/65 shadow-[0_0_8px_rgba(34,211,238,0.18)] hover:border-cyan-200";
+}
+
+function h1PreviewLabelClass(status: string): string {
+  if (status === "win") return "border-emerald-200/80 bg-emerald-950/95 text-emerald-100";
+  if (status === "loss") return "border-rose-200/80 bg-rose-950/95 text-rose-100";
+  if (status === "ambiguous") return "border-amber-200/80 bg-amber-950/95 text-amber-100";
+  return "border-cyan-200/80 bg-cyan-950/95 text-cyan-100";
+}
+
+function readEntryOptions(value: unknown): Array<{ source: string; label: string; price: number }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const option = item as Record<string, unknown>;
+    if (typeof option.source !== "string" || typeof option.label !== "string" || typeof option.price !== "number") return [];
+    return [{ source: option.source, label: option.label, price: option.price }];
+  });
+}
+
+function setupEntrySourceLabel(candidate: SetupCandidate): string {
+  for (const key of ["entry_source", "entry_model", "trigger_method"]) {
+    const value = candidate.metadata[key];
+    if (typeof value === "string" && value.trim()) return value.replace(/_/g, " ");
+  }
+  return "strategy calculated";
 }
 
 function filterVisibleM15Triggers(triggers: M15TriggerOverlay[]): M15TriggerOverlay[] {

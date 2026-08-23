@@ -53,7 +53,7 @@ ManualAiCancelType = Literal[
 
 class ManualAiPartialTakeProfit(BaseModel):
     enabled: bool = True
-    trigger_r: float = Field(default=1.0, ge=0.75, le=1.5)
+    trigger_r: float = Field(default=1.25, ge=0.75, le=1.5)
     close_fraction: float = Field(default=0.5, ge=0.25, le=0.5)
     move_stop_to: Literal["breakeven", "unchanged"] = "breakeven"
     breakeven_buffer: float = Field(default=0, ge=0, le=10)
@@ -82,13 +82,15 @@ class ManualAiCandidate(BaseModel):
     stop_reason: str = Field(min_length=1, max_length=2_000)
     target_reason: str = Field(min_length=1, max_length=2_000)
     confidence: float = Field(ge=0, le=1)
+    entry_source: str = Field(default="human_custom", min_length=1, max_length=100)
+    entry_options: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
 
 
 class ManualAiPlanImportRequest(BaseModel):
     schema_version: Literal[1]
     as_of: str
     symbol: str = "XAUUSD"
-    playbook: Literal["manual_ai_v1"]
+    playbook: Literal["manual_ai_v1", "h1_impulse_retest_v1"]
     analysis_timeframes: dict[str, str]
     market_context: dict[str, Any] = Field(default_factory=dict)
     candidates: list[ManualAiCandidate] = Field(min_length=1, max_length=3)
@@ -120,6 +122,14 @@ class ManualAiLevelsUpdateRequest(BaseModel):
     entry_price: float = Field(gt=0)
     stop_loss: float = Field(gt=0)
     take_profit: float = Field(gt=0)
+    entry_source: str = Field(default="human_custom", min_length=1, max_length=100)
+
+
+class H1ImpulsePreviewRequest(BaseModel):
+    symbol: str = Field(default="XAUUSD", min_length=1, max_length=32)
+    signal_candle_time: str = Field(min_length=1, max_length=64)
+    as_of: str | None = Field(default=None, max_length=64)
+    risk_reward: float = Field(default=2.5, ge=1.5, le=4)
 
 
 class ZoneOverrideRequest(BaseModel):

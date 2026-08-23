@@ -7,38 +7,64 @@ export type ManualAiEditableLevels = {
 };
 
 type Props = {
+  playbook?: string;
   side: "buy" | "sell";
   status: string;
   levels: ManualAiEditableLevels;
   original: ManualAiEditableLevels;
   error: string | null;
   saving: boolean;
+  entrySource?: string;
+  entryOptions?: Array<{ source: string; label: string; price: number }>;
+  rrMin?: number;
+  rrMax?: number;
+  onEntrySourceSelect?: (source: string, price: number) => void;
   onLevelsChange: (levels: ManualAiEditableLevels) => void;
   onApply: () => void;
   onCancel: () => void;
 };
 
-export function ManualAiLevelEditDialog({ side, status, levels, original, error, saving, onLevelsChange, onApply, onCancel }: Props) {
+export function ManualAiLevelEditDialog({ playbook = "manual_ai_v1", side, status, levels, original, error, saving, entrySource, entryOptions = [], rrMin = 1.5, rrMax = 4, onEntrySourceSelect, onLevelsChange, onApply, onCancel }: Props) {
   const risk = Math.abs(levels.entry - levels.stopLoss);
   const reward = Math.abs(levels.takeProfit - levels.entry);
   const rr = risk > 0 ? reward / risk : 0;
   const validGeometry = side === "buy"
     ? levels.stopLoss < levels.entry && levels.entry < levels.takeProfit
     : levels.takeProfit < levels.entry && levels.entry < levels.stopLoss;
-  const levelsValid = validGeometry && rr >= 1.5 && rr <= 4;
+  const levelsValid = validGeometry && rr >= rrMin && rr <= rrMax;
   const brokerReplace = status === "armed" || status === "replace_requested";
+  const h1Impulse = playbook === "h1_impulse_retest_v1";
   return (
     <div className="pointer-events-auto absolute bottom-4 left-1/2 z-[90] w-[min(720px,calc(100%-2rem))] -translate-x-1/2 rounded-xl border border-yellow-300/40 bg-ink-950/95 p-3 shadow-2xl backdrop-blur" onPointerDown={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
-          <div><div className="text-sm font-bold text-yellow-100">Chỉnh Manual AI · kéo tiếp hoặc nhập giá</div>
+          <div><div className="text-sm font-bold text-yellow-100">Chỉnh {h1Impulse ? "H1 Impulse" : "Manual AI"} · kéo tiếp hoặc nhập giá</div>
           <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
           {brokerReplace
             ? "Limit đã nằm trên MT5. Worker sẽ hủy ticket cũ, kiểm tra chưa fill, tính lại lot và đặt ticket mới."
-            : "Plan chưa có pending order trên broker nên backend có thể cập nhật trực tiếp."}
+            : h1Impulse ? "Preview local: chọn nhanh nguồn Entry hoặc kéo trực tiếp các mức giá." : "Plan chưa có pending order trên broker nên backend có thể cập nhật trực tiếp."}
           </p></div>
           <div className={`shrink-0 rounded border px-2 py-1 text-xs font-black ${levelsValid ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "border-rose-400/30 bg-rose-400/10 text-rose-200"}`}>{rr.toFixed(2)}R</div>
         </div>
-        {!levelsValid ? <div className="mt-2 text-[10px] font-medium text-rose-300">Kiểm tra lại thứ tự giá và giữ R:R trong khoảng 1.5R–4.0R.</div> : null}
+        {!levelsValid ? <div className="mt-2 text-[10px] font-medium text-rose-300">Kiểm tra lại thứ tự giá và giữ R:R trong khoảng {rrMin.toFixed(1)}R–{rrMax.toFixed(1)}R.</div> : null}
+        {entryOptions.length > 0 && onEntrySourceSelect ? (
+          <div className="mt-2">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-cyan-200">Entry source</div>
+            <div className="flex flex-wrap gap-1.5">
+              {entryOptions.map((option) => (
+                <button
+                  key={option.source}
+                  className={`rounded border px-2 py-1 text-[10px] ${entrySource === option.source ? "border-cyan-300 bg-cyan-300/15 text-cyan-100" : "border-ink-600 text-slate-400 hover:border-cyan-400/60"}`}
+                  disabled={saving}
+                  type="button"
+                  onClick={() => onEntrySourceSelect(option.source, option.price)}
+                >
+                  {option.label} · {option.price.toFixed(2)}
+                </button>
+              ))}
+              <button className={`rounded border px-2 py-1 text-[10px] ${entrySource === "human_custom" ? "border-amber-300 bg-amber-300/15 text-amber-100" : "border-ink-600 text-slate-400"}`} type="button" onClick={() => onEntrySourceSelect("human_custom", levels.entry)}>Custom</button>
+            </div>
+          </div>
+        ) : null}
         <div className="mt-2 grid grid-cols-3 gap-2">
           <LevelInput label="Entry" tone="cyan" oldValue={original.entry} value={levels.entry} disabled={saving} onChange={(entry) => onLevelsChange({ ...levels, entry })} />
           <LevelInput label="Stop Loss" tone="rose" oldValue={original.stopLoss} value={levels.stopLoss} disabled={saving} onChange={(stopLoss) => onLevelsChange({ ...levels, stopLoss })} />

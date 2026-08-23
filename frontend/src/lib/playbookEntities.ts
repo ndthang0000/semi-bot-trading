@@ -17,6 +17,7 @@ export const playbookAddEntityKinds: Record<PlaybookKey, AddEntityMenuKind[]> = 
   sr_breakout_v1: ["support", "resistance"],
   manual_ai_v1: ["manual_ai"],
   liquidity_sweep_reclaim_v1: ["buy_side_liquidity", "sell_side_liquidity"],
+  h1_impulse_retest_v1: [],
 };
 
 /** Multiple selected playbooks expose the union of their valid entity types. */

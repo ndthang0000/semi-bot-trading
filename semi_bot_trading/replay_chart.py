@@ -8,6 +8,7 @@ from .chart import (
     build_m15_signal_snapshot,
     build_m15_trigger_overlays,
     build_atr_snapshot,
+    build_h1_impulse_marker_layer,
     build_rsi_snapshot,
     load_chart_candles,
     load_chart_trades,
@@ -231,6 +232,13 @@ def build_realtime_replay_payload(
             "rsi": build_rsi_snapshot(conn, symbol, ["H1"], period=14, end=range_end),
             "trades": load_chart_trades(conn, symbol, range_start, range_end, allowed_playbooks=allowed_playbooks),
             "setup_candidates": setup_candidates,
+            "h1_impulse_markers": build_h1_impulse_marker_layer(
+                conn,
+                symbol,
+                timeframe,
+                candles,
+                config.strategy,
+            ),
             "m15_triggers": m15_triggers,
             "m15_signal": m15_signal,
             "intraday_map": build_intraday_map(

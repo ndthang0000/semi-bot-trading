@@ -42,7 +42,7 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
   const [expiresInMinutes, setExpiresInMinutes] = useState("");
   const [reason, setReason] = useState("");
   const [partialEnabled, setPartialEnabled] = useState(true);
-  const [partialTriggerR, setPartialTriggerR] = useState(1);
+  const [partialTriggerR, setPartialTriggerR] = useState(1.25);
   const [partialCloseFraction, setPartialCloseFraction] = useState(0.5);
   const [partialMoveStopTo, setPartialMoveStopTo] = useState<"breakeven" | "unchanged">("breakeven");
   const [partialBreakevenBuffer, setPartialBreakevenBuffer] = useState("0");

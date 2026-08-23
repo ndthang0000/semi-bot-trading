@@ -217,6 +217,25 @@ timeout_minutes = 15
 max_sweep_atr = 1.0
 sl_buffer_atr = 0.2
 
+[strategy.playbooks.h1_impulse_retest_v1]
+# Human-approved limit execution reuses the guarded Manual AI worker lifecycle.
+# Automatic generation and backtest execution remain out of scope.
+atr_period = 14
+stop_buffer_atr = 0.1
+min_stop_atr = 0.5
+max_stop_atr = 1.2
+min_body_atr = 0.8
+min_range_atr = 0.9
+max_range_atr = 2.5
+min_body_range_ratio = 0.6
+min_close_location = 0.75
+max_close_side_wick_ratio = 0.2
+expiry_medium_body_atr = 1.2
+expiry_large_body_atr = 1.6
+expiry_hours_small = 6
+expiry_hours_medium = 12
+expiry_hours_large = 18
+
 [backtest]
 auto_accept = true
 spread = 0.30

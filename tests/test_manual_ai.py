@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -52,6 +53,85 @@ def envelope(*, rr: float = 2.0, execution_state: str = "primary", client_id: st
 
 
 class ManualAiApiTest(unittest.TestCase):
+    def test_partial_take_profit_defaults_to_1_25r_half_and_breakeven(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = copy.deepcopy(envelope(client_id="partial-default-test"))
+            del payload["candidates"][0]["partial_take_profit"]
+
+            response = client.post("/api/manual-ai/plans", json=payload)
+
+            self.assertEqual(200, response.status_code, response.text)
+            partial = response.json()["plans"][0]["partial_take_profit"]
+            self.assertEqual(
+                {
+                    "enabled": True,
+                    "trigger_r": 1.25,
+                    "close_fraction": 0.5,
+                    "move_stop_to": "breakeven",
+                    "breakeven_buffer": 0.0,
+                },
+                partial,
+            )
+
+    def test_h1_impulse_plan_preserves_playbook_entry_source_and_expiry(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = copy.deepcopy(envelope(client_id="h1-impulse-test", expires_in_minutes=720))
+            payload["playbook"] = "h1_impulse_retest_v1"
+            payload["candidates"][0]["entry_source"] = "fib_0.5"
+            payload["candidates"][0]["entry_options"] = [
+                {"source": "fib_0.5", "label": "Fib 0.5", "price": 2000.0}
+            ]
+
+            created = client.post("/api/manual-ai/plans", json=payload)
+
+            self.assertEqual(200, created.status_code, created.text)
+            plan = created.json()["plans"][0]
+            self.assertEqual("h1_impulse_retest_v1", plan["playbook"])
+            self.assertEqual("fib_0.5", plan["entry_source"])
+            self.assertEqual(720, plan["expires_in_minutes"])
+            chart = client.get(
+                "/api/chart?symbol=XAUUSD&timeframe=H1&limit=20&playbooks=h1_impulse_retest_v1"
+            )
+            setup = chart.json()["layers"]["setup_candidates"][0]
+            self.assertTrue(setup["metadata"]["execution_plan"])
+            self.assertEqual("fib_0.5", setup["metadata"]["entry_source"])
+            self.assertEqual(payload["candidates"][0]["entry_options"], setup["metadata"]["entry_options"])
+
+            edited = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={
+                    "entry_price": 2001,
+                    "stop_loss": 1991,
+                    "take_profit": 2031,
+                    "entry_source": "previous_h1_high",
+                },
+            )
+            self.assertEqual(200, edited.status_code, edited.text)
+            self.assertEqual("previous_h1_high", edited.json()["plans"][0]["entry_source"])
+
+            accepted_rr = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2041, "entry_source": "human_custom"},
+            )
+            self.assertEqual(200, accepted_rr.status_code, accepted_rr.text)
+
+            rejected_rr = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2042, "entry_source": "human_custom"},
+            )
+            self.assertEqual(422, rejected_rr.status_code)
+
     def test_import_recalculates_rr_and_approval_requires_discipline(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

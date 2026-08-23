@@ -257,6 +257,13 @@ CREATE TABLE IF NOT EXISTS alert_events (
 CREATE INDEX IF NOT EXISTS idx_alert_events_lookup
 ON alert_events(symbol, timeframe, event_type, status, created_at);
 
+CREATE TABLE IF NOT EXISTS system_alert_claims (
+    dedupe_key TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    claimed_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS live_candles (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,

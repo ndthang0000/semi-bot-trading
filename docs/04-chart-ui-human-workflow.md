@@ -110,6 +110,32 @@ zone/trade/drawing khác, đổi drawing tool hoặc nhấn `Esc` để đóng t
 drawing tool hoặc chế độ tạo zone đang active, candle selection bị vô hiệu hóa để
 không tranh pointer event.
 
+Trên timeframe H1, thẻ nến có action `Add setup preview to chart`. Trader chọn
+RR 1.5/2.0/2.5/3.0/4.0 ngay trên thẻ; action gọi calculator read-only của
+`h1_impulse_retest_v1`, thêm candidate research vào tab `Setups` và vẽ trực tiếp
+box Entry/SL/TP từ lúc signal đóng tới thời điểm exit hoặc `as_of`. Preview được
+lưu trong local chart settings để có thể so sánh nhiều signal và xóa riêng bằng
+`Remove preview`; bản thân thao tác preview không ghi database và không tự gửi
+lệnh.
+
+Khi playbook H1 Impulse Retest V1 đang bật, layer `H1 impulse candidates` đánh
+dấu các nến đã đóng có Body đạt ngưỡng. Candidate bị block là ngôi sao xám;
+signal đạt toàn bộ điều kiện là ngôi sao vàng cho cả LONG và SHORT. `Eligible
+signals only` ẩn candidate bị block. Click marker chỉ chọn nến và mở lại workflow
+inspect/preview, không tự tạo hay execute setup.
+
+Với preview eligible, trader có thể chọn nhanh nguồn Entry (previous H1 edge,
+Fib 0.382/0.5/0.618, min/max Stop ATR hoặc custom), chỉnh Entry/SL/TP rồi bấm
+`Send limit to MT5`. Sau checklist xác nhận và chọn account, UI tạo approved H1
+plan. Worker dùng cùng guardrails và cancel/replace lifecycle của Manual AI để
+đặt hoặc cập nhật pending order; H1 setup dùng cùng khoảng R:R `1.5–4.0` với Manual AI.
+Mỗi preset hiển thị Entry, SL size theo giá và theo ATR để trader so sánh trước
+khi chọn; Setup card cũng luôn hiển thị SL size của mức Entry hiện tại.
+
+Với nến lịch sử, UI gắn outcome `WIN`, `LOSS`, `OPEN`, `UNFILLED`, `BLOCKED` hoặc
+`AMBIGUOUS`. `AMBIGUOUS` dùng khi OHLC H1 không xác định được thứ tự Entry/TP/SL
+trong cùng một nến; UI không được tự nhận win khi thiếu dữ liệu timeframe thấp.
+
 ## Import weekly-plan zones
 
 Zones panel có icon import cạnh bộ đếm zone. Modal nhận nguyên JSON envelope do

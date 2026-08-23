@@ -283,12 +283,15 @@ function MobileDockButton({
 }
 
 function MobileLayersPanel() {
+  const timeframe = useChartStore((state) => state.timeframe);
   const activeZonesOnly = useChartStore((state) => state.activeZonesOnly);
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
+  const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
+  const h1ImpulseEligibleOnly = useChartStore((state) => state.h1ImpulseEligibleOnly);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
@@ -300,12 +303,15 @@ function MobileLayersPanel() {
   const setShowStructure = useChartStore((state) => state.setShowStructure);
   const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
   const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
+  const setShowH1ImpulseCandidates = useChartStore((state) => state.setShowH1ImpulseCandidates);
+  const setH1ImpulseEligibleOnly = useChartStore((state) => state.setH1ImpulseEligibleOnly);
   const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
   const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
   const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
   const setShowHistoricalLiquiditySweeps = useChartStore((state) => state.setShowHistoricalLiquiditySweeps);
   const requiredZones = new Set(selectedPlaybooks.flatMap((playbook) => playbookLayerRequirements[playbook].zones));
   const structureRequired = selectedPlaybooks.some((playbook) => playbookLayerRequirements[playbook].structure);
+  const h1ImpulseSelected = selectedPlaybooks.includes("h1_impulse_retest_v1");
 
   return (
     <div className="grid gap-2 p-4">
@@ -350,6 +356,22 @@ function MobileLayersPanel() {
         label="Nearby broken levels (≤3 ATR)"
         onChange={setShowBrokenIntradayLevels}
       />
+      {h1ImpulseSelected ? (
+        <>
+          <MobileToggleRow
+            checked={showH1ImpulseCandidates}
+            disabled={timeframe !== "H1"}
+            label="H1 impulse candidates"
+            onChange={setShowH1ImpulseCandidates}
+          />
+          <MobileToggleRow
+            checked={h1ImpulseEligibleOnly}
+            disabled={timeframe !== "H1" || !showH1ImpulseCandidates}
+            label="Eligible H1 signals only"
+            onChange={setH1ImpulseEligibleOnly}
+          />
+        </>
+      ) : null}
       <label className="flex min-h-12 items-center gap-3 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-200">
         <span className="flex-1">Trades</span>
         <select
@@ -738,6 +760,9 @@ function LayerMenu() {
   const showStructure = useChartStore((state) => state.showStructure);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
+  const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
+  const h1ImpulseEligibleOnly = useChartStore((state) => state.h1ImpulseEligibleOnly);
+  const timeframe = useChartStore((state) => state.timeframe);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
@@ -748,9 +773,12 @@ function LayerMenu() {
   const setShowStructure = useChartStore((state) => state.setShowStructure);
   const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
   const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
+  const setShowH1ImpulseCandidates = useChartStore((state) => state.setShowH1ImpulseCandidates);
+  const setH1ImpulseEligibleOnly = useChartStore((state) => state.setH1ImpulseEligibleOnly);
   const setTradeVisibilityMode = useChartStore((state) => state.setTradeVisibilityMode);
   const setImportantZonesOnly = useChartStore((state) => state.setImportantZonesOnly);
   const setMaxVisibleZones = useChartStore((state) => state.setMaxVisibleZones);
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
 
   useEffect(() => {
     if (!open) return;
@@ -764,7 +792,8 @@ function LayerMenu() {
   }, [open]);
 
   const visibleZoneCount = Object.values(zoneTypeVisibility).filter(Boolean).length;
-  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
+  const h1ImpulseSelected = selectedPlaybooks.includes("h1_impulse_retest_v1");
+  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (h1ImpulseSelected && showH1ImpulseCandidates && timeframe === "H1" ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
   const allZonesVisible = visibleZoneCount === LAYER_ITEMS.length;
 
   return (
@@ -843,6 +872,23 @@ function LayerMenu() {
               label="Nearby broken levels (≤3 ATR)"
               onChange={setShowBrokenIntradayLevels}
             />
+            {h1ImpulseSelected ? (
+              <>
+                <MenuCheck
+                  checked={showH1ImpulseCandidates}
+                  colorClass="bg-amber-300"
+                  disabled={timeframe !== "H1"}
+                  label="H1 impulse candidates"
+                  onChange={setShowH1ImpulseCandidates}
+                />
+                <MenuCheck
+                  checked={h1ImpulseEligibleOnly}
+                  disabled={timeframe !== "H1" || !showH1ImpulseCandidates}
+                  label="Eligible signals only"
+                  onChange={setH1ImpulseEligibleOnly}
+                />
+              </>
+            ) : null}
             <label className="flex items-center gap-2 rounded px-1.5 py-1 text-slate-300">
               <span className="h-2.5 w-2.5 rounded-sm bg-fuchsia-400" />
               <span className="flex-1">Trades</span>
@@ -906,6 +952,7 @@ const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "sr_breakout_v1", label: "SR Breakout V1" },
   { key: "manual_ai_v1", label: "Manual AI" },
   { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1" },
+  { key: "h1_impulse_retest_v1", label: "H1 Impulse Retest V1" },
 ];
 
 const ADD_ENTITY_OPTIONS: Array<{ kind: AddEntityKind; label: string }> = [

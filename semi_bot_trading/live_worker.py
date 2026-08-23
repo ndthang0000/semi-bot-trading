@@ -12,7 +12,7 @@ from sqlite3 import Connection
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .alerts import queue_alert, send_pending_telegram_alerts
+from .alerts import queue_alert, queue_system_alert, send_pending_telegram_alerts
 from .candles import upsert_candles, upsert_live_candle
 from .chart import build_chart_payload
 from .config import AppConfig
@@ -27,8 +27,12 @@ from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zone
 from .spread import record_spread_snapshot
 from .structure import SWING_DETECTOR, detect_and_store_break_structure, detect_and_store_swing_structure
 from .strategy.helpers import close_extreme_recovery_metrics
+from .strategy.h1_impulse_retest_v1 import (
+    build_h1_impulse_preview,
+    h1_impulse_preview_config_from_strategy,
+)
 from .strategy.liquidity_sweep_reclaim_v1 import evaluate_live_liquidity_zones
-from .zones import apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones
+from .zones import CandleSlice, apply_and_store_zone_lifecycle, detect_and_store_support_resistance_zones, latest_atr
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,7 @@ logger = logging.getLogger(__name__)
 class LiveWorkerState:
     broker_symbol: str | None = None
     last_closed_m15: str | None = None
+    last_closed_h1: str | None = None
     loop_count: int = 0
 
 
@@ -75,9 +80,10 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
     # Initialise DB schema once at startup, not on every poll iteration.
     with closing(connect(config.database)) as conn:
         init_db(conn)
+        initial_closed_h1 = latest_closed_candle_time(conn, config.symbol, "H1")
     broker_symbol = client.resolve_symbol(env.mt5_symbol, config.symbol)
     validate_live_account_startup(env, client, broker_symbol)
-    state = LiveWorkerState(broker_symbol=broker_symbol)
+    state = LiveWorkerState(broker_symbol=broker_symbol, last_closed_h1=initial_closed_h1)
     try:
         while True:
             try:
@@ -807,6 +813,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             state.last_closed_m15 = latest_m15
         if has_new_closed_m15:
             queue_m15_recovery_alert(conn, config, env)
+        queue_new_h1_impulse_alert(conn, config, env, state)
 
         # Override H1 regime to "news" during active blackout windows so that
         # strategy evaluation and the UI both reflect the news state.
@@ -1388,6 +1395,118 @@ def queue_m15_recovery_alert(conn: Connection, config: AppConfig, env: RuntimeEn
     )
 
 
+def queue_h1_impulse_body_alert(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    signal_open_time: str | None = None,
+) -> bool:
+    """Classify and notify once when a closed H1 qualifies for a chart star."""
+    if not env.live_run_detectors:
+        return False
+    period = config.strategy.h1_impulse_retest_v1_atr_period
+    rows = conn.execute(
+        """
+        SELECT open_time, close_time, open, high, low, close
+        FROM candles
+        WHERE symbol = ? AND timeframe = 'H1' AND close_time <= ?
+          AND (? IS NULL OR open_time <= ?)
+        ORDER BY open_time DESC
+        LIMIT ?
+        """,
+        (config.symbol, utc_now_iso(), signal_open_time, signal_open_time, period + 2),
+    ).fetchall()
+    if len(rows) < period:
+        return False
+    candles = [dict(row) for row in reversed(rows)]
+    atr = latest_atr(
+        [
+            CandleSlice(
+                open_time=str(candle["open_time"]),
+                open=float(candle["open"]),
+                high=float(candle["high"]),
+                low=float(candle["low"]),
+                close=float(candle["close"]),
+            )
+            for candle in candles
+        ],
+        period=period,
+    )
+    if atr is None or atr <= 0:
+        return False
+    signal = candles[-1]
+    body = abs(float(signal["close"]) - float(signal["open"]))
+    body_atr = body / atr
+    minimum = config.strategy.h1_impulse_retest_v1_min_body_atr
+    if body_atr < minimum:
+        return False
+    preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
+    normalized_candles = [
+        {
+            "time": str(candle["open_time"]),
+            "close_time": str(candle["close_time"]),
+            "open": float(candle["open"]),
+            "high": float(candle["high"]),
+            "low": float(candle["low"]),
+            "close": float(candle["close"]),
+        }
+        for candle in candles
+    ]
+    preview = build_h1_impulse_preview(
+        signal=normalized_candles[-1],
+        previous=normalized_candles[-2],
+        atr=float(atr),
+        reference_price=float(signal["close"]),
+        config=preview_config,
+    )
+    classification = "eligible" if preview["status"] == "eligible" else "needs_review"
+    dedupe_key = f"h1-impulse:{config.symbol}:{signal['close_time']}"
+    return queue_system_alert(
+        conn,
+        account_label=env.account_label,
+        symbol=config.symbol,
+        timeframe="H1",
+        event_type="h1_impulse_signal",
+        severity="important",
+        entity_ids=[str(signal["open_time"])],
+        payload={
+            "classification": classification,
+            "direction": preview["direction"],
+            "body": preview["signal"]["body"],
+            "body_atr_ratio": preview["signal"]["body_atr_ratio"],
+            "range_atr_ratio": preview["signal"]["range_atr_ratio"],
+            "body_range_ratio": preview["signal"]["body_range_ratio"],
+            "entry_source": preview["entry_source"],
+            "expiry_hours": preview["expiry_hours"],
+            "blocked_reason": preview["blocked_reason"],
+            "ohlc": preview["signal"],
+            "chart_url": env.chart_url_base,
+        },
+        dedupe_key=dedupe_key,
+    )
+
+
+def queue_new_h1_impulse_alert(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    state: LiveWorkerState,
+) -> bool:
+    latest_h1 = latest_closed_candle_time(conn, config.symbol, "H1")
+    if latest_h1 is None:
+        return False
+    if state.last_closed_h1 is None:
+        # Direct/test callers may not have run the startup baseline. Do not
+        # treat an arbitrary historical candle as a newly closed H1.
+        state.last_closed_h1 = latest_h1
+        return False
+    if latest_h1 == state.last_closed_h1:
+        return False
+    queued = queue_h1_impulse_body_alert(conn, config, env, signal_open_time=latest_h1)
+    state.last_closed_h1 = latest_h1
+    return queued
+
+
 def queue_manual_ai_lifecycle_alert(
     conn: Connection,
     config: AppConfig,
@@ -1398,6 +1517,7 @@ def queue_manual_ai_lifecycle_alert(
     normalized_status = status.lower()
     if normalized_status not in {"filled", "expired"}:
         return False
+    playbook, entry_source = plan_playbook_and_entry_source(row)
     return queue_alert(
         conn,
         account_label=env.account_label,
@@ -1407,13 +1527,14 @@ def queue_manual_ai_lifecycle_alert(
         severity="critical" if normalized_status == "filled" else "important",
         entity_ids=[str(row["id"])],
         payload={
-            "title": f"Manual AI limit {normalized_status}",
+            "title": f"{playbook} limit {normalized_status}",
             "outcome": normalized_status,
             "account": env.account_label,
             "direction": "long" if row["side"] == "buy" else "short",
             "entry": float(row["entry_price"]),
             "stop_loss": float(row["stop_loss"]),
             "take_profit": [float(row["take_profit"])],
+            "entry_source": entry_source,
         },
         dedupe_key=f"manual-ai-lifecycle:{env.account_label}:{row['id']}:{normalized_status}",
     )
@@ -1438,6 +1559,32 @@ def mark_manual_ai_filled(
     )
     conn.commit()
     queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
+
+
+def plan_playbook_and_entry_source(row: Any, replacement: dict[str, Any] | None = None) -> tuple[str, str]:
+    raw_payload = json.loads(row["raw_payload_json"] or "{}")
+    playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
+    candidates = raw_payload.get("candidates") if isinstance(raw_payload, dict) else []
+    raw_candidate = next(
+        (
+            candidate
+            for candidate in (candidates if isinstance(candidates, list) else [])
+            if isinstance(candidate, dict) and str(candidate.get("client_id")) == str(row["client_id"])
+        ),
+        {},
+    )
+    entry_source = str((replacement or {}).get("entry_source") or raw_candidate.get("entry_source") or "strategy_calculated")
+    return playbook, entry_source
+
+
+def payload_with_plan_entry_source(row: Any, entry_source: str) -> str:
+    raw_payload = json.loads(row["raw_payload_json"] or "{}")
+    candidates = raw_payload.get("candidates") if isinstance(raw_payload, dict) else []
+    for candidate in (candidates if isinstance(candidates, list) else []):
+        if isinstance(candidate, dict) and str(candidate.get("client_id")) == str(row["client_id"]):
+            candidate["entry_source"] = entry_source
+            candidate["entry_reason"] = f"Human selected entry source: {entry_source}"
+    return json.dumps(raw_payload, sort_keys=True)
 
 
 def process_manual_ai_plans(
@@ -1590,7 +1737,7 @@ def process_manual_ai_plans(
                 UPDATE manual_ai_plans
                 SET status = 'approved', entry_price = ?, stop_loss = ?, take_profit = ?,
                     risk_reward = ?, replacement_levels_json = '{}',
-                    replacement_error = NULL, cancel_conditions_json = ?,
+                    replacement_error = NULL, cancel_conditions_json = ?, raw_payload_json = ?,
                     trade_idea_id = NULL, execution_request_id = NULL, updated_at = ?
                 WHERE id = ?
                 """,
@@ -1600,6 +1747,7 @@ def process_manual_ai_plans(
                     float(replacement["take_profit"]),
                     float(replacement["risk_reward"]),
                     json.dumps(cancel_conditions, sort_keys=True),
+                    payload_with_plan_entry_source(row, str(replacement.get("entry_source") or "human_custom")),
                     now_iso,
                     plan_id,
                 ),
@@ -1729,9 +1877,10 @@ def process_manual_ai_plans(
             continue
 
         partial = json.loads(row["partial_take_profit_json"] or "{}")
+        plan_playbook, entry_source = plan_playbook_and_entry_source(row)
         candidate = {
             "id": plan_id,
-            "playbook": "manual_ai_v1",
+            "playbook": plan_playbook,
             "status": "eligible",
             "score": 1.0,
             "direction": "long" if row["side"] == "buy" else "short",
@@ -1742,7 +1891,8 @@ def process_manual_ai_plans(
             "expires_at": row["expires_at"],
             "metadata": {
                 "order_type": "limit",
-                "entry_model": "manual_ai_limit",
+                "entry_model": entry_source,
+                "entry_source": entry_source,
                 "partial_take_profit": partial,
                 "cancel_conditions": cancel_conditions,
             },

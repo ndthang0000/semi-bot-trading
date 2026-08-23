@@ -13,6 +13,8 @@ export type ManualAiPlan = {
   take_profit: number;
   risk_pct: number;
   risk_reward: number;
+  playbook: "manual_ai_v1" | "h1_impulse_retest_v1";
+  entry_source: string;
   expires_at: string;
   expires_in_minutes: number;
   partial_take_profit: {
@@ -92,6 +94,7 @@ export type ManualAiLevelsUpdate = {
   entry_price: number;
   stop_loss: number;
   take_profit: number;
+  entry_source: string;
 };
 
 export async function updateManualAiPlanLevels(

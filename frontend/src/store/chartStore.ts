@@ -6,6 +6,7 @@ import type {
   PlaybookKey,
   PriceZone,
   SelectedEntity,
+  SetupCandidate,
   TradeOrder,
   TradeFocusRequest,
   TradeVisibilityMode,
@@ -33,6 +34,7 @@ export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibil
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
   manual_ai_v1: { zones: [], structure: true },
   liquidity_sweep_reclaim_v1: { zones: ["liquidity_pool"], structure: true },
+  h1_impulse_retest_v1: { zones: [], structure: false },
 };
 
 type ChartState = {
@@ -47,6 +49,8 @@ type ChartState = {
   showStructure: boolean;
   showIntradayLevels: boolean;
   showBrokenIntradayLevels: boolean;
+  showH1ImpulseCandidates: boolean;
+  h1ImpulseEligibleOnly: boolean;
   tradeVisibilityMode: TradeVisibilityMode;
   importantZonesOnly: boolean;
   maxVisibleZones: number;
@@ -57,6 +61,7 @@ type ChartState = {
   selected: SelectedEntity | null;
   selectedSetupId: string | null;
   manualAiEditSetupId: string | null;
+  h1ImpulsePreviews: SetupCandidate[];
   zoneFocusRequest: ZoneFocusRequest | null;
   tradeFocusRequest: TradeFocusRequest | null;
   setTimeframe: (timeframe: Timeframe) => void;
@@ -71,6 +76,8 @@ type ChartState = {
   setShowStructure: (showStructure: boolean) => void;
   setShowIntradayLevels: (showIntradayLevels: boolean) => void;
   setShowBrokenIntradayLevels: (show: boolean) => void;
+  setShowH1ImpulseCandidates: (show: boolean) => void;
+  setH1ImpulseEligibleOnly: (eligibleOnly: boolean) => void;
   setTradeVisibilityMode: (mode: TradeVisibilityMode) => void;
   setImportantZonesOnly: (importantZonesOnly: boolean) => void;
   setMaxVisibleZones: (maxVisibleZones: number) => void;
@@ -82,6 +89,9 @@ type ChartState = {
   setSelected: (selected: SelectedEntity | null) => void;
   selectSetup: (setupId: string | null) => void;
   setManualAiEditSetupId: (setupId: string | null) => void;
+  addH1ImpulsePreview: (candidate: SetupCandidate) => void;
+  removeH1ImpulsePreview: (setupId: string) => void;
+  updateH1ImpulsePreviewLevels: (setupId: string, entry: number, stopLoss: number, takeProfit: number, entrySource: string) => void;
   focusZone: (zone: PriceZone) => void;
   focusTrade: (trade: TradeOrder) => void;
 };
@@ -100,6 +110,8 @@ export const useChartStore = create<ChartState>()(
       showStructure: true,
       showIntradayLevels: true,
       showBrokenIntradayLevels: false,
+      showH1ImpulseCandidates: true,
+      h1ImpulseEligibleOnly: false,
       tradeVisibilityMode: "visible",
       importantZonesOnly: true,
       maxVisibleZones: 8,
@@ -110,6 +122,7 @@ export const useChartStore = create<ChartState>()(
       selected: null,
       selectedSetupId: null,
       manualAiEditSetupId: null,
+      h1ImpulsePreviews: [],
       zoneFocusRequest: null,
       tradeFocusRequest: null,
       // Manual zone drawing is H1-only (the API rejects M15 zone creation), so
@@ -180,6 +193,8 @@ export const useChartStore = create<ChartState>()(
         })),
       setShowIntradayLevels: (showIntradayLevels) => set({ showIntradayLevels }),
       setShowBrokenIntradayLevels: (showBrokenIntradayLevels) => set({ showBrokenIntradayLevels }),
+      setShowH1ImpulseCandidates: (showH1ImpulseCandidates) => set({ showH1ImpulseCandidates }),
+      setH1ImpulseEligibleOnly: (h1ImpulseEligibleOnly) => set({ h1ImpulseEligibleOnly }),
       setTradeVisibilityMode: (tradeVisibilityMode) => set({ tradeVisibilityMode }),
       setImportantZonesOnly: (importantZonesOnly) => set({ importantZonesOnly }),
       setMaxVisibleZones: (maxVisibleZones) => set({ maxVisibleZones: Math.min(Math.max(maxVisibleZones, 1), 40) }),
@@ -213,6 +228,42 @@ export const useChartStore = create<ChartState>()(
         manualAiEditSetupId,
         ...(manualAiEditSetupId ? { selectedSetupId: manualAiEditSetupId, selected: null } : {}),
       }),
+      addH1ImpulsePreview: (candidate) => set((state) => ({
+        h1ImpulsePreviews: [
+          candidate,
+          ...state.h1ImpulsePreviews.filter((item) => item.id !== candidate.id),
+        ].slice(0, 30),
+      })),
+      removeH1ImpulsePreview: (setupId) => set((state) => ({
+        h1ImpulsePreviews: state.h1ImpulsePreviews.filter((item) => item.id !== setupId),
+        ...(state.selectedSetupId === setupId ? { selectedSetupId: null } : {}),
+      })),
+      updateH1ImpulsePreviewLevels: (setupId, entry, stopLoss, takeProfit, entrySource) => set((state) => ({
+        h1ImpulsePreviews: state.h1ImpulsePreviews.map((candidate) => {
+          if (candidate.id !== setupId) return candidate;
+          const risk = Math.abs(entry - stopLoss);
+          return {
+            ...candidate,
+            entry,
+            stop_loss: stopLoss,
+            take_profit: [takeProfit],
+            risk_reward: risk > 0 ? Math.abs(takeProfit - entry) / risk : null,
+            zone_reaction_state: "MODIFIED",
+            reason: [`Entry source: ${entrySource}`, ...candidate.reason.filter((reason) => !reason.startsWith("Entry source:"))],
+            metadata: {
+              ...candidate.metadata,
+              entry_source: entrySource,
+              human_modified: true,
+              outcome: {
+                status: "modified",
+                result_r: null,
+                bars_to_fill: null,
+                bars_held: null,
+              },
+            },
+          };
+        }),
+      })),
       focusZone: (zone) =>
         set((state) => ({
           zoneFocusRequest: {
@@ -238,11 +289,14 @@ export const useChartStore = create<ChartState>()(
         showStructure: state.showStructure,
         showIntradayLevels: state.showIntradayLevels,
         showBrokenIntradayLevels: state.showBrokenIntradayLevels,
+        showH1ImpulseCandidates: state.showH1ImpulseCandidates,
+        h1ImpulseEligibleOnly: state.h1ImpulseEligibleOnly,
         tradeVisibilityMode: state.tradeVisibilityMode,
         importantZonesOnly: state.importantZonesOnly,
         maxVisibleZones: state.maxVisibleZones,
         autoRefreshEnabled: state.autoRefreshEnabled,
         selectedPlaybooks: state.selectedPlaybooks,
+        h1ImpulsePreviews: state.h1ImpulsePreviews,
         startIndex: state.startIndex,
       }),
       merge: (persisted, current) => {
@@ -282,11 +336,12 @@ function applyPlaybookLayerRequirements(state: ChartState): Partial<ChartState> 
   const allowedEntities = allowedAddEntityKinds(state.selectedPlaybooks);
   const liquiditySelected = state.selectedPlaybooks.includes("liquidity_sweep_reclaim_v1");
   const manualAiSelected = state.selectedPlaybooks.includes("manual_ai_v1");
+  const h1ImpulseSelected = state.selectedPlaybooks.includes("h1_impulse_retest_v1");
   return {
     selectedPlaybooks: state.selectedPlaybooks,
     addEntityKind: state.addEntityKind && allowedEntities.has(state.addEntityKind) ? state.addEntityKind : null,
     showHistoricalLiquiditySweeps: liquiditySelected ? state.showHistoricalLiquiditySweeps : false,
-    selectedSetupId: manualAiSelected ? state.selectedSetupId : null,
+    selectedSetupId: manualAiSelected || h1ImpulseSelected ? state.selectedSetupId : null,
     manualAiEditSetupId: manualAiSelected ? state.manualAiEditSetupId : null,
     ...layers,
   };
@@ -299,6 +354,7 @@ export function playbookControlledLayers(
   const requiredZoneTypes = requiredZoneTypesForPlaybooks(playbooks);
   const liquidityOnly = playbooks.length === 1 && playbooks[0] === "liquidity_sweep_reclaim_v1";
   const manualAiOnly = playbooks.length === 1 && playbooks[0] === "manual_ai_v1";
+  const h1ImpulseOnly = playbooks.length === 1 && playbooks[0] === "h1_impulse_retest_v1";
   return {
     showZones: requiredZoneTypes.size > 0,
     zoneTypeVisibility: {
@@ -310,7 +366,7 @@ export function playbookControlledLayers(
       consolidation: requiredZoneTypes.has("consolidation"),
     },
     showStructure: requiresStructureForPlaybooks(playbooks),
-    tradeVisibilityMode: liquidityOnly || manualAiOnly ? "off" : currentTradeVisibility,
+    tradeVisibilityMode: liquidityOnly || manualAiOnly || h1ImpulseOnly ? "off" : currentTradeVisibility,
   };
 }
 
