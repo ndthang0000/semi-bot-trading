@@ -22,9 +22,11 @@ from .api_models import (
     ChartDrawingUpdateRequest,
     ContextOverrideRequest,
     H1ImpulsePreviewRequest,
+    H1ImpulseRevalidateRequest,
     LoginRequest,
     LogoutRequest,
     ManualAiApproveRequest,
+    ManualAiExpiryUpdateRequest,
     ManualAiLevelsUpdateRequest,
     ManualAiPlanImportRequest,
     RefreshRequest,
@@ -75,6 +77,7 @@ from .strategy.h1_impulse_retest_v1 import (
     build_h1_impulse_preview,
     evaluate_h1_impulse_preview,
     h1_impulse_preview_config_from_strategy,
+    revalidate_h1_impulse_order,
 )
 
 
@@ -265,6 +268,18 @@ def manual_ai_payload_with_entry_source(raw_json: str, client_id: str, entry_sou
     return json.dumps(payload, sort_keys=True)
 
 
+def manual_ai_payload_with_expiry(raw_json: str, client_id: str, expires_in_minutes: int) -> str:
+    payload = json_loads(raw_json, {})
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    for candidate in candidates if isinstance(candidates, list) else []:
+        if isinstance(candidate, dict) and str(candidate.get("client_id")) == client_id:
+            candidate["expires_in_minutes"] = expires_in_minutes
+    market_context = payload.get("market_context") if isinstance(payload, dict) else None
+    if isinstance(market_context, dict):
+        market_context["order_ttl_hours"] = expires_in_minutes / 60
+    return json.dumps(payload, sort_keys=True)
+
+
 def validate_manual_ai_envelope(
     request: ManualAiPlanImportRequest,
     *,
@@ -308,6 +323,17 @@ def validate_manual_ai_envelope(
                 ),
             )
         if request.playbook == "h1_impulse_retest_v1":
+            ttl_hours = candidate.expires_in_minutes / 60
+            min_ttl_hours = float(getattr(h1_preview_config, "min_order_ttl_hours", 1))
+            max_ttl_hours = float(getattr(h1_preview_config, "max_order_ttl_hours", 48))
+            if not min_ttl_hours <= ttl_hours <= max_ttl_hours:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"candidates[{index}] H1 order TTL must be between {min_ttl_hours:g} and "
+                        f"{max_ttl_hours:g} hours; calculated={ttl_hours:g}"
+                    ),
+                )
             if candidate.hard_blocked_reasons:
                 raise HTTPException(
                     status_code=422,
@@ -363,6 +389,78 @@ def validate_manual_ai_envelope(
                 )
         validated.append((candidate, risk_reward, expires_at.isoformat()))
     return validated
+
+
+def build_h1_order_revalidation(
+    conn: Any,
+    *,
+    symbol: str,
+    signal_candle_time: str,
+    direction: str,
+    entry: float,
+    stop_loss: float,
+    take_profit: float,
+    as_of: datetime,
+    preview_config: Any,
+) -> dict[str, Any]:
+    signal_time = require_timezone_aware_iso(signal_candle_time, "signal_candle_time")
+    candles = load_chart_candles(conn, symbol, "H1", 2, end=signal_candle_time)
+    if not candles or require_timezone_aware_iso(str(candles[-1]["time"]), "candle.open_time") != signal_time:
+        raise HTTPException(status_code=404, detail="Selected H1 signal candle was not found")
+    signal_close = require_timezone_aware_iso(str(candles[-1]["close_time"]), "candle.close_time")
+    if signal_close > as_of:
+        raise HTTPException(status_code=422, detail="Selected H1 signal candle has not closed")
+    execution_candles = load_chart_candles(
+        conn,
+        symbol,
+        "M5",
+        10_000,
+        start=signal_close.isoformat(),
+        end=as_of.isoformat(),
+    )
+    timeframe_used = "M5"
+    if not execution_candles:
+        execution_candles = load_chart_candles(
+            conn,
+            symbol,
+            "H1",
+            1_000,
+            start=signal_close.isoformat(),
+            end=as_of.isoformat(),
+        )
+        timeframe_used = "H1"
+    result = revalidate_h1_impulse_order(
+        direction=direction,
+        signal_close_time=signal_close.isoformat(),
+        as_of=as_of.isoformat(),
+        entry=entry,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        candles=execution_candles,
+        max_signal_age_hours=int(preview_config.max_signal_age_hours),
+    )
+    # A just-closed H1 candle may legitimately have no closed M5 candle after
+    # it yet. Older signals, however, must have post-signal evidence before a
+    # trader can renew them; otherwise entry/invalidation touches cannot be
+    # audited safely.
+    if not execution_candles and float(result["signal_age_hours"]) > 0.25:
+        missing_history_reason = "No post-signal M5/H1 candle history is available for safe revalidation."
+        result = {
+            **result,
+            "can_reorder": False,
+            "hard_blocked_reasons": [
+                *result.get("hard_blocked_reasons", []),
+                missing_history_reason,
+            ],
+        }
+    return {
+        **result,
+        "symbol": symbol,
+        "signal_candle_time": signal_time.isoformat(),
+        "timeframe_used": timeframe_used,
+        "min_order_ttl_hours": int(preview_config.min_order_ttl_hours),
+        "max_order_ttl_hours": int(preview_config.max_order_ttl_hours),
+    }
 
 
 def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | str | None = None):
@@ -626,6 +724,35 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             "outcome": outcome,
             "preview_only": True,
         }
+
+    @app.post("/api/playbooks/h1-impulse-retest/revalidate")
+    def revalidate_h1_impulse_retest(
+        body: H1ImpulseRevalidateRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        symbol = body.symbol.strip().upper()
+        validate_manual_ai_levels(
+            "buy" if body.direction == "long" else "sell",
+            body.entry,
+            body.stop_loss,
+            body.take_profit,
+            "h1_impulse_retest_v1",
+        )
+        preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
+        with connect(config.database) as conn:
+            init_db(conn)
+            result = build_h1_order_revalidation(
+                conn,
+                symbol=symbol,
+                signal_candle_time=body.signal_candle_time,
+                direction=body.direction,
+                entry=body.entry,
+                stop_loss=body.stop_loss,
+                take_profit=body.take_profit,
+                as_of=datetime.now(UTC),
+                preview_config=preview_config,
+            )
+        return result
 
     @app.get("/api/replay/timeline")
     def replay_timeline(
@@ -1945,19 +2072,87 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         return conflicts
 
     def insert_manual_ai_envelope(request: ManualAiPlanImportRequest, source: str) -> dict[str, Any]:
+        preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
         validated = validate_manual_ai_envelope(
             request,
-            h1_preview_config=h1_impulse_preview_config_from_strategy(config.strategy),
+            h1_preview_config=preview_config,
         )
-        now = utc_now_iso()
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
         raw_payload = request.model_dump(mode="json")
-        context_snapshot = {
-            "as_of": request.as_of,
-            "analysis_timeframes": request.analysis_timeframes,
-            "market_context": request.market_context,
-        }
         with connect(config.database) as conn:
             init_db(conn)
+            if request.playbook == "h1_impulse_retest_v1":
+                requested_at = require_timezone_aware_iso(request.as_of, "as_of")
+                if requested_at < now_dt - timedelta(minutes=10) or requested_at > now_dt + timedelta(minutes=1):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="H1 order TTL must start from the current approval time, not the historical signal close",
+                    )
+                signal_candle_time = str(request.market_context.get("signal_candle_time") or "")
+                if not signal_candle_time:
+                    raise HTTPException(status_code=422, detail="H1 execution requires signal_candle_time")
+                revalidations: dict[str, Any] = {}
+                for candidate, _risk_reward, _expires_at in validated:
+                    revalidation = build_h1_order_revalidation(
+                        conn,
+                        symbol=request.symbol.upper(),
+                        signal_candle_time=signal_candle_time,
+                        direction="long" if candidate.side == "buy" else "short",
+                        entry=candidate.entry_price,
+                        stop_loss=candidate.stop_loss,
+                        take_profit=candidate.take_profit,
+                        as_of=now_dt,
+                        preview_config=preview_config,
+                    )
+                    if not revalidation["can_reorder"]:
+                        raise HTTPException(
+                            status_code=422,
+                            detail={
+                                "message": "H1 signal cannot be ordered or renewed",
+                                "hard_blocked_reasons": revalidation["hard_blocked_reasons"],
+                                "revalidation": revalidation,
+                            },
+                        )
+                    if candidate.renewed_from_plan_id:
+                        parent = conn.execute(
+                            "SELECT id, symbol, status, raw_payload_json FROM manual_ai_plans WHERE id = ?",
+                            (candidate.renewed_from_plan_id,),
+                        ).fetchone()
+                        if parent is None:
+                            raise HTTPException(status_code=404, detail="Renewed H1 parent plan was not found")
+                        parent_payload = json_loads(parent["raw_payload_json"], {})
+                        if (
+                            str(parent["symbol"]) != request.symbol.upper()
+                            or str(parent["status"]) != "expired"
+                            or str(parent_payload.get("playbook")) != "h1_impulse_retest_v1"
+                        ):
+                            raise HTTPException(status_code=422, detail="Only an expired H1 Impulse plan can be renewed")
+                        parent_candidates = parent_payload.get("candidates") if isinstance(parent_payload, dict) else None
+                        parent_renewal_count = max(
+                            (
+                                int(item.get("renewal_count") or 0)
+                                for item in parent_candidates
+                                if isinstance(item, dict)
+                            ),
+                            default=0,
+                        ) if isinstance(parent_candidates, list) else 0
+                        candidate.renewal_count = min(parent_renewal_count + 1, 10)
+                    else:
+                        candidate.renewal_count = 0
+                    raw_candidates = raw_payload.get("candidates")
+                    if isinstance(raw_candidates, list):
+                        for raw_candidate in raw_candidates:
+                            if isinstance(raw_candidate, dict) and str(raw_candidate.get("client_id")) == candidate.client_id:
+                                raw_candidate["renewed_from_plan_id"] = candidate.renewed_from_plan_id
+                                raw_candidate["renewal_count"] = candidate.renewal_count
+                    revalidations[candidate.client_id] = revalidation
+                raw_payload.setdefault("market_context", {})["revalidations"] = revalidations
+            context_snapshot = {
+                "as_of": request.as_of,
+                "analysis_timeframes": request.analysis_timeframes,
+                "market_context": raw_payload.get("market_context", {}),
+            }
             rows = []
             for candidate, risk_reward, expires_at in validated:
                 existing = conn.execute(
@@ -2262,6 +2457,96 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         return {
             "plans": [manual_ai_row_to_api(item) for item in updated_rows],
             "requires_broker_replace": any(str(item["status"]) == "armed" for item in group_rows),
+        }
+
+    @app.patch("/api/manual-ai/plans/{plan_id}/expiry")
+    def update_manual_ai_plan_expiry(
+        plan_id: str,
+        request: ManualAiExpiryUpdateRequest = Body(...),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
+        expires_at = (now_dt + timedelta(minutes=request.expires_in_minutes)).isoformat()
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+            raw_payload = json_loads(row["raw_payload_json"], {})
+            if str(raw_payload.get("playbook")) != "h1_impulse_retest_v1":
+                raise HTTPException(status_code=422, detail="Custom order TTL is currently limited to H1 Impulse plans")
+            preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
+            ttl_hours = request.expires_in_minutes / 60
+            if not preview_config.min_order_ttl_hours <= ttl_hours <= preview_config.max_order_ttl_hours:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"H1 order TTL must be between {preview_config.min_order_ttl_hours} and "
+                        f"{preview_config.max_order_ttl_hours} hours"
+                    ),
+                )
+            group_rows = conn.execute(
+                """
+                SELECT * FROM manual_ai_plans
+                WHERE client_id = ? AND symbol = ?
+                  AND status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
+                """,
+                (row["client_id"], row["symbol"]),
+            ).fetchall()
+            if not group_rows:
+                raise HTTPException(status_code=409, detail="Expired plans must use Revalidate & re-order")
+            editable_statuses = {"draft", "approved", "armed"}
+            busy = sorted({str(item["status"]) for item in group_rows if str(item["status"]) not in editable_statuses})
+            if busy:
+                raise HTTPException(status_code=409, detail=f"Plan is busy ({', '.join(busy)}); wait and retry")
+            requires_broker_replace = any(str(item["status"]) == "armed" for item in group_rows)
+            for group_row in group_rows:
+                updated_payload = manual_ai_payload_with_expiry(
+                    str(group_row["raw_payload_json"]),
+                    str(group_row["client_id"]),
+                    request.expires_in_minutes,
+                )
+                if str(group_row["status"]) == "armed":
+                    replacement = json.dumps(
+                        {
+                            "entry_price": float(group_row["entry_price"]),
+                            "stop_loss": float(group_row["stop_loss"]),
+                            "take_profit": float(group_row["take_profit"]),
+                            "risk_reward": float(group_row["risk_reward"]),
+                            "entry_source": manual_ai_entry_source(raw_payload, str(group_row["client_id"])),
+                            "expires_at": expires_at,
+                            "expires_in_minutes": request.expires_in_minutes,
+                            "requested_at": now,
+                        },
+                        sort_keys=True,
+                    )
+                    conn.execute(
+                        """
+                        UPDATE manual_ai_plans
+                        SET status = 'replace_requested', replacement_levels_json = ?,
+                            replacement_error = NULL, raw_payload_json = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (replacement, updated_payload, now, group_row["id"]),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE manual_ai_plans
+                        SET expires_at = ?, raw_payload_json = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (expires_at, updated_payload, now, group_row["id"]),
+                    )
+            conn.commit()
+            updated_rows = conn.execute(
+                "SELECT * FROM manual_ai_plans WHERE client_id = ? AND symbol = ? ORDER BY account_label",
+                (row["client_id"], row["symbol"]),
+            ).fetchall()
+        return {
+            "plans": [manual_ai_row_to_api(item) for item in updated_rows],
+            "requires_broker_replace": requires_broker_replace,
         }
 
     def transition_manual_ai_plan(plan_id: str, target_status: str) -> dict[str, Any]:

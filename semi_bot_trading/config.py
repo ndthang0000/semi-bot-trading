@@ -223,6 +223,9 @@ class StrategyConfig:
     h1_impulse_retest_v1_expiry_hours_small: int = 6
     h1_impulse_retest_v1_expiry_hours_medium: int = 12
     h1_impulse_retest_v1_expiry_hours_large: int = 18
+    h1_impulse_retest_v1_min_order_ttl_hours: int = 1
+    h1_impulse_retest_v1_max_order_ttl_hours: int = 48
+    h1_impulse_retest_v1_max_signal_age_hours: int = 48
 
 
 @dataclass(frozen=True)
@@ -541,6 +544,9 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             h1_impulse_retest_v1_expiry_hours_small=int(h1_impulse_retest_v1.get("expiry_hours_small", 6)),
             h1_impulse_retest_v1_expiry_hours_medium=int(h1_impulse_retest_v1.get("expiry_hours_medium", 12)),
             h1_impulse_retest_v1_expiry_hours_large=int(h1_impulse_retest_v1.get("expiry_hours_large", 18)),
+            h1_impulse_retest_v1_min_order_ttl_hours=int(h1_impulse_retest_v1.get("min_order_ttl_hours", 1)),
+            h1_impulse_retest_v1_max_order_ttl_hours=int(h1_impulse_retest_v1.get("max_order_ttl_hours", 48)),
+            h1_impulse_retest_v1_max_signal_age_hours=int(h1_impulse_retest_v1.get("max_signal_age_hours", 48)),
         ),
         backtest=BacktestConfig(
             spread=float(backtest.get("spread", 0.30)),

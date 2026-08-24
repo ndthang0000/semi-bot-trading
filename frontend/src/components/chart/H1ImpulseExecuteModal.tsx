@@ -1,6 +1,7 @@
-import { AlertTriangle, Loader2, Send, X } from "lucide-react";
+import { Loader2, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { approveManualAiPlan, fetchManualAiWorkers, importManualAiPlans, type ManualAiWorker } from "../../api/manualAi";
+import { revalidateH1Impulse, type H1ImpulseRevalidation } from "../../api/h1Impulse";
 import type { SetupCandidate } from "../../types";
 import { reviewH1Execution } from "./h1ExecutionReview";
 
@@ -22,15 +23,21 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [draftPlanId, setDraftPlanId] = useState<string | null>(null);
-  const expiryHours = Number(candidate.metadata.expiry_hours ?? 6);
-  const signalClose = String(candidate.metadata.created_at ?? new Date().toISOString());
+  const suggestedExpiryHours = Number(candidate.metadata.expiry_hours ?? 6);
+  const parameters = isRecord(candidate.metadata.parameters) ? candidate.metadata.parameters : {};
+  const configuredMinTtl = Number(parameters.min_order_ttl_hours ?? 1);
+  const configuredMaxTtl = Number(parameters.max_order_ttl_hours ?? 48);
+  const [expiryHours, setExpiryHours] = useState(() => clampHours(suggestedExpiryHours, configuredMinTtl, configuredMaxTtl));
+  const [revalidation, setRevalidation] = useState<H1ImpulseRevalidation | null>(null);
+  const [revalidating, setRevalidating] = useState(true);
+  const signalTime = String(candidate.metadata.signal_candle_time ?? "");
   const entrySource = String(candidate.metadata.entry_source ?? "strategy_calculated");
   const executionReview = useMemo(() => reviewH1Execution(candidate), [candidate]);
   const requiresOverride = executionReview.softBlockedReasons.length > 0;
-  const expired = useMemo(() => {
-    const value = candidate.metadata.limit_expires_at;
-    return typeof value === "string" && Date.parse(value) <= Date.now();
-  }, [candidate.metadata.limit_expires_at]);
+  const renewedFromPlanId = candidate.metadata.execution_plan === true
+    && candidate.metadata.manual_ai_plan_status === "expired"
+    ? candidate.id
+    : null;
 
   useEffect(() => {
     let active = true;
@@ -46,16 +53,56 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    if (!signalTime || candidate.entry === null || candidate.stop_loss === null || typeof candidate.take_profit[0] !== "number") {
+      setRevalidating(false);
+      setError("Thiếu signal candle hoặc Entry/SL/TP để revalidate.");
+      return () => { active = false; };
+    }
+    setRevalidating(true);
+    void revalidateH1Impulse({
+      symbol: candidate.symbol,
+      signalCandleTime: signalTime,
+      direction: candidate.direction,
+      entry: candidate.entry,
+      stopLoss: candidate.stop_loss,
+      takeProfit: candidate.take_profit[0],
+    }).then((result) => {
+      if (!active) return;
+      setRevalidation(result);
+      setExpiryHours((current) => clampHours(current, result.min_order_ttl_hours, result.max_order_ttl_hours));
+    }).catch((caught) => {
+      if (active) setError(caught instanceof Error ? caught.message : "Không thể revalidate H1 signal.");
+    }).finally(() => {
+      if (active) setRevalidating(false);
+    });
+    return () => { active = false; };
+  }, [candidate.direction, candidate.entry, candidate.stop_loss, candidate.symbol, candidate.take_profit, signalTime]);
+
   const submit = async () => {
     if (candidate.entry === null || candidate.stop_loss === null || typeof candidate.take_profit[0] !== "number") return;
     setBusy(true);
     setError("");
     try {
+      const latestRevalidation = await revalidateH1Impulse({
+        symbol: candidate.symbol,
+        signalCandleTime: signalTime,
+        direction: candidate.direction,
+        entry: candidate.entry,
+        stopLoss: candidate.stop_loss,
+        takeProfit: candidate.take_profit[0],
+      });
+      setRevalidation(latestRevalidation);
+      if (!latestRevalidation.can_reorder) {
+        throw new Error(latestRevalidation.hard_blocked_reasons.join(" "));
+      }
       let planId = draftPlanId;
       if (!planId) {
+        const requestedAt = new Date().toISOString();
         const result = await importManualAiPlans({
           schema_version: 1,
-          as_of: signalClose,
+          as_of: requestedAt,
           symbol: candidate.symbol,
           playbook: "h1_impulse_retest_v1",
           analysis_timeframes: { context: "H1", structure: "M15", execution: "M5" },
@@ -63,11 +110,14 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             source: "h1_impulse_preview",
             signal_candle_time: candidate.metadata.signal_candle_time,
             atr: candidate.metadata.atr,
+            parameters: candidate.metadata.parameters,
             entry_options: candidate.metadata.entry_options,
             original_status: candidate.metadata.original_status,
             original_blocked_reasons: candidate.metadata.original_blocked_reasons,
             human_override: requiresOverride,
             override_reason: requiresOverride ? overrideReason.trim() : "",
+            order_ttl_hours: expiryHours,
+            revalidation: latestRevalidation,
           },
           candidates: [{
             client_id: `h1-impulse-${Date.now()}`,
@@ -94,6 +144,8 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             hard_blocked_reasons: executionReview.hardBlockedReasons,
             human_override: requiresOverride,
             override_reason: requiresOverride ? overrideReason.trim() : "",
+            renewed_from_plan_id: renewedFromPlanId,
+            renewal_count: Number(candidate.metadata.renewal_count ?? 0) + (renewedFromPlanId ? 1 : 0),
             entry_reason: `H1 impulse entry from ${entrySource}`,
             stop_reason: "H1 wick invalidation plus ATR buffer; human-confirmed levels",
             target_reason: `${candidate.risk_reward?.toFixed(2) ?? "--"}R target selected by trader`,
@@ -133,7 +185,9 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
     && overrideAccepted
     && overrideReason.trim().length >= 20
   );
-  const ready = !expired
+  const revalidationHardBlocks = revalidation?.hard_blocked_reasons ?? [];
+  const ready = !revalidating
+    && revalidation?.can_reorder === true
     && executionReview.hardBlockedReasons.length === 0
     && overrideReady
     && calm
@@ -146,13 +200,21 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
       <section className="max-h-[94vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-cyan-400/30 bg-ink-950 p-5 shadow-2xl">
         <header className="flex items-start gap-3">
           <Send className="mt-1 text-cyan-300" size={20} />
-          <div className="min-w-0 flex-1"><h2 className="text-lg font-bold text-slate-100">Send H1 Impulse limit to MT5</h2><p className="mt-1 text-xs text-slate-400">Tạo approved plan; worker vẫn kiểm tra spread, news, position limit và tự tính lot.</p></div>
+          <div className="min-w-0 flex-1"><h2 className="text-lg font-bold text-slate-100">{renewedFromPlanId ? "Revalidate & re-order H1 limit" : "Send H1 Impulse limit to MT5"}</h2><p className="mt-1 text-xs text-slate-400">TTL tính từ lúc arm; worker vẫn kiểm tra spread, news, position limit và tự tính lot.</p></div>
           <button className="text-slate-500 hover:text-white" type="button" onClick={onClose}><X size={19} /></button>
         </header>
         <div className="mt-4 grid grid-cols-4 gap-2 text-center font-mono text-xs">
           <Level label="ENTRY" value={candidate.entry} /><Level label="SL" value={candidate.stop_loss} /><Level label="TP" value={candidate.take_profit[0]} /><Level label="EXPIRY" value={`${expiryHours}h`} />
         </div>
         <div className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2 text-xs text-cyan-100">Entry source: <strong>{entrySource.replace(/_/g, " ")}</strong></div>
+        <div className="mt-3 rounded-lg border border-ink-700 bg-ink-900/60 p-3">
+          <div className="flex items-center justify-between gap-3 text-xs"><span className="font-bold uppercase tracking-wide text-slate-400">Order TTL</span><span className="font-mono font-bold text-cyan-200">{expiryHours}h</span></div>
+          <div className="mt-2 flex flex-wrap gap-1.5">{[6, 12, 18, 24, 48].filter((hours) => hours >= configuredMinTtl && hours <= configuredMaxTtl).map((hours) => <button key={hours} className={`rounded border px-2 py-1 text-xs ${expiryHours === hours ? "border-cyan-300 bg-cyan-300/15 text-cyan-100" : "border-ink-600 text-slate-400"}`} type="button" onClick={() => setExpiryHours(hours)}>{hours}h</button>)}</div>
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-400"><span>Custom</span><input className="w-20 rounded border border-ink-600 bg-ink-950 px-2 py-1 font-mono text-slate-100" max={configuredMaxTtl} min={configuredMinTtl} step={1} type="number" value={expiryHours} onChange={(event) => setExpiryHours(clampHours(Number(event.target.value), configuredMinTtl, configuredMaxTtl))} /><span>hours from approval</span></label>
+          <div className="mt-2 text-[10px] text-slate-500">Suggested by Body/ATR: {suggestedExpiryHours}h · Allowed {configuredMinTtl}–{configuredMaxTtl}h</div>
+        </div>
+        {revalidating ? <div className="mt-3 flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.05] p-3 text-xs text-cyan-100"><Loader2 className="animate-spin" size={14} />Revalidating signal age and untouched levels…</div> : null}
+        {revalidation ? <div className={`mt-3 rounded-lg border p-3 text-xs ${revalidation.can_reorder ? "border-emerald-400/25 bg-emerald-400/[0.06] text-emerald-100" : "border-rose-400/35 bg-rose-400/[0.08] text-rose-100"}`}><div className="font-bold">{revalidation.can_reorder ? "✓ Signal remains actionable" : "⛔ Signal cannot be renewed"}</div><div className="mt-1 text-slate-400">Age {revalidation.signal_age_hours.toFixed(1)}h / {revalidation.max_signal_age_hours}h · Checked with {revalidation.timeframe_used}</div></div> : null}
         {executionReview.softBlockedReasons.length > 0 ? (
           <ReviewReasons
             icon="⚠"
@@ -169,7 +231,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             tone="rose"
           />
         ) : null}
-        {expired ? <div className="mt-3 rounded-lg border border-rose-400/35 bg-rose-400/10 p-3 text-xs text-rose-200"><AlertTriangle className="mr-2 inline" size={14} />Signal đã hết expiry; không thể gửi MT5.</div> : null}
+        {revalidationHardBlocks.length > 0 ? <ReviewReasons icon="⛔" reasons={revalidationHardBlocks} title="Renewal blocks · cannot execute" tone="rose" /> : null}
         {requiresOverride ? (
           <div className="mt-4 grid gap-2 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] p-3">
             <div className="text-xs font-bold uppercase tracking-wide text-amber-200">Human override audit</div>
@@ -195,7 +257,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
           <Check checked={competingExposure} label="Đang có exposure XAUUSD cạnh tranh (phải bỏ chọn để gửi)." onChange={setCompetingExposure} danger />
         </div>
         {error ? <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-400/10 p-3 text-xs text-rose-200">{error}</div> : null}
-        <div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border border-ink-600 px-4 py-2 text-sm text-slate-300" disabled={busy} type="button" onClick={onClose}>Cancel</button><button className="inline-flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-ink-950 disabled:opacity-35" disabled={busy || !ready} type="button" onClick={() => { void submit(); }}>{busy ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}{requiresOverride ? "Override & arm" : "Approve & arm"}</button></div>
+        <div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border border-ink-600 px-4 py-2 text-sm text-slate-300" disabled={busy} type="button" onClick={onClose}>Cancel</button><button className="inline-flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-ink-950 disabled:opacity-35" disabled={busy || !ready} type="button" onClick={() => { void submit(); }}>{busy ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}{renewedFromPlanId ? "Re-order & arm" : requiresOverride ? "Override & arm" : "Approve & arm"}</button></div>
       </section>
     </div>
   );
@@ -209,4 +271,13 @@ function ReviewReasons({ icon, reasons, title, tone }: { icon: string; reasons: 
     ? "border-amber-400/30 bg-amber-400/[0.06] text-amber-100"
     : "border-rose-400/35 bg-rose-400/[0.08] text-rose-100";
   return <div className={`mt-3 rounded-lg border p-3 text-xs ${className}`}><div className="font-bold">{icon} {title}</div><ul className="mt-2 list-disc space-y-1 pl-4">{reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>;
+}
+
+function clampHours(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, Math.round(value)));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

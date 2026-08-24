@@ -8,6 +8,7 @@ from semi_bot_trading.strategy.h1_impulse_retest_v1 import (
     build_h1_impulse_preview,
     evaluate_h1_impulse_preview,
     expiry_hours_for_body_atr,
+    revalidate_h1_impulse_order,
 )
 
 
@@ -50,6 +51,50 @@ class H1ImpulseRetestV1Test(unittest.TestCase):
         self.assertEqual(6, expiry_hours_for_body_atr(0.81, config))
         self.assertEqual(12, expiry_hours_for_body_atr(1.2, config))
         self.assertEqual(18, expiry_hours_for_body_atr(1.6, config))
+        self.assertEqual(48, config.max_signal_age_hours)
+        self.assertEqual((1, 48), (config.min_order_ttl_hours, config.max_order_ttl_hours))
+
+    def test_revalidation_allows_untouched_signal_within_max_age(self) -> None:
+        result = revalidate_h1_impulse_order(
+            direction="long",
+            signal_close_time="2026-08-20T10:00:00+00:00",
+            as_of="2026-08-21T10:00:00+00:00",
+            entry=100,
+            stop_loss=95,
+            take_profit=110,
+            candles=[candle("2026-08-20T11:00:00+00:00", 106, 108, 102, 107)],
+            max_signal_age_hours=48,
+        )
+
+        self.assertTrue(result["can_reorder"])
+        self.assertFalse(result["entry_touched"])
+
+    def test_revalidation_blocks_consumed_or_too_old_signal(self) -> None:
+        consumed = revalidate_h1_impulse_order(
+            direction="long",
+            signal_close_time="2026-08-20T10:00:00+00:00",
+            as_of="2026-08-21T10:00:00+00:00",
+            entry=100,
+            stop_loss=95,
+            take_profit=110,
+            candles=[candle("2026-08-20T11:00:00+00:00", 104, 106, 99, 103)],
+            max_signal_age_hours=48,
+        )
+        too_old = revalidate_h1_impulse_order(
+            direction="long",
+            signal_close_time="2026-08-20T10:00:00+00:00",
+            as_of="2026-08-23T10:00:00+00:00",
+            entry=100,
+            stop_loss=95,
+            take_profit=110,
+            candles=[],
+            max_signal_age_hours=48,
+        )
+
+        self.assertFalse(consumed["can_reorder"])
+        self.assertTrue(consumed["entry_touched"])
+        self.assertFalse(too_old["can_reorder"])
+        self.assertTrue(any("maximum renewal window" in reason for reason in too_old["hard_blocked_reasons"]))
 
     def test_long_uses_previous_high_when_stop_distance_is_in_range(self) -> None:
         previous = candle("2026-08-20T10:00:00+00:00", 100, 106, 98, 102)

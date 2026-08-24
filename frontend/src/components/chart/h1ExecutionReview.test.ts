@@ -37,7 +37,7 @@ function candidate(overrides: Partial<SetupCandidate> = {}): SetupCandidate {
 
 describe("H1 execution review", () => {
   it("allows a geometry-safe setup to reach the soft override workflow", () => {
-    const review = reviewH1Execution(candidate(), Date.parse("2026-08-23T12:00:00+00:00"));
+    const review = reviewH1Execution(candidate());
 
     expect(review.originalBlocked).toBe(true);
     expect(review.softBlockedReasons).toEqual(["Body/range below minimum"]);
@@ -47,15 +47,14 @@ describe("H1 execution review", () => {
   it("recalculates hard blocks from edited levels", () => {
     const review = reviewH1Execution(
       candidate({ entry: 100, stop_loss: 99, take_profit: [102] }),
-      Date.parse("2026-08-23T12:00:00+00:00"),
     );
 
     expect(review.hardBlockedReasons.some((reason) => reason.includes("SL size"))).toBe(true);
   });
 
-  it("never allows an expired setup", () => {
-    const review = reviewH1Execution(candidate(), Date.parse("2026-08-25T12:00:00+00:00"));
+  it("does not treat the old broker TTL as signal invalidation", () => {
+    const review = reviewH1Execution(candidate());
 
-    expect(review.hardBlockedReasons).toContain("Signal has expired.");
+    expect(review.hardBlockedReasons).not.toContain("Signal has expired.");
   });
 });

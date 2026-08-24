@@ -101,13 +101,35 @@ lệ như BUY LIMIT khi Entry thấp hơn market; SHORT chỉ hợp lệ như SE
 geometry không được tự đổi thành market/stop order mà được trả về dưới dạng
 blocked reason.
 
-## Expiry và Telegram
+## Expiry, renewal và Telegram
 
-Expiry được tính từ thời điểm signal H1 đóng, theo Body/ATR:
+Body/ATR vẫn tạo **TTL gợi ý** ban đầu:
 
 - Body dưới `1.2 ATR`: 6 giờ.
 - Body từ `1.2` tới dưới `1.6 ATR`: 12 giờ.
 - Body từ `1.6 ATR` trở lên: 18 giờ.
+
+TTL của pending order tách biệt với tuổi của signal. Khi trader arm/re-order,
+TTL được tính lại từ thời điểm xác nhận hiện tại; UI có preset
+`6/12/18/24/48h` và cho nhập custom trong khoảng `1–48h`. Một signal H1 chỉ có
+thể được renew trong tối đa `48h` kể từ lúc nến đóng. Các giới hạn này nằm trong
+config dưới tên `min_order_ttl_hours`, `max_order_ttl_hours` và
+`max_signal_age_hours`.
+
+Plan đã expired vẫn là terminal để giữ đúng lịch sử. `Revalidate & re-order`
+không hồi sinh plan cũ mà tạo plan con mới, lưu `renewed_from_plan_id` và
+`renewal_count`. Trước khi tạo, Backend duyệt M5 từ lúc signal đóng (fallback H1)
+và hard-block nếu:
+
+- giá đã chạm Entry — setup đã được thị trường consume;
+- giá đã chạm SL/invalidation;
+- giá đã tới TP mà chưa chạm Entry;
+- signal quá `max_signal_age_hours`;
+- signal cũ nhưng không có candle sau signal để audit an toàn.
+
+Expiry của plan `draft/approved` có thể sửa trực tiếp. Nếu pending order đã
+`armed`, thay đổi expiry tạo `replace_requested`; worker xác nhận order cũ chưa
+fill, hủy ticket cũ rồi đặt lại cùng levels với broker expiry mới.
 
 Worker lưu mốc H1 đã xử lý và chỉ đánh giá khi xuất hiện nến H1 đóng mới; lúc
 khởi động, nến đang có trong database chỉ được dùng làm baseline nên không gửi
@@ -118,12 +140,12 @@ chart rồi queue Telegram theo hai cấp:
 - `☆ NEEDS REVIEW LONG/SHORT`: tương ứng ngôi sao xám, message liệt kê các rule
   còn bị chặn.
 
-Message còn có Body/ATR, Range/ATR, Body/range, Entry source, OHLC và expiry gợi
-ý. Global system claim theo symbol + close time bảo đảm nhiều account worker
+Message còn có Body/ATR, Range/ATR, Body/range, Entry source, OHLC và TTL gợi ý.
+Global system claim theo symbol + close time bảo đảm nhiều account worker
 dùng chung database chỉ queue một message cho cùng cây H1; worker claim đầu tiên
 sẽ dùng Telegram connection của account đó để gửi.
 
-Setup card hiển thị cả timestamp và duration đã khóa của limit, ví dụ
+Setup card hiển thị cả timestamp và duration của limit, ví dụ
 `Hết hạn 06:00 13-08 (6h)`. Preview local đọc `expiry_hours` từ calculator;
 execution plan persisted giữ lại duration từ `expires_in_minutes` trong payload.
 
@@ -154,12 +176,13 @@ Calculator phân loại lý do block thành hai nhóm và vẫn giữ `blocked_r
   Range/ATR, Body/range, close location, close-side wick và breakout nến H1
   trước. Trader có thể gửi dưới dạng discretionary override sau khi nhập lý do
   tối thiểu 20 ký tự và xác nhận đã đọc từng soft block.
-- `hard_blocked_reason`: doji, geometry Entry/SL/TP sai, stop size ngoài
-  `0.5–1.2 ATR`, limit nằm sai phía reference price hoặc signal hết hạn. Những
-  lỗi này khóa execution cho tới khi levels được sửa hoặc setup bị loại bỏ.
+- `hard_blocked_reason`: doji, geometry Entry/SL/TP sai hoặc stop size ngoài
+  `0.5–1.2 ATR`. Khi re-order còn gồm signal quá tuổi, setup đã consume,
+  invalidation/TP đã chạm hoặc thiếu lịch sử xác minh. Những lỗi này khóa
+  execution cho tới khi levels được sửa hoặc setup bị loại bỏ.
 
 `Review blocked setup` mở màn hình audit để trader thấy cả hai nhóm. Mỗi lần
-Entry/SL/TP thay đổi, UI tính lại geometry, RR, stop/ATR, limit side và expiry;
+Entry/SL/TP thay đổi, UI tính lại geometry, RR và stop/ATR;
 Backend kiểm tra lại geometry, RR, H1 ATR stop bounds, override acknowledgement
 và override reason trước khi tạo draft. Worker còn kiểm tra BUY LIMIT/SELL LIMIT
 so với giá broker ngay trước khi gửi MT5.

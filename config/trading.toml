@@ -235,6 +235,11 @@ expiry_large_body_atr = 1.6
 expiry_hours_small = 6
 expiry_hours_medium = 12
 expiry_hours_large = 18
+# Order TTL is trader-selectable at approval time. A signal itself cannot be
+# renewed indefinitely even when the original pending order never filled.
+min_order_ttl_hours = 1
+max_order_ttl_hours = 48
+max_signal_age_hours = 48
 
 [backtest]
 auto_accept = true

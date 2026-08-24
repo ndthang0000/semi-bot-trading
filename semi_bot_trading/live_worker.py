@@ -1736,7 +1736,7 @@ def process_manual_ai_plans(
                 """
                 UPDATE manual_ai_plans
                 SET status = 'approved', entry_price = ?, stop_loss = ?, take_profit = ?,
-                    risk_reward = ?, replacement_levels_json = '{}',
+                    risk_reward = ?, expires_at = ?, replacement_levels_json = '{}',
                     replacement_error = NULL, cancel_conditions_json = ?, raw_payload_json = ?,
                     trade_idea_id = NULL, execution_request_id = NULL, updated_at = ?
                 WHERE id = ?
@@ -1746,6 +1746,7 @@ def process_manual_ai_plans(
                     float(replacement["stop_loss"]),
                     float(replacement["take_profit"]),
                     float(replacement["risk_reward"]),
+                    str(replacement.get("expires_at") or row["expires_at"]),
                     json.dumps(cancel_conditions, sort_keys=True),
                     payload_with_plan_entry_source(row, str(replacement.get("entry_source") or "human_custom")),
                     now_iso,

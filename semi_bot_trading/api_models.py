@@ -90,6 +90,8 @@ class ManualAiCandidate(BaseModel):
     hard_blocked_reasons: list[str] = Field(default_factory=list, max_length=20)
     human_override: bool = False
     override_reason: str = Field(default="", max_length=2_000)
+    renewed_from_plan_id: str | None = Field(default=None, max_length=100)
+    renewal_count: int = Field(default=0, ge=0, le=10)
 
 
 class ManualAiPlanImportRequest(BaseModel):
@@ -131,11 +133,24 @@ class ManualAiLevelsUpdateRequest(BaseModel):
     entry_source: str = Field(default="human_custom", min_length=1, max_length=100)
 
 
+class ManualAiExpiryUpdateRequest(BaseModel):
+    expires_in_minutes: int = Field(ge=60, le=2_880)
+
+
 class H1ImpulsePreviewRequest(BaseModel):
     symbol: str = Field(default="XAUUSD", min_length=1, max_length=32)
     signal_candle_time: str = Field(min_length=1, max_length=64)
     as_of: str | None = Field(default=None, max_length=64)
     risk_reward: float = Field(default=2.5, ge=1.5, le=4)
+
+
+class H1ImpulseRevalidateRequest(BaseModel):
+    symbol: str = Field(default="XAUUSD", min_length=1, max_length=32)
+    signal_candle_time: str = Field(min_length=1, max_length=64)
+    direction: Literal["long", "short"]
+    entry: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    take_profit: float = Field(gt=0)
 
 
 class ZoneOverrideRequest(BaseModel):

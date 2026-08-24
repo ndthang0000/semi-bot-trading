@@ -26,6 +26,7 @@ def load_manual_ai_setup_candidates(
     symbol: str,
     allowed_playbooks: set[str] | None,
     as_of: str,
+    h1_max_signal_age_hours: int = 48,
 ) -> list[dict[str, Any]]:
     """Expose unfilled Manual AI plans through the normal setup layer."""
     rows = conn.execute(
@@ -33,11 +34,10 @@ def load_manual_ai_setup_candidates(
         SELECT * FROM manual_ai_plans
         WHERE symbol = ?
           AND execution_state IN ('primary', 'watch_only')
-          AND status IN ('draft', 'approved', 'arming', 'armed', 'replace_requested')
-          AND expires_at > ?
+          AND status IN ('draft', 'approved', 'arming', 'armed', 'replace_requested', 'expired')
         ORDER BY created_at ASC
         """,
-        (symbol, as_of),
+        (symbol,),
     ).fetchall()
     candidates: list[dict[str, Any]] = []
     grouped_rows: dict[str, list[Any]] = {}
@@ -61,8 +61,23 @@ def load_manual_ai_setup_candidates(
             ),
             {},
         )
-        status_order = {"draft": 0, "approved": 1, "arming": 2, "armed": 3, "replace_requested": 4}
+        status_order = {"expired": -1, "draft": 0, "approved": 1, "arming": 2, "armed": 3, "replace_requested": 4}
         plan_status = max((str(item["status"]) for item in group), key=lambda value: status_order.get(value, -1))
+        if all(str(item["expires_at"]) <= as_of for item in group):
+            plan_status = "expired"
+        market_context = raw_payload.get("market_context") if isinstance(raw_payload.get("market_context"), dict) else {}
+        signal_candle_time = str(market_context.get("signal_candle_time") or "")
+        if plan_status == "expired":
+            if plan_playbook != "h1_impulse_retest_v1" or not signal_candle_time:
+                continue
+            try:
+                signal_open = datetime.fromisoformat(signal_candle_time)
+                chart_as_of = datetime.fromisoformat(as_of)
+                signal_age_hours = (chart_as_of - signal_open).total_seconds() / 3600 - 1
+            except ValueError:
+                continue
+            if signal_age_hours < 0 or signal_age_hours > h1_max_signal_age_hours:
+                continue
         account_labels = sorted(str(item["account_label"]) for item in group if item["account_label"])
         replacement_errors = [
             {"account_label": item["account_label"], "error": item["replacement_error"]}
@@ -89,8 +104,8 @@ def load_manual_ai_setup_candidates(
                 "timeframe": "H1" if plan_playbook == "h1_impulse_retest_v1" else "M5",
                 "playbook": plan_playbook,
                 "direction": "long" if row["side"] == "buy" else "short",
-                "status": "waiting_confirmation",
-                "zone_reaction_state": "limit_pending",
+                "status": "expired" if plan_status == "expired" else "waiting_confirmation",
+                "zone_reaction_state": "expired" if plan_status == "expired" else "limit_pending",
                 "score": float(raw_candidate.get("confidence") or 0.5),
                 "entry": entry_price,
                 "stop_loss": stop_loss,
@@ -115,6 +130,10 @@ def load_manual_ai_setup_candidates(
                     "execution_state": str(row["execution_state"]),
                     "created_at": str(row["created_at"]),
                     "as_of": raw_payload.get("as_of"),
+                    "signal_candle_time": signal_candle_time,
+                    "atr": market_context.get("atr"),
+                    "parameters": market_context.get("parameters") or {},
+                    "limit_expires_at": str(row["expires_at"]),
                     "account_label": row["account_label"],
                     "account_labels": account_labels,
                     "order_type": "limit",
@@ -126,6 +145,8 @@ def load_manual_ai_setup_candidates(
                     "hard_blocked_reasons": raw_candidate.get("hard_blocked_reasons") or [],
                     "human_override": bool(raw_candidate.get("human_override")),
                     "override_reason": raw_candidate.get("override_reason") or "",
+                    "renewed_from_plan_id": raw_candidate.get("renewed_from_plan_id"),
+                    "renewal_count": int(raw_candidate.get("renewal_count") or 0),
                     "expiry_hours": (
                         float(raw_candidate["expires_in_minutes"]) / 60
                         if plan_playbook == "h1_impulse_retest_v1"
@@ -1130,6 +1151,7 @@ def build_chart_payload(
                 symbol,
                 allowed_playbooks,
                 datetime.now(UTC).isoformat(),
+                int(getattr(strategy_config, "h1_impulse_retest_v1_max_signal_age_hours", 48)),
             ),
         ]
     avg_body_period = (

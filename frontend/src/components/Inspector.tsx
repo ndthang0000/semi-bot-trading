@@ -14,6 +14,7 @@ import { MysticImportIcon } from "./inspector/MysticImportIcon";
 import { isZoneVisibleForPlaybooks } from "./chart/chartCore";
 import { canonicalH1EntrySource, h1EntrySourceKind } from "./chart/h1EntrySources";
 import { H1ImpulseExecuteModal } from "./chart/H1ImpulseExecuteModal";
+import { H1ExpiryEditDialog } from "./chart/H1ExpiryEditDialog";
 import { h1SetupExpiryDuration } from "./chart/setupExpiry";
 
 type InspectorProps = {
@@ -593,6 +594,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const [updatingEntryIds, setUpdatingEntryIds] = useState<Set<string>>(new Set());
   const [executeCandidate, setExecuteCandidate] = useState<SetupCandidate | null>(null);
+  const [expiryCandidate, setExpiryCandidate] = useState<SetupCandidate | null>(null);
   const visibleCandidates = candidates.filter(
     (candidate) => !rejectedIds.has(candidate.id) && !disabledPlaybooks.has(candidate.playbook),
   );
@@ -601,6 +603,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
     waiting: visibleCandidates.filter((candidate) => candidate.status === "waiting_confirmation"),
     watching: visibleCandidates.filter((candidate) => candidate.status === "watching" || watchedIds.has(candidate.id)),
     blocked: visibleCandidates.filter((candidate) => candidate.status === "blocked" && !watchedIds.has(candidate.id)),
+    expired: visibleCandidates.filter((candidate) => candidate.status === "expired"),
   };
 
   const focusCandidate = (candidate: SetupCandidate) => {
@@ -726,6 +729,18 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
           }}
         />
       ) : null}
+      {expiryCandidate ? (
+        <H1ExpiryEditDialog
+          planId={expiryCandidate.id}
+          initialHours={Number(expiryCandidate.metadata.expiry_hours ?? 6)}
+          onClose={() => setExpiryCandidate(null)}
+          onUpdated={(requiresBrokerReplace) => {
+            setExpiryCandidate(null);
+            showToast("success", requiresBrokerReplace ? "Đã yêu cầu cancel & replace với expiry mới." : "Đã cập nhật expiry mới.");
+            onChanged();
+          }}
+        />
+      ) : null}
       <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-4">
       <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
         <Target size={14} />
@@ -752,6 +767,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
                       onFocus={() => focusCandidate(candidate)}
                       onEdit={() => setManualAiEditSetupId(candidate.id)}
                       onExecute={() => setExecuteCandidate(candidate)}
+                      onEditExpiry={() => setExpiryCandidate(candidate)}
                       entryOptions={readSetupEntryOptions(candidate.metadata.entry_options)}
                       entryBusy={updatingEntryIds.has(candidate.id)}
                       onEntrySourceSelect={(option) => { void selectCandidateEntrySource(candidate, option); }}
@@ -781,6 +797,7 @@ function SetupCard({
   onFocus,
   onEdit,
   onExecute,
+  onEditExpiry,
   entryOptions,
   entryBusy,
   onEntrySourceSelect,
@@ -797,6 +814,7 @@ function SetupCard({
   onFocus: () => void;
   onEdit: () => void;
   onExecute: () => void;
+  onEditExpiry: () => void;
   entryOptions: Array<{ source: string; label: string; price: number }>;
   entryBusy: boolean;
   onEntrySourceSelect: (option: { source: string; label: string; price: number }) => void;
@@ -946,6 +964,12 @@ function SetupCard({
       </div>
       <StateMachine steps={readStateMachine(candidate.metadata.state_machine)} compact />
       <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+        {isH1ImpulsePreview && candidate.metadata.execution_plan === true && manualAiPlanStatus === "expired" ? (
+          <SetupAction label="Revalidate & re-order" onClick={onExecute} />
+        ) : null}
+        {isH1ImpulsePreview && candidate.metadata.execution_plan === true && ["draft", "approved", "armed"].includes(manualAiPlanStatus) ? (
+          <SetupAction label="Edit expiry" onClick={onEditExpiry} />
+        ) : null}
         {isH1ImpulsePreview && candidate.metadata.execution_plan !== true ? (
           <SetupAction label={candidate.status === "blocked" ? "Review blocked setup" : "Send limit to MT5"} onClick={onExecute} />
         ) : null}
@@ -956,8 +980,8 @@ function SetupCard({
           <SetupAction active={editing} label={editing ? "Editing levels" : "Edit levels"} onClick={onEdit} />
         ) : null}
         {!isH1ImpulsePreview ? <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} /> : null}
-        {!isH1ImpulsePreview || candidate.metadata.execution_plan === true ? <SetupAction label="Reject" onClick={onReject} /> : null}
-        {!isH1ImpulsePreview || candidate.metadata.execution_plan === true ? <SetupAction label={candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} /> : null}
+        {(!isH1ImpulsePreview || candidate.metadata.execution_plan === true) && manualAiPlanStatus !== "expired" ? <SetupAction label="Reject" onClick={onReject} /> : null}
+        {(!isH1ImpulsePreview || candidate.metadata.execution_plan === true) && manualAiPlanStatus !== "expired" ? <SetupAction label={candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} /> : null}
       </div>
     </div>
   );

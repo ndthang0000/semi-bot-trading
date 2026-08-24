@@ -22,6 +22,9 @@ class H1ImpulsePreviewConfig:
     expiry_hours_small: int = 6
     expiry_hours_medium: int = 12
     expiry_hours_large: int = 18
+    min_order_ttl_hours: int = 1
+    max_order_ttl_hours: int = 48
+    max_signal_age_hours: int = 48
 
 
 DEFAULT_H1_IMPULSE_PREVIEW_CONFIG = H1ImpulsePreviewConfig()
@@ -44,6 +47,9 @@ def h1_impulse_preview_config_from_strategy(strategy_config: Any) -> H1ImpulsePr
         expiry_hours_small=int(strategy_config.h1_impulse_retest_v1_expiry_hours_small),
         expiry_hours_medium=int(strategy_config.h1_impulse_retest_v1_expiry_hours_medium),
         expiry_hours_large=int(strategy_config.h1_impulse_retest_v1_expiry_hours_large),
+        min_order_ttl_hours=int(strategy_config.h1_impulse_retest_v1_min_order_ttl_hours),
+        max_order_ttl_hours=int(strategy_config.h1_impulse_retest_v1_max_order_ttl_hours),
+        max_signal_age_hours=int(strategy_config.h1_impulse_retest_v1_max_signal_age_hours),
     )
 
 
@@ -384,6 +390,83 @@ def expiry_hours_for_body_atr(body_atr_ratio: float, config: H1ImpulsePreviewCon
     if body_atr_ratio >= config.expiry_medium_body_atr:
         return config.expiry_hours_medium
     return config.expiry_hours_small
+
+
+def revalidate_h1_impulse_order(
+    *,
+    direction: str,
+    signal_close_time: str,
+    as_of: str,
+    entry: float,
+    stop_loss: float,
+    take_profit: float,
+    candles: list[dict[str, Any]],
+    max_signal_age_hours: int,
+) -> dict[str, Any]:
+    """Check whether an unfilled H1 thesis may receive a fresh pending-order TTL."""
+    signal_close = datetime.fromisoformat(signal_close_time)
+    evaluated_at = datetime.fromisoformat(as_of)
+    if signal_close.tzinfo is None or evaluated_at.tzinfo is None:
+        raise ValueError("signal_close_time and as_of must include timezone offsets")
+    signal_age_hours = max(0.0, (evaluated_at - signal_close).total_seconds() / 3600)
+    hard_blocks: list[str] = []
+    if evaluated_at < signal_close:
+        hard_blocks.append("Signal candle has not closed yet.")
+    if signal_age_hours > max_signal_age_hours:
+        hard_blocks.append(
+            f"Signal age {signal_age_hours:.1f}h exceeds the {max_signal_age_hours}h maximum renewal window."
+        )
+
+    entry_touched = False
+    invalidation_touched = False
+    target_reached_without_fill = False
+    first_entry_touch_at: str | None = None
+    first_invalidation_touch_at: str | None = None
+    first_target_touch_at: str | None = None
+    for candle in candles:
+        candle_time = str(candle.get("time") or candle.get("close_time") or "")
+        candle_close_time = str(candle.get("close_time") or candle_time)
+        if not candle_close_time:
+            continue
+        closed_at = datetime.fromisoformat(candle_close_time)
+        if closed_at <= signal_close or closed_at > evaluated_at:
+            continue
+        high = float(candle["high"])
+        low = float(candle["low"])
+        touches_entry = low <= entry if direction == "long" else high >= entry
+        touches_stop = low <= stop_loss if direction == "long" else high >= stop_loss
+        touches_target = high >= take_profit if direction == "long" else low <= take_profit
+        if touches_stop and not invalidation_touched:
+            invalidation_touched = True
+            first_invalidation_touch_at = candle_time
+        if touches_entry and not entry_touched:
+            entry_touched = True
+            first_entry_touch_at = candle_time
+        if touches_target and not entry_touched and not target_reached_without_fill:
+            target_reached_without_fill = True
+            first_target_touch_at = candle_time
+
+    if entry_touched:
+        hard_blocks.append("Entry was already touched after the H1 signal closed; the setup is consumed.")
+    if invalidation_touched:
+        hard_blocks.append("SL/invalidation was already touched after the H1 signal closed.")
+    if target_reached_without_fill:
+        hard_blocks.append("TP was reached before any valid retest fill; the setup is no longer actionable.")
+
+    return {
+        "can_reorder": not hard_blocks,
+        "evaluated_at": evaluated_at.isoformat(),
+        "signal_close_time": signal_close.isoformat(),
+        "signal_age_hours": round(signal_age_hours, 3),
+        "max_signal_age_hours": max_signal_age_hours,
+        "entry_touched": entry_touched,
+        "invalidation_touched": invalidation_touched,
+        "target_reached_without_fill": target_reached_without_fill,
+        "first_entry_touch_at": first_entry_touch_at,
+        "first_invalidation_touch_at": first_invalidation_touch_at,
+        "first_target_touch_at": first_target_touch_at,
+        "hard_blocked_reasons": hard_blocks,
+    }
 
 
 def build_entry_options(

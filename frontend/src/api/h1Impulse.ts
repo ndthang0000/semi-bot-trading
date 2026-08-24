@@ -92,7 +92,29 @@ export type H1ImpulsePreview = {
     expiry_hours_small: number;
     expiry_hours_medium: number;
     expiry_hours_large: number;
+    min_order_ttl_hours: number;
+    max_order_ttl_hours: number;
+    max_signal_age_hours: number;
   };
+};
+
+export type H1ImpulseRevalidation = {
+  can_reorder: boolean;
+  evaluated_at: string;
+  signal_candle_time: string;
+  signal_close_time: string;
+  signal_age_hours: number;
+  max_signal_age_hours: number;
+  entry_touched: boolean;
+  invalidation_touched: boolean;
+  target_reached_without_fill: boolean;
+  first_entry_touch_at: string | null;
+  first_invalidation_touch_at: string | null;
+  first_target_touch_at: string | null;
+  hard_blocked_reasons: string[];
+  timeframe_used: "M5" | "H1";
+  min_order_ttl_hours: number;
+  max_order_ttl_hours: number;
 };
 
 export async function previewH1Impulse(payload: {
@@ -114,6 +136,33 @@ export async function previewH1Impulse(payload: {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `H1 impulse preview failed with ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function revalidateH1Impulse(payload: {
+  symbol: string;
+  signalCandleTime: string;
+  direction: "long" | "short";
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+}): Promise<H1ImpulseRevalidation> {
+  const response = await authFetch("/api/playbooks/h1-impulse-retest/revalidate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      symbol: payload.symbol,
+      signal_candle_time: payload.signalCandleTime,
+      direction: payload.direction,
+      entry: payload.entry,
+      stop_loss: payload.stopLoss,
+      take_profit: payload.takeProfit,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(typeof body?.detail === "string" ? body.detail : JSON.stringify(body?.detail ?? `H1 revalidation failed (${response.status})`));
   }
   return response.json();
 }

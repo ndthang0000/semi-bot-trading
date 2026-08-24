@@ -6,7 +6,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from semi_bot_trading.db import connect
+from semi_bot_trading.db import connect, init_db
 from tests.helpers import TemporaryDirectory
 from tests.test_api import authenticated_test_client, seed_candles, write_test_config
 
@@ -53,6 +53,37 @@ def envelope(*, rr: float = 2.0, execution_state: str = "primary", client_id: st
     }
 
 
+def seed_recent_h1_signal(db_path: Path) -> str:
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    signal_open = now - timedelta(hours=2)
+    signal_close = signal_open + timedelta(hours=1)
+    m5_open = signal_close
+    with connect(db_path) as conn:
+        init_db(conn)
+        conn.execute(
+            """
+            INSERT INTO candles (id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source)
+            VALUES ('recent-h1-signal', 'XAUUSD', 'H1', ?, ?, 2010, 2025, 2005, 2020, 100, 'test')
+            """,
+            (signal_open.isoformat(), signal_close.isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO candles (id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source)
+            VALUES ('recent-m5-after-signal', 'XAUUSD', 'M5', ?, ?, 2015, 2018, 2005, 2012, 100, 'test')
+            """,
+            (m5_open.isoformat(), (m5_open + timedelta(minutes=5)).isoformat()),
+        )
+        conn.commit()
+    return signal_open.isoformat()
+
+
+def prepare_h1_payload(payload: dict, db_path: Path) -> None:
+    payload["playbook"] = "h1_impulse_retest_v1"
+    payload["market_context"]["atr"] = 20
+    payload["market_context"]["signal_candle_time"] = seed_recent_h1_signal(db_path)
+
+
 class ManualAiApiTest(unittest.TestCase):
     def test_partial_take_profit_defaults_to_1_25r_half_and_breakeven(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -88,8 +119,7 @@ class ManualAiApiTest(unittest.TestCase):
             seed_candles(db_path)
             client = authenticated_test_client(root, config_path)
             payload = copy.deepcopy(envelope(client_id="h1-impulse-test", expires_in_minutes=720))
-            payload["playbook"] = "h1_impulse_retest_v1"
-            payload["market_context"]["atr"] = 20
+            prepare_h1_payload(payload, db_path)
             payload["candidates"][0]["original_status"] = "eligible"
             payload["candidates"][0]["entry_source"] = "fib_0.5"
             payload["candidates"][0]["entry_options"] = [
@@ -110,6 +140,14 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertTrue(setup["metadata"]["execution_plan"])
             self.assertEqual("fib_0.5", setup["metadata"]["entry_source"])
             self.assertEqual(payload["candidates"][0]["entry_options"], setup["metadata"]["entry_options"])
+
+            expiry_update = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/expiry",
+                json={"expires_in_minutes": 18 * 60},
+            )
+            self.assertEqual(200, expiry_update.status_code, expiry_update.text)
+            self.assertFalse(expiry_update.json()["requires_broker_replace"])
+            self.assertEqual(18 * 60, expiry_update.json()["plans"][0]["expires_in_minutes"])
 
             edited = client.patch(
                 f"/api/manual-ai/plans/{plan['id']}/levels",
@@ -135,6 +173,40 @@ class ManualAiApiTest(unittest.TestCase):
             )
             self.assertEqual(422, rejected_rr.status_code)
 
+    def test_h1_armed_expiry_edit_requests_safe_broker_replace(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = copy.deepcopy(envelope(client_id="h1-armed-expiry", expires_in_minutes=360))
+            prepare_h1_payload(payload, db_path)
+            payload["candidates"][0]["original_status"] = "eligible"
+            created = client.post("/api/manual-ai/plans", json=payload)
+            self.assertEqual(200, created.status_code, created.text)
+            plan_id = created.json()["plans"][0]["id"]
+            with connect(db_path) as conn:
+                conn.execute("UPDATE manual_ai_plans SET status = 'armed' WHERE id = ?", (plan_id,))
+                conn.commit()
+
+            updated = client.patch(
+                f"/api/manual-ai/plans/{plan_id}/expiry",
+                json={"expires_in_minutes": 24 * 60},
+            )
+
+            self.assertEqual(200, updated.status_code, updated.text)
+            self.assertTrue(updated.json()["requires_broker_replace"])
+            with connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT status, replacement_levels_json FROM manual_ai_plans WHERE id = ?",
+                    (plan_id,),
+                ).fetchone()
+            replacement = json.loads(row["replacement_levels_json"])
+            self.assertEqual("replace_requested", row["status"])
+            self.assertEqual(24 * 60, replacement["expires_in_minutes"])
+            self.assertIn("expires_at", replacement)
+
     def test_h1_blocked_plan_requires_safe_human_override_audit(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -143,8 +215,7 @@ class ManualAiApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             client = authenticated_test_client(root, config_path)
             payload = copy.deepcopy(envelope(client_id="h1-soft-override"))
-            payload["playbook"] = "h1_impulse_retest_v1"
-            payload["market_context"]["atr"] = 20
+            prepare_h1_payload(payload, db_path)
             candidate = payload["candidates"][0]
             candidate.update(
                 {
@@ -181,8 +252,7 @@ class ManualAiApiTest(unittest.TestCase):
             write_test_config(config_path, db_path)
             client = authenticated_test_client(root, config_path)
             payload = copy.deepcopy(envelope(client_id="h1-hard-block"))
-            payload["playbook"] = "h1_impulse_retest_v1"
-            payload["market_context"]["atr"] = 20
+            prepare_h1_payload(payload, db_path)
             candidate = payload["candidates"][0]
             candidate["original_status"] = "blocked"
             candidate["soft_blocked_reasons"] = ["Close location is below minimum."]
@@ -204,6 +274,86 @@ class ManualAiApiTest(unittest.TestCase):
             candidate["override_reason"] = ""
             resolved = client.post("/api/manual-ai/plans", json=payload)
             self.assertEqual(200, resolved.status_code, resolved.text)
+
+    def test_h1_expired_plan_can_create_audited_child_when_signal_is_untouched(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            client = authenticated_test_client(root, config_path)
+            parent_payload = copy.deepcopy(envelope(client_id="h1-renew-parent", expires_in_minutes=60))
+            prepare_h1_payload(parent_payload, db_path)
+            parent_payload["candidates"][0]["original_status"] = "eligible"
+
+            parent_response = client.post("/api/manual-ai/plans", json=parent_payload)
+            self.assertEqual(200, parent_response.status_code, parent_response.text)
+            parent_id = parent_response.json()["plans"][0]["id"]
+            with connect(db_path) as conn:
+                conn.execute("UPDATE manual_ai_plans SET status = 'expired' WHERE id = ?", (parent_id,))
+                conn.commit()
+
+            child_payload = copy.deepcopy(parent_payload)
+            child_payload["as_of"] = datetime.now(UTC).isoformat()
+            child = child_payload["candidates"][0]
+            child["client_id"] = "h1-renew-child"
+            child["renewed_from_plan_id"] = parent_id
+            # Backend owns the audit counter; callers cannot forge it.
+            child["renewal_count"] = 7
+            child["expires_in_minutes"] = 12 * 60
+
+            renewed = client.post("/api/manual-ai/plans", json=child_payload)
+
+            self.assertEqual(200, renewed.status_code, renewed.text)
+            renewed_plan = renewed.json()["plans"][0]
+            self.assertEqual(12 * 60, renewed_plan["expires_in_minutes"])
+            with connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT raw_payload_json FROM manual_ai_plans WHERE id = ?",
+                    (renewed_plan["id"],),
+                ).fetchone()
+            persisted = json.loads(row["raw_payload_json"])
+            self.assertEqual(parent_id, persisted["candidates"][0]["renewed_from_plan_id"])
+            self.assertEqual(1, persisted["candidates"][0]["renewal_count"])
+            self.assertTrue(persisted["market_context"]["revalidations"]["h1-renew-child"]["can_reorder"])
+
+    def test_h1_revalidation_blocks_a_signal_after_entry_touch(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            signal_time = seed_recent_h1_signal(db_path)
+            with connect(db_path) as conn:
+                signal_close = datetime.fromisoformat(signal_time) + timedelta(hours=1)
+                conn.execute(
+                    """
+                    INSERT INTO candles (id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source)
+                    VALUES ('recent-m5-entry-touch', 'XAUUSD', 'M5', ?, ?, 2006, 2008, 1999, 2004, 100, 'test')
+                    """,
+                    (
+                        (signal_close + timedelta(minutes=5)).isoformat(),
+                        (signal_close + timedelta(minutes=10)).isoformat(),
+                    ),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+
+            response = client.post(
+                "/api/playbooks/h1-impulse-retest/revalidate",
+                json={
+                    "symbol": "XAUUSD",
+                    "signal_candle_time": signal_time,
+                    "direction": "long",
+                    "entry": 2000,
+                    "stop_loss": 1990,
+                    "take_profit": 2020,
+                },
+            )
+
+            self.assertEqual(200, response.status_code, response.text)
+            self.assertFalse(response.json()["can_reorder"])
+            self.assertTrue(response.json()["entry_touched"])
 
     def test_import_recalculates_rr_and_approval_requires_discipline(self) -> None:
         with TemporaryDirectory() as temp_dir:

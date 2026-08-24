@@ -6,7 +6,7 @@ export type H1ExecutionReview = {
   hardBlockedReasons: string[];
 };
 
-export function reviewH1Execution(candidate: SetupCandidate, nowMs = Date.now()): H1ExecutionReview {
+export function reviewH1Execution(candidate: SetupCandidate): H1ExecutionReview {
   const metadata = candidate.metadata;
   const originalBlocked = metadata.original_status === "blocked" || candidate.status === "blocked";
   const softBlockedReasons = readStringList(metadata.soft_blocked_reasons);
@@ -42,21 +42,7 @@ export function reviewH1Execution(candidate: SetupCandidate, nowMs = Date.now())
       }
     }
 
-    const referencePrice = Number(metadata.reference_price ?? 0);
-    if (referencePrice > 0) {
-      const validLimit = candidate.direction === "long" ? entry < referencePrice : entry > referencePrice;
-      if (!validLimit) {
-        hardBlockedReasons.push(
-          candidate.direction === "long"
-            ? "BUY LIMIT entry must be below the signal reference price."
-            : "SELL LIMIT entry must be above the signal reference price.",
-        );
-      }
-    }
   }
-
-  const expiresAt = typeof metadata.limit_expires_at === "string" ? Date.parse(metadata.limit_expires_at) : NaN;
-  if (Number.isFinite(expiresAt) && expiresAt <= nowMs) hardBlockedReasons.push("Signal has expired.");
 
   return {
     originalBlocked,

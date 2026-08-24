@@ -112,3 +112,19 @@ export async function updateManualAiPlanLevels(
   }
   return response.json();
 }
+
+export async function updateManualAiPlanExpiry(
+  planId: string,
+  expiresInMinutes: number,
+): Promise<{ plans: ManualAiPlan[]; requires_broker_replace: boolean }> {
+  const response = await authFetch(`/api/manual-ai/plans/${encodeURIComponent(planId)}/expiry`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expires_in_minutes: expiresInMinutes }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(typeof body?.detail === "string" ? body.detail : `Update expiry failed (${response.status})`);
+  }
+  return response.json();
+}
