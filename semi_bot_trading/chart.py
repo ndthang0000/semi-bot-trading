@@ -34,7 +34,7 @@ def load_manual_ai_setup_candidates(
         SELECT * FROM manual_ai_plans
         WHERE symbol = ?
           AND execution_state IN ('primary', 'watch_only')
-          AND status IN ('draft', 'approved', 'arming', 'armed', 'replace_requested', 'expired')
+          AND status IN ('draft', 'approved', 'arming', 'armed', 'replace_requested', 'expired', 'cancelled')
         ORDER BY created_at ASC
         """,
         (symbol,),
@@ -48,6 +48,10 @@ def load_manual_ai_setup_candidates(
         group = grouped_rows.pop(client_id, None)
         if group is None:
             continue
+        display_group = [item for item in group if str(item["status"]) != "cancelled"]
+        if not display_group:
+            continue
+        row = display_group[0]
         raw_payload = json.loads(row["raw_payload_json"] or "{}")
         plan_playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
         if allowed_playbooks is not None and plan_playbook not in allowed_playbooks:
@@ -62,8 +66,8 @@ def load_manual_ai_setup_candidates(
             {},
         )
         status_order = {"expired": -1, "draft": 0, "approved": 1, "arming": 2, "armed": 3, "replace_requested": 4}
-        plan_status = max((str(item["status"]) for item in group), key=lambda value: status_order.get(value, -1))
-        if all(str(item["expires_at"]) <= as_of for item in group):
+        plan_status = max((str(item["status"]) for item in display_group), key=lambda value: status_order.get(value, -1))
+        if all(str(item["expires_at"]) <= as_of for item in display_group):
             plan_status = "expired"
         market_context = raw_payload.get("market_context") if isinstance(raw_payload.get("market_context"), dict) else {}
         signal_candle_time = str(market_context.get("signal_candle_time") or "")
@@ -78,7 +82,11 @@ def load_manual_ai_setup_candidates(
                 continue
             if signal_age_hours < 0 or signal_age_hours > h1_max_signal_age_hours:
                 continue
-        account_labels = sorted(str(item["account_label"]) for item in group if item["account_label"])
+        account_labels = sorted(str(item["account_label"]) for item in display_group if item["account_label"])
+        account_statuses = [
+            {"account_label": str(item["account_label"] or "Default"), "status": str(item["status"])}
+            for item in sorted(group, key=lambda item: str(item["account_label"] or "Default"))
+        ]
         replacement_errors = [
             {"account_label": item["account_label"], "error": item["replacement_error"]}
             for item in group
@@ -136,6 +144,7 @@ def load_manual_ai_setup_candidates(
                     "limit_expires_at": str(row["expires_at"]),
                     "account_label": row["account_label"],
                     "account_labels": account_labels,
+                    "account_statuses": account_statuses,
                     "order_type": "limit",
                     "entry_source": entry_source,
                     "entry_options": raw_candidate.get("entry_options") or [],

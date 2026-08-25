@@ -14,12 +14,68 @@ from semi_bot_trading.chart import (
     build_m15_signal_snapshot,
     build_m15_trigger_overlays,
     filter_traded_setup_candidates,
+    load_manual_ai_setup_candidates,
     load_chart_trades,
 )
 from semi_bot_trading.db import connect, init_db
 
 
 class ChartPayloadTest(unittest.TestCase):
+    def test_expired_h1_setup_keeps_account_terminal_statuses_but_cancelled_only_group_is_hidden(self) -> None:
+        raw_payload = json.dumps(
+            {
+                "playbook": "h1_impulse_retest_v1",
+                "market_context": {
+                    "signal_candle_time": "2026-08-24T01:00:00+00:00",
+                    "atr": 20.0,
+                },
+                "candidates": [
+                    {
+                        "client_id": "mixed-client",
+                        "confidence": 0.4,
+                        "entry_source": "human_custom",
+                    }
+                ],
+            }
+        )
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                for plan_id, client_id, account_label, status in (
+                    ("mixed-expired", "mixed-client", "FTMO", "expired"),
+                    ("mixed-cancelled", "mixed-client", "Exness", "cancelled"),
+                    ("cancelled-only", "cancelled-client", "FTMO", "cancelled"),
+                ):
+                    conn.execute(
+                        """
+                        INSERT INTO manual_ai_plans (
+                            id, client_id, account_label, symbol, side, status, execution_state,
+                            entry_price, stop_loss, take_profit, risk_reward, expires_at,
+                            raw_payload_json, created_at, updated_at
+                        ) VALUES (?, ?, ?, 'XAUUSD', 'sell', ?, 'primary', 4666.2, 4681.8,
+                                  4605.0, 3.92, '2026-08-24T22:04:00+00:00', ?,
+                                  '2026-08-24T02:04:00+00:00', '2026-08-24T22:04:00+00:00')
+                        """,
+                        (plan_id, client_id, account_label, status, raw_payload),
+                    )
+                candidates = load_manual_ai_setup_candidates(
+                    conn,
+                    "XAUUSD",
+                    {"h1_impulse_retest_v1"},
+                    "2026-08-25T02:00:00+00:00",
+                )
+
+        self.assertEqual(["mixed-expired"], [candidate["id"] for candidate in candidates])
+        self.assertEqual(candidates[0]["status"], "expired")
+        self.assertEqual(
+            candidates[0]["metadata"]["account_statuses"],
+            [
+                {"account_label": "Exness", "status": "cancelled"},
+                {"account_label": "FTMO", "status": "expired"},
+            ],
+        )
+
     def test_builds_chart_payload_contract(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

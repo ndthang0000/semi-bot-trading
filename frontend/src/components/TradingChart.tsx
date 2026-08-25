@@ -219,6 +219,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const h1ImpulseEligibleOnlyRef = useRef(h1ImpulseEligibleOnly);
   const drawingToolRef = useRef(drawingTool);
   const selectedCandleRef = useRef(selectedCandle);
+  const selectedSetupIdRef = useRef(selectedSetupId);
   const h1ImpulsePreviewsRef = useRef(h1ImpulsePreviews);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
@@ -273,6 +274,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   h1ImpulseEligibleOnlyRef.current = h1ImpulseEligibleOnly;
   drawingToolRef.current = drawingTool;
   selectedCandleRef.current = selectedCandle;
+  selectedSetupIdRef.current = selectedSetupId;
   h1ImpulsePreviewsRef.current = h1ImpulsePreviews;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
   importantZonesOnlyRef.current = importantZonesOnly;
@@ -405,7 +407,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     const visibleSetupCandidates = [
       ...currentPayload.layers.setup_candidates,
       ...(selectedPlaybooksRef.current.includes("h1_impulse_retest_v1") ? h1ImpulsePreviewsRef.current : []),
-    ];
+    ].filter((candidate) => candidate.status !== "expired" || candidate.id === selectedSetupIdRef.current);
     const chartSetups = visibleSetupCandidates.flatMap((candidate) => {
       const isManualAi = candidate.metadata.manual_ai === true
         && candidate.metadata.execution_state === "primary"
@@ -561,7 +563,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   useEffect(() => {
     scheduleOverlayRecalc();
-  }, [h1ImpulsePreviews, scheduleOverlayRecalc, selectedCandle, selectedPlaybooks]);
+  }, [h1ImpulsePreviews, scheduleOverlayRecalc, selectedCandle, selectedPlaybooks, selectedSetupId]);
 
   const startOverlayInteractionSync = useCallback(() => {
     if (interactionRecalcRef.current !== null) return;

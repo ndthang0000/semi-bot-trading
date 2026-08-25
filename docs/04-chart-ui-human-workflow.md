@@ -132,6 +132,13 @@ plan. Worker dùng cùng guardrails và cancel/replace lifecycle của Manual AI
 Mỗi preset hiển thị Entry, SL size theo giá và theo ATR để trader so sánh trước
 khi chọn; Setup card cũng luôn hiển thị SL size của mức Entry hiện tại.
 
+H1 plan hết hạn gần đây vẫn được giữ trong payload để trader có thể `Revalidate
+& re-order`, nhưng được tách khỏi trạng thái live: không tính vào badge Setups,
+nằm trong nhóm `Expired` mặc định thu gọn và không vẽ risk box trên chart cho tới
+khi trader chủ động chọn card. Card expired hiển thị terminal status theo từng
+account (ví dụ `FTMO expired · Exness cancelled`). Một client group mà mọi plan
+đều đã `cancelled` không được trả về như setup độc lập.
+
 Với nến lịch sử, UI gắn outcome `WIN`, `LOSS`, `OPEN`, `UNFILLED`, `BLOCKED` hoặc
 `AMBIGUOUS`. `AMBIGUOUS` dùng khi OHLC H1 không xác định được thứ tự Entry/TP/SL
 trong cùng một nến; UI không được tự nhận win khi thiếu dữ liệu timeframe thấp.

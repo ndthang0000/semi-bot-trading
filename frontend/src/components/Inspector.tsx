@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { History, Layers, Maximize2, Minimize2, MousePointer2, Sigma, Target } from "lucide-react";
+import { ChevronDown, ChevronRight, History, Layers, Maximize2, Minimize2, MousePointer2, Sigma, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
 import { cancelManualAiPlan, rejectManualAiPlan, updateManualAiPlanLevels } from "../api/manualAi";
@@ -55,6 +55,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
       ? h1ImpulsePreviews.filter((candidate) => candidate.symbol === symbol)
       : []),
   ];
+  const activeSetupCount = setupCandidates.filter((candidate) => candidate.status !== "expired").length;
   const layerFilteredZones = showZones
     ? zones.filter(
         (zone) =>
@@ -109,7 +110,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
           >
             <Target size={16} />
             Setups
-            <span className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400">{setupCandidates.length}</span>
+            <span className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400">{activeSetupCount}</span>
           </button>
           <button
             className={`inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${
@@ -595,6 +596,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   const [updatingEntryIds, setUpdatingEntryIds] = useState<Set<string>>(new Set());
   const [executeCandidate, setExecuteCandidate] = useState<SetupCandidate | null>(null);
   const [expiryCandidate, setExpiryCandidate] = useState<SetupCandidate | null>(null);
+  const [showExpired, setShowExpired] = useState(false);
   const visibleCandidates = candidates.filter(
     (candidate) => !rejectedIds.has(candidate.id) && !disabledPlaybooks.has(candidate.playbook),
   );
@@ -605,6 +607,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
     blocked: visibleCandidates.filter((candidate) => candidate.status === "blocked" && !watchedIds.has(candidate.id)),
     expired: visibleCandidates.filter((candidate) => candidate.status === "expired"),
   };
+  const activeCandidateCount = visibleCandidates.length - grouped.expired.length;
 
   const focusCandidate = (candidate: SetupCandidate) => {
     selectSetup(candidate.id);
@@ -745,14 +748,14 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
       <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
         <Target size={14} />
         Setups
-        <span className="ml-auto normal-case tracking-normal text-slate-600">{visibleCandidates.length}/{candidates.length}</span>
+        <span className="ml-auto normal-case tracking-normal text-slate-600">{activeCandidateCount}/{candidates.length}</span>
       </div>
-      {visibleCandidates.length === 0 ? (
+      {activeCandidateCount === 0 && grouped.expired.length === 0 ? (
         <div className="rounded-md border border-dashed border-ink-700 p-3 text-xs text-slate-500">No active setup candidates</div>
       ) : (
         <div className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain pr-1">
           <div className="grid min-w-0 gap-3">
-            {Object.entries(grouped).map(([status, items]) =>
+            {Object.entries(grouped).filter(([status]) => status !== "expired").map(([status, items]) =>
               items.length > 0 ? (
                 <div key={status} className="grid min-w-0 gap-1.5">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{statusLabel(status)}</div>
@@ -780,6 +783,40 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
                 </div>
               ) : null,
             )}
+            {grouped.expired.length > 0 ? (
+              <div className="grid min-w-0 gap-1.5">
+                <button
+                  className="flex items-center gap-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 hover:text-slate-400"
+                  type="button"
+                  aria-expanded={showExpired}
+                  onClick={() => setShowExpired((current) => !current)}
+                >
+                  {showExpired ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  Expired ({grouped.expired.length})
+                </button>
+                {showExpired ? grouped.expired.map((candidate) => (
+                  <SetupCard
+                    key={candidate.id}
+                    candidate={candidate}
+                    focused={selectedSetupId === candidate.id}
+                    editing={manualAiEditSetupId === candidate.id}
+                    trigger={triggerByCandidateId.get(candidate.id) ?? null}
+                    watched={watchedIds.has(candidate.id)}
+                    onFocus={() => focusCandidate(candidate)}
+                    onEdit={() => setManualAiEditSetupId(candidate.id)}
+                    onExecute={() => setExecuteCandidate(candidate)}
+                    onEditExpiry={() => setExpiryCandidate(candidate)}
+                    entryOptions={readSetupEntryOptions(candidate.metadata.entry_options)}
+                    entryBusy={updatingEntryIds.has(candidate.id)}
+                    onEntrySourceSelect={(option) => { void selectCandidateEntrySource(candidate, option); }}
+                    onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
+                    onReject={() => { void rejectCandidate(candidate); }}
+                    disableBusy={cancellingIds.has(candidate.id)}
+                    onDisablePlaybook={() => { void disableCandidatePlaybook(candidate); }}
+                  />
+                )) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       )}
@@ -845,6 +882,7 @@ function SetupCard({
         return distanceDelta !== 0 ? distanceDelta : left.label.localeCompare(right.label);
       });
   const expiryDuration = h1SetupExpiryDuration(candidate);
+  const accountStatuses = readAccountStatuses(candidate.metadata.account_statuses);
   return (
     <div
       className={`min-w-0 overflow-hidden rounded-md border p-3 text-left transition ${
@@ -939,6 +977,16 @@ function SetupCard({
       {candidate.expires_at ? (
         <div className="mt-1 text-[11px] font-medium text-amber-300/90">
           Hết hạn {localDateTime(candidate.expires_at)}{expiryDuration ? ` (${expiryDuration})` : ""}
+        </div>
+      ) : null}
+      {accountStatuses.length > 0 ? (
+        <div className="mt-1 flex min-w-0 flex-wrap gap-x-1 text-[10px] text-slate-500">
+          {accountStatuses.map((account, index) => (
+            <span key={`${account.accountLabel}:${account.status}`}>
+              {index > 0 ? <span className="mr-1 text-slate-700">·</span> : null}
+              {account.accountLabel} <span className={account.status === "expired" ? "text-amber-300/80" : account.status === "cancelled" ? "text-slate-400" : "text-cyan-200/80"}>{account.status}</span>
+            </span>
+          ))}
         </div>
       ) : null}
       {typeof candidate.metadata.manual_ai_replace_error === "string" ? (
@@ -1149,6 +1197,16 @@ function readSetupEntryOptions(value: unknown): Array<{ source: string; label: s
     const option = item as Record<string, unknown>;
     if (typeof option.source !== "string" || typeof option.label !== "string" || typeof option.price !== "number") return [];
     return [{ source: option.source, label: option.label, price: option.price }];
+  });
+}
+
+function readAccountStatuses(value: unknown): Array<{ accountLabel: string; status: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = readObject(item);
+    const accountLabel = typeof record.account_label === "string" ? record.account_label.trim() : "";
+    const status = typeof record.status === "string" ? record.status.trim() : "";
+    return accountLabel && status ? [{ accountLabel, status }] : [];
   });
 }
 
