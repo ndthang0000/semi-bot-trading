@@ -895,6 +895,13 @@ def load_chart_trades(
                trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
                trade_orders.hidden_on_chart, trade_orders.source, trade_orders.metadata_json,
                trade_ideas.playbook, trade_ideas.direction,
+               (
+                   SELECT manual_ai_plans.client_id
+                   FROM manual_ai_plans
+                   WHERE manual_ai_plans.trade_idea_id = trade_orders.trade_idea_id
+                   ORDER BY manual_ai_plans.created_at DESC
+                   LIMIT 1
+               ) AS execution_group_id,
                trade_reviews.id AS review_id,
                trade_reviews.grade AS review_grade,
                trade_reviews.verdict AS review_verdict,
@@ -910,10 +917,7 @@ def load_chart_trades(
         LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
         WHERE trade_orders.symbol = ?
           AND trade_orders.opened_at IS NOT NULL
-          AND NOT (
-              trade_ideas.playbook = 'manual_ai_v1'
-              AND trade_orders.status NOT IN ('filled', 'closed')
-          )
+          AND trade_orders.status IN ('filled', 'closed')
           AND trade_orders.opened_at <= ?
           AND (trade_orders.closed_at IS NULL OR trade_orders.closed_at >= ?)
           {playbook_clause}
@@ -991,6 +995,11 @@ def filter_traded_setup_candidates(
 
 
 def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
+    metadata = json_loads(row["metadata_json"], {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if row_has_key(row, "execution_group_id") and row["execution_group_id"]:
+        metadata["execution_group_id"] = str(row["execution_group_id"])
     result = {
         "id": row["id"],
         "trade_idea_id": row["trade_idea_id"],
@@ -1011,7 +1020,7 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
         "pnl_r": float(row["pnl_r"]) if row["pnl_r"] is not None else None,
         "hidden_on_chart": bool(row["hidden_on_chart"]) if row_has_key(row, "hidden_on_chart") else False,
         "source": row["source"],
-        "metadata": json_loads(row["metadata_json"], {}),
+        "metadata": metadata,
     }
     if row_has_key(row, "manual_ai_plan_status"):
         result["manual_ai_plan_status"] = row["manual_ai_plan_status"]

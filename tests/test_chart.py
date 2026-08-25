@@ -213,6 +213,60 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual(len(filled_trades), 1)
         self.assertEqual(filled_trades[0]["status"], "filled")
 
+    def test_h1_limit_lifecycle_only_exposes_filled_trade_with_shared_execution_group(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_live_order(conn, status="pending_fill", zone_id="z1", playbook="h1_impulse_retest_v1")
+                conn.execute(
+                    """
+                    INSERT INTO manual_ai_plans (
+                        id, client_id, account_label, symbol, side, status, execution_state,
+                        entry_price, stop_loss, take_profit, risk_reward, expires_at,
+                        trade_idea_id, created_at, updated_at
+                    ) VALUES (
+                        'h1-plan', 'h1-shared-client', 'Default', 'XAUUSD', 'buy', 'armed', 'primary',
+                        100, 95, 110, 2.0, '2026-01-02T00:00:00+00:00',
+                        'idea-1', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+                    )
+                    """
+                )
+                pending_trades = load_chart_trades(
+                    conn,
+                    "XAUUSD",
+                    "2025-12-31T00:00:00+00:00",
+                    "2026-01-02T00:00:00+00:00",
+                    allowed_playbooks={"h1_impulse_retest_v1"},
+                )
+                conn.execute(
+                    """
+                    UPDATE trade_orders
+                    SET status = 'cancelled', closed_at = '2026-01-01T01:00:00+00:00'
+                    WHERE id = 'order-1'
+                    """
+                )
+                cancelled_trades = load_chart_trades(
+                    conn,
+                    "XAUUSD",
+                    "2025-12-31T00:00:00+00:00",
+                    "2026-01-02T00:00:00+00:00",
+                    allowed_playbooks={"h1_impulse_retest_v1"},
+                )
+                conn.execute("UPDATE trade_orders SET status = 'filled', closed_at = NULL WHERE id = 'order-1'")
+                filled_trades = load_chart_trades(
+                    conn,
+                    "XAUUSD",
+                    "2025-12-31T00:00:00+00:00",
+                    "2026-01-02T00:00:00+00:00",
+                    allowed_playbooks={"h1_impulse_retest_v1"},
+                )
+
+        self.assertEqual([], pending_trades)
+        self.assertEqual([], cancelled_trades)
+        self.assertEqual(1, len(filled_trades))
+        self.assertEqual("h1-shared-client", filled_trades[0]["metadata"]["execution_group_id"])
+
     def test_live_strategy_candle_is_opt_in_for_setup_evaluation(self) -> None:
         captured_lengths: list[int] = []
 

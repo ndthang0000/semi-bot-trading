@@ -76,6 +76,7 @@ import {
   interpolateChartX,
   readObject,
   setupToBox,
+  tradeAccountCount,
   tradeGroupSummary,
   tradeToBox,
   type CandleDatum,
@@ -2330,8 +2331,9 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           const partialDone = box.trades.some((item) => readObject(item.metadata.partial_take_profit).done === true);
           const breakevenApplied = box.trades.some((item) => readObject(item.metadata.partial_take_profit).breakeven_applied === true);
           const isGroup = box.trades.length > 1;
+          const accountCount = tradeAccountCount(box.trades);
           const label = isGroup
-            ? `${trade.playbook} ${trade.direction} ${box.trades.length} accounts: ${tradeGroupSummary(box.trades)}`
+            ? `${trade.playbook} ${trade.direction} ${accountCount} accounts: ${tradeGroupSummary(box.trades)}`
             : `${trade.playbook} ${trade.direction} ${trade.status} ${trade.pnl_r?.toFixed(2) ?? "--"}R`;
           return (
             <button
@@ -2383,7 +2385,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
                     : "border-fuchsia-200/90 bg-fuchsia-950/95 text-fuchsia-100"
                 }`}
               >
-                {isGroup ? `${box.trades.length} acct` : `${trade.pnl_r?.toFixed(2) ?? "--"}R`}
+                {isGroup ? `${accountCount} acct` : `${trade.pnl_r?.toFixed(2) ?? "--"}R`}
               </span>
               {isGroup && (!compactViewport || isSelected) ? (
                 <span className="absolute right-1 top-1 max-w-[calc(100%-4.5rem)] truncate rounded border border-slate-200/70 bg-ink-950/95 px-1 py-0.5 text-[9px] font-black text-slate-100 shadow-lg">

@@ -210,6 +210,12 @@ overlay chuẩn mới xuất hiện. Limit hết hạn hoặc bị hủy trướ
 Replay không hiển thị draft/live Manual AI hiện tại
 để tránh look-ahead.
 
+Rule `filled`/`closed` áp dụng cho cả `h1_impulse_retest_v1`: các ticket
+`cancelled` do chỉnh Entry/SL/TP và ticket `pending_fill` không được vẽ thành
+trade box. Khi cùng một H1 signal chạy trên nhiều account, chart group bằng
+shared plan `client_id` và badge đếm account distinct, không đếm số ticket
+cancel/replace trong lifecycle.
+
 Ba đường Entry/SL/TP của setup Manual AI có handle kéo theo chiều dọc, nhãn giá
 riêng và vùng bắt chuột tối thiểu đủ rộng ngay cả khi box gần hết hạn rất hẹp.
 Để tránh rối khi có nhiều setup, overlay dùng progressive disclosure: setup chưa

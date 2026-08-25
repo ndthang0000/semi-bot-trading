@@ -200,6 +200,10 @@ export function compactTradeGroupSummary(trades: TradeOrder[]): string {
   return trades.map((trade) => `${shortAccountLabel(trade.account_label)} ${formatTradeR(trade.pnl_r)}`).join(" / ");
 }
 
+export function tradeAccountCount(trades: TradeOrder[]): number {
+  return new Set(trades.map((trade) => trade.account_label.trim() || "Default")).size;
+}
+
 export function readObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -266,6 +270,8 @@ function mergeBoxRects(rects: BoxRect[]): BoxRect {
 }
 
 function tradeCandidateId(trade: TradeOrder): string | null {
+  const executionGroupId = trade.metadata.execution_group_id;
+  if (typeof executionGroupId === "string" && executionGroupId.length > 0) return executionGroupId;
   const direct = trade.metadata.candidate_id;
   if (typeof direct === "string" && direct.length > 0) return direct;
   const candidateMetadata = readObject(trade.metadata.candidate_metadata);
