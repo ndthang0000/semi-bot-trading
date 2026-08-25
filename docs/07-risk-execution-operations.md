@@ -427,6 +427,11 @@ before broker acceptance, so a manual market position may incur spread/slippage
 before the guard closes it. The fast guard and 15-second strategy cycle share
 one MT5 client and run sequentially to avoid concurrent terminal calls.
 
+Nếu MT5 terminal bị `Restart App` trong lúc worker đang chạy, lỗi mất session
+hoặc broker symbol sẽ kích hoạt reconnect, resolve lại `MT5_SYMBOL` và validate
+lại account trước khi guard tiếp tục. `manual_lock_last_error` chỉ giữ lỗi hiện
+tại; lần kiểm tra guard thành công kế tiếp phải tự xóa cảnh báo cũ trên dashboard.
+
 Account Dashboard chi hien trang thai `Manual LOCKED`/arming/inactive o dang
 read-only; UI khong co toggle unlock de tranh human tat guard trong luc mat binh
 tinh. Endpoint backend van duoc giu cho thao tac quan tri co chu dich.

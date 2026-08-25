@@ -88,14 +88,21 @@ def run_live_worker(config: AppConfig, env: RuntimeEnv, *, once: bool = False) -
         while True:
             try:
                 run_live_iteration(config, env, client, state)
-            except Exception:
+            except Exception as exc:
                 if once:
                     raise  # propagate in one-shot / test mode so callers see the error
                 logger.exception("Live iteration error — retrying next cycle")
+                if _is_recoverable_mt5_session_error(exc):
+                    try:
+                        state.broker_symbol = _recover_mt5_session(client, env, config)
+                    except Exception:
+                        logger.exception("MT5 session recovery failed for %s", env.account_label)
             if once:
                 return
             wait_seconds = _seconds_until_next_poll(env.poll_at_seconds, fallback_seconds=env.poll_seconds)
-            _wait_with_manual_trade_guard(config, env, client, broker_symbol, wait_seconds)
+            state.broker_symbol = _wait_with_manual_trade_guard(
+                config, env, client, state.broker_symbol, wait_seconds
+            )
     finally:
         client.shutdown()
 
@@ -126,7 +133,7 @@ def _wait_with_manual_trade_guard(
     client: MT5BrokerClient,
     broker_symbol: str,
     wait_seconds: float,
-) -> None:
+) -> str:
     """Run the discipline guard at its own cadence between strategy polls.
 
     Calls remain sequential on the same MT5 client. This avoids concurrent
@@ -137,14 +144,46 @@ def _wait_with_manual_trade_guard(
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return
+            return broker_symbol
         time.sleep(min(guard_seconds, remaining))
         if time.monotonic() >= deadline:
-            return
+            return broker_symbol
         try:
             run_manual_trade_guard_iteration(config, env, client, broker_symbol)
-        except Exception:
+        except Exception as exc:
             logger.exception("Manual trading lock guard failed for %s", env.account_label)
+            if _is_recoverable_mt5_session_error(exc):
+                try:
+                    broker_symbol = _recover_mt5_session(client, env, config)
+                except Exception:
+                    logger.exception("MT5 session recovery failed for %s", env.account_label)
+
+
+def _is_recoverable_mt5_session_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "mt5 symbol not found",
+            "mt5 symbol_select failed",
+            "mt5 initialize failed",
+            "ipc initialize failed",
+            "no ipc connection",
+        )
+    )
+
+
+def _recover_mt5_session(client: MT5BrokerClient, env: RuntimeEnv, config: AppConfig) -> str:
+    """Reconnect after a terminal restart and resolve the broker symbol again."""
+    try:
+        client.shutdown()
+    except Exception:
+        logger.debug("MT5 shutdown during recovery failed", exc_info=True)
+    client.connect()
+    broker_symbol = client.resolve_symbol(env.mt5_symbol, config.symbol)
+    validate_live_account_startup(env, client, broker_symbol)
+    logger.info("MT5 session recovered for %s with symbol %s", env.account_label, broker_symbol)
+    return broker_symbol
 
 
 def _connect_with_retry(client: MT5BrokerClient, *, once: bool = False) -> None:
@@ -470,7 +509,7 @@ def process_manual_trading_lock(
         """
         SELECT manual_lock_requested_enabled, manual_lock_effective_enabled,
                manual_lock_baseline_positions_json, manual_lock_baseline_orders_json,
-               manual_lock_requested_at
+               manual_lock_requested_at, manual_lock_last_error
         FROM account_execution_controls
         WHERE account_label = ?
         """,
@@ -608,6 +647,16 @@ def process_manual_trading_lock(
             WHERE account_label = ?
             """,
             (now, "; ".join(errors)[:1000] if errors else None, now, env.account_label),
+        )
+        conn.commit()
+    elif row["manual_lock_last_error"]:
+        conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_last_error = NULL, updated_at = ?
+            WHERE account_label = ?
+            """,
+            (now, env.account_label),
         )
         conn.commit()
     return acted or bool(errors)

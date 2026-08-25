@@ -382,6 +382,58 @@ class TestManualTradingLock(unittest.TestCase):
 
         self.assertEqual(3, guard.call_count)
 
+    def test_successful_guard_clears_stale_mt5_error(self) -> None:
+        self._conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_effective_enabled = 1,
+                manual_lock_last_error = 'MT5 symbol not found: XAUUSDc'
+            WHERE account_label = 'Test'
+            """
+        )
+        self._conn.commit()
+        client = MagicMock()
+        client.get_open_positions.return_value = []
+        client.get_pending_orders.return_value = []
+
+        acted = process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDc"
+        )
+
+        self.assertFalse(acted)
+        row = self._conn.execute(
+            "SELECT manual_lock_last_error FROM account_execution_controls WHERE account_label = 'Test'"
+        ).fetchone()
+        self.assertIsNone(row["manual_lock_last_error"])
+
+    def test_wait_recovers_mt5_session_and_uses_resolved_symbol_after_restart(self) -> None:
+        clock = [0.0]
+
+        def fake_sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch("semi_bot_trading.live_worker.time.monotonic", side_effect=lambda: clock[0]),
+            patch("semi_bot_trading.live_worker.time.sleep", side_effect=fake_sleep),
+            patch(
+                "semi_bot_trading.live_worker.run_manual_trade_guard_iteration",
+                side_effect=[RuntimeError("MT5 symbol not found: XAUUSDc"), False, False],
+            ) as guard,
+            patch("semi_bot_trading.live_worker._recover_mt5_session", return_value="XAUUSDc") as recover,
+        ):
+            resolved_symbol = _wait_with_manual_trade_guard(
+                self._config,
+                self._env,
+                MagicMock(),
+                "XAUUSDc-old",
+                wait_seconds=3.2,
+            )
+
+        self.assertEqual("XAUUSDc", resolved_symbol)
+        recover.assert_called_once()
+        self.assertEqual("XAUUSDc-old", guard.call_args_list[0].args[3])
+        self.assertEqual("XAUUSDc", guard.call_args_list[1].args[3])
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # build_execution_pricing_plan
