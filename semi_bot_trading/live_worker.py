@@ -1933,15 +1933,13 @@ def process_manual_ai_plans(
             continue
 
         try:
-            open_bot_positions, pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
+            open_bot_positions, _pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
         except AttributeError:
             open_bot_positions = 0
-            pending_bot_orders = 0
-        active_bot_exposure = open_bot_positions + pending_bot_orders
-        if active_bot_exposure >= env.max_open_positions_per_symbol:
-            # A pending limit reserves a slot because multiple broker orders
-            # can fill between worker polls. Leave the approved plan queued
-            # rather than allowing fills to exceed the configured capacity.
+        if open_bot_positions >= env.max_open_positions_per_symbol:
+            # Pending limits are plans, not live risk yet. Capacity only gates
+            # already-filled positions; this allows the trader to stage
+            # multiple limit ideas while still capping concurrent open risk.
             continue
 
         partial = json.loads(row["partial_take_profit_json"] or "{}")

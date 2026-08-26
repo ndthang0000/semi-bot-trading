@@ -1328,11 +1328,11 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
             )
         self._conn.commit()
         client = _fake_client(current_price=3000.0)
-        client.bot_order_counts.return_value = (0, 1)
-        env_with_three_slots = replace(self._env, max_open_positions_per_symbol=3)
+        client.bot_order_counts.return_value = (0, 99)
+        env_with_one_slot = replace(self._env, max_open_positions_per_symbol=1)
 
         with patch("semi_bot_trading.live_worker.maybe_execute_candidates") as execute:
-            process_manual_ai_plans(self._conn, self._config, env_with_three_slots, client, "XAUUSDm", now)
+            process_manual_ai_plans(self._conn, self._config, env_with_one_slot, client, "XAUUSDm", now)
 
         self.assertEqual(2, execute.call_count)
         for call_args in execute.call_args_list:

@@ -171,13 +171,11 @@ news blackout, exposure, position limit và dynamic sizing trước khi đặt p
 order.
 
 H1 Impulse dùng chung giới hạn vị thế theo account tại
-`MAX_OPEN_POSITIONS_PER_SYMBOL`. Để tránh nhiều pending cùng fill giữa hai poll,
-mỗi vị thế đã fill và mỗi pending bot đều giữ một slot. Plan `approved` chỉ được
-arm khi tổng số slot đang dùng còn thấp hơn giới hạn; khi đã đạt giới hạn, plan
-tiếp tục chờ và được thử lại ở poll sau cho tới khi hết hạn. Giữ config bằng `1`
-nghĩa là không cho phép H1 Impulse thứ hai được arm đồng thời; muốn tối đa hai
-lệnh bot XAUUSD đang hoạt động, mỗi worker account phải đặt giá trị này thành
-`2`.
+`MAX_OPEN_POSITIONS_PER_SYMBOL`, nhưng giới hạn này chỉ áp dụng cho position đã
+khớp. Pending limit là kế hoạch chờ nên không giữ slot; trader có thể stage nhiều
+limit cùng lúc. Worker vẫn kiểm tra số position đang mở ngay trước khi gửi MT5 và
+ở các vòng poll sau, nên nếu đã đạt số position tối đa thì setup còn lại sẽ tiếp
+tục chờ tới khi hết hạn hoặc tới khi có slot trống.
 
 Khi pending order đã tồn tại, chỉnh levels tạo `replace_requested`; worker hủy
 pending cũ rồi đặt lại levels mới. Entry source được lưu cùng payload để Setup UI
