@@ -176,6 +176,23 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual([candidate], exness_filtered)
         self.assertEqual([], ftmo_filtered)
 
+    def test_pending_limit_without_opened_at_still_hides_matching_setup(self) -> None:
+        candidate = {"id": "candidate-old", "primary_zone_id": "z1"}
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                seed_live_order(conn, status="pending_fill", zone_id="z1", account_label="FTMO Demo")
+                conn.execute("UPDATE trade_orders SET opened_at = NULL WHERE id = 'order-1'")
+                filtered = filter_traded_setup_candidates(
+                    conn,
+                    "XAUUSD",
+                    [candidate],
+                    account_label="FTMO Demo",
+                )
+
+        self.assertEqual([], filtered)
+
     def test_unfilled_manual_ai_limit_is_never_a_chart_trade(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

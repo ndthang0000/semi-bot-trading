@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Eye, EyeOff, Save } from "lucide-react";
+import { Camera, Check, Copy, Eye, EyeOff, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toPng } from "html-to-image";
 import { createTradeReviewAttachment, fetchTradeReviewAttachments, updateTradeReview, updateTradeVisibility } from "../../api/chart";
 import { authFetch } from "../../api/auth";
+import { copyTextToClipboard } from "../../lib/clipboard";
 import { compactTime, price } from "../../lib/time";
 import { useChartStore } from "../../store/chartStore";
 import type { ChartPayload, TradeHistoryResponse, TradeOrder, TradeReview, TradeReviewAttachment } from "../../types";
@@ -49,6 +50,7 @@ async function updateAccountPartialTakeProfit(
 export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToast: (kind: ToastKind, text: string) => void }) {
   const queryClient = useQueryClient();
   const setSelected = useChartStore((state) => state.setSelected);
+  const [copiedTradeId, setCopiedTradeId] = useState<string | null>(null);
   const metadata = trade.metadata ?? {};
   const candidateMetadata = readObject(metadata.candidate_metadata);
   const stateMachine = readStateMachine(candidateMetadata.state_machine);
@@ -107,9 +109,23 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
     },
   });
 
+  const copyTradeId = useCallback(async () => {
+    try {
+      await copyTextToClipboard(trade.id);
+      setCopiedTradeId(trade.id);
+      showToast("success", "Trade ID copied.");
+      window.setTimeout(() => {
+        setCopiedTradeId((current) => (current === trade.id ? null : current));
+      }, 1500);
+    } catch {
+      showToast("error", "Could not copy trade ID.");
+    }
+  }, [showToast, trade.id]);
+
   return (
     <div className="grid gap-3 text-sm">
       <div className="grid gap-2">
+        <TradeIdDetail copied={copiedTradeId === trade.id} tradeId={trade.id} onCopy={copyTradeId} />
         <Detail label="Account" value={trade.account_label ?? "--"} />
         <Detail label="Playbook" value={playbookLabel(trade.playbook)} />
         <Detail label="Side" value={trade.side} />
@@ -634,6 +650,40 @@ function Detail({ label, value }: { label: string; value: string }) {
     <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
       <span className="text-slate-500">{label}</span>
       <strong className="min-w-0 break-words text-slate-100">{value}</strong>
+    </div>
+  );
+}
+
+function TradeIdDetail({
+  tradeId,
+  copied,
+  onCopy,
+}: {
+  tradeId: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-3">
+      <span className="text-slate-500">Trade ID</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <strong className="min-w-0 flex-1 truncate font-mono text-xs text-slate-100" title={tradeId}>
+          {tradeId}
+        </strong>
+        <button
+          aria-label="Copy trade ID"
+          className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border transition ${
+            copied
+              ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300"
+              : "border-ink-700 bg-ink-850 text-slate-400 hover:border-cyan-400/60 hover:text-cyan-200"
+          }`}
+          title={copied ? "Copied" : "Copy trade ID"}
+          type="button"
+          onClick={onCopy}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      </div>
     </div>
   );
 }

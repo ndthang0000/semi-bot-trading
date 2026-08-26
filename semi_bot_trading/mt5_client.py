@@ -509,6 +509,22 @@ class MT5BrokerClient:
         result: list[dict[str, Any]] = []
         for position in positions:
             side = "buy" if int(position.type) == self.mt5.POSITION_TYPE_BUY else "sell"
+            raw_open_time = getattr(position, "time_msc", None)
+            if raw_open_time:
+                opened_at = mt5_server_timestamp_to_utc(
+                    float(raw_open_time) / 1000.0,
+                    self.credentials.server_utc_offset_hours,
+                )
+            else:
+                raw_open_time = getattr(position, "time", None)
+                opened_at = (
+                    mt5_server_timestamp_to_utc(
+                        float(raw_open_time),
+                        self.credentials.server_utc_offset_hours,
+                    )
+                    if raw_open_time
+                    else None
+                )
             result.append(
                 {
                     "ticket": str(position.ticket),
@@ -518,6 +534,7 @@ class MT5BrokerClient:
                     "price_open": float(position.price_open),
                     "sl": float(getattr(position, "sl", 0.0) or 0.0),
                     "tp": float(getattr(position, "tp", 0.0) or 0.0),
+                    "opened_at": opened_at.replace(microsecond=0).isoformat() if opened_at else None,
                 }
             )
         return result
@@ -648,9 +665,12 @@ class MT5BrokerClient:
         if not deals:
             return None
         close_deals: list[Any] = []
+        open_deals: list[Any] = []
         for deal in deals:
             if int(deal.entry) == 1:  # DEAL_ENTRY_OUT
                 close_deals.append(deal)
+            elif int(deal.entry) == 0:  # DEAL_ENTRY_IN
+                open_deals.append(deal)
         if not close_deals:
             return None
         total_volume = sum(float(deal.volume) for deal in close_deals)
@@ -664,6 +684,15 @@ class MT5BrokerClient:
             int(latest_deal.time),
             self.credentials.server_utc_offset_hours,
         )
+        first_open_deal = min(open_deals, key=lambda item: int(item.time)) if open_deals else None
+        open_time = (
+            mt5_server_timestamp_to_utc(
+                int(first_open_deal.time),
+                self.credentials.server_utc_offset_hours,
+            )
+            if first_open_deal is not None
+            else None
+        )
         # MT5 can charge commission on both DEAL_ENTRY_IN and DEAL_ENTRY_OUT.
         # Profit/close price belong to exit deals, but position-level costs must
         # include every deal or the stored net P&L misses the opening charge.
@@ -674,6 +703,8 @@ class MT5BrokerClient:
             "commission": sum(float(getattr(deal, "commission", 0) or 0) for deal in deals),
             "fee": sum(float(getattr(deal, "fee", 0) or 0) for deal in deals),
             "time_iso": close_time.replace(microsecond=0).isoformat(),
+            "open_time_iso": open_time.replace(microsecond=0).isoformat() if open_time else None,
+            "open_price": float(first_open_deal.price) if first_open_deal is not None else None,
             "volume": total_volume,
             "deal_ticket": ",".join(str(deal.ticket) for deal in close_deals),
         }

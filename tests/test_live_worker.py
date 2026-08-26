@@ -56,6 +56,7 @@ from semi_bot_trading.live_worker import (
     queue_m15_recovery_alert,
     run_live_iteration,
     sync_closed_positions,
+    sync_filled_pending_orders,
     trading_session,
     validate_live_account_startup,
     zone_reaction_v2_risk_pct,
@@ -672,13 +673,43 @@ class TestExecuteCandidate(unittest.TestCase):
         self.assertEqual(1, len(orders))
         self.assertEqual("pending_fill", orders[0]["status"])
         self.assertEqual("limit", orders[0]["order_type"])
+        self.assertIsNone(orders[0]["opened_at"])
         # price=0 in result → fallback to exec_entry
         self.assertAlmostEqual(3000.0, orders[0]["entry_price"], places=2)
+        metadata = json.loads(orders[0]["metadata_json"])
+        self.assertIsNotNone(metadata["placed_at"])
         alerts = self._conn.execute("SELECT * FROM alert_events").fetchall()
         self.assertEqual(1, len(alerts))
         payload = json.loads(alerts[0]["message_payload_json"])
         self.assertEqual("pending", payload["outcome"])
         self.assertEqual("Limit order placed", payload["title"])
+
+    def test_pending_limit_promotes_to_filled_with_broker_open_time(self):
+        client = _fake_client(place_limit_result={
+            "order": "333", "deal": "0", "price": 0, "retcode": 10008
+        })
+        plan = _make_pricing_plan(order_type="limit", entry_price=3000.0,
+                                  stop_loss=2980.0, take_profit=[3040.0])
+        self._run(client, pricing_plan=plan)
+        client.get_open_positions.return_value = [
+            {
+                "ticket": "333",
+                "side": "buy",
+                "volume": 0.01,
+                "price_open": 3000.0,
+                "sl": 2980.0,
+                "tp": 3040.0,
+                "opened_at": "2026-08-25T22:00:00+00:00",
+            }
+        ]
+
+        sync_filled_pending_orders(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        order = self._conn.execute("SELECT * FROM trade_orders").fetchone()
+        self.assertEqual("filled", order["status"])
+        self.assertEqual("2026-08-25T22:00:00+00:00", order["opened_at"])
+        metadata = json.loads(order["metadata_json"])
+        self.assertEqual("2026-08-25T22:00:00+00:00", metadata["broker_position_opened_at"])
 
     # ── MT5 failure ───────────────────────────────────────────────────────────
     def test_mt5_failure_execution_request_marked_failed(self):
@@ -1413,6 +1444,12 @@ class TestLiveTradeCountToday(unittest.TestCase):
 
     def test_pending_fill_today_counts(self):
         self._insert_order("pending_fill")
+        self.assertEqual(1, live_trade_count_today(self._conn, "XAUUSD"))
+
+    def test_pending_fill_without_opened_at_counts_by_created_at(self):
+        self._insert_order("pending_fill")
+        self._conn.execute("UPDATE trade_orders SET opened_at = NULL")
+        self._conn.commit()
         self.assertEqual(1, live_trade_count_today(self._conn, "XAUUSD"))
 
     def test_closed_today_counts(self):

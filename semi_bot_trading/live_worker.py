@@ -816,8 +816,10 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
         if env.live_sync_candles:
             sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
+            sync_filled_pending_orders(conn, config, env, client, broker_symbol)
             process_manual_ai_plans(conn, config, env, client, broker_symbol, now)
         if broker_symbol:
+            sync_filled_pending_orders(conn, config, env, client, broker_symbol)
             sync_closed_positions(conn, config, env, client, broker_symbol)
             if ftmo_news_guard is None:
                 manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
@@ -1599,8 +1601,14 @@ def mark_manual_ai_filled(
 ) -> None:
     if linked_order is not None:
         conn.execute(
-            "UPDATE trade_orders SET status = 'filled', updated_at = ? WHERE id = ? AND status = 'pending_fill'",
-            (now_iso, linked_order["id"]),
+            """
+            UPDATE trade_orders
+            SET status = 'filled',
+                opened_at = COALESCE(opened_at, ?),
+                updated_at = ?
+            WHERE id = ? AND status = 'pending_fill'
+            """,
+            (now_iso, now_iso, linked_order["id"]),
         )
     conn.execute(
         "UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?",
@@ -2698,6 +2706,7 @@ def execute_candidate(
             (broker_order_id or broker_deal_id, json.dumps(result, sort_keys=True, default=str), now, request_id),
         )
         order_status = "pending_fill" if exec_order_type == "limit" else "filled"
+        opened_at = None if order_status == "pending_fill" else now
         trade_metadata = _build_trade_metadata(candidate, broker_order_id, broker_deal_id, now)
         trade_metadata["account_label"] = env.account_label
         trade_metadata["account_profile"] = env.account_profile
@@ -2743,7 +2752,7 @@ def execute_candidate(
                 exec_stop,
                 json.dumps(exec_take_profit),
                 volume,
-                now,
+                opened_at,
                 json.dumps(trade_metadata, sort_keys=True),
                 now,
             ),
@@ -2842,6 +2851,69 @@ def _partial_take_profit_metadata(
             "done": False,
         },
     }
+
+
+def sync_filled_pending_orders(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+) -> None:
+    """Promote accepted limit orders only after MT5 exposes a real position.
+
+    A pending-order acknowledgement is not an entry fill.  Keeping
+    ``trade_orders.opened_at`` empty until this step prevents the chart from
+    drawing a trade box at the limit-placement time.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, metadata_json, opened_at
+        FROM trade_orders
+        WHERE symbol = ?
+          AND account_label = ?
+          AND source = 'live'
+          AND status = 'pending_fill'
+        """,
+        (config.symbol, env.account_label),
+    ).fetchall()
+    if not rows:
+        return
+    try:
+        open_positions = client.get_open_positions(broker_symbol)
+    except AttributeError:
+        return
+    positions_by_ticket = {str(position.get("ticket")): position for position in open_positions}
+    if not positions_by_ticket:
+        return
+
+    now = utc_now_iso()
+    updated_any = False
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        broker_order_id = str(metadata.get("broker_order_id") or "")
+        broker_deal_id = str(metadata.get("broker_deal_id") or "")
+        position = positions_by_ticket.get(broker_order_id) or positions_by_ticket.get(broker_deal_id)
+        if position is None:
+            continue
+        opened_at = str(position.get("opened_at") or row["opened_at"] or now)
+        metadata["broker_position_opened_at"] = opened_at
+        if position.get("price_open"):
+            metadata["broker_position_entry_price"] = float(position["price_open"])
+        conn.execute(
+            """
+            UPDATE trade_orders
+            SET status = 'filled',
+                opened_at = ?,
+                metadata_json = ?,
+                updated_at = ?
+            WHERE id = ? AND status = 'pending_fill'
+            """,
+            (opened_at, json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
+        )
+        updated_any = True
+    if updated_any:
+        conn.commit()
 
 
 def manage_open_trade_partial_take_profit(
@@ -3130,7 +3202,7 @@ def sync_closed_positions(
     """
     rows = conn.execute(
         """
-        SELECT id, side, entry_price, stop_loss, quantity, status, metadata_json
+        SELECT id, side, entry_price, stop_loss, quantity, status, opened_at, metadata_json
         FROM trade_orders
         WHERE symbol = ?
           AND account_label = ?
@@ -3189,6 +3261,7 @@ def sync_closed_positions(
         pnl = round(gross_profit + swap + commission + fee, 2)
         close_price = deal["price"]
         closed_at = deal["time_iso"]
+        opened_at = str(deal.get("open_time_iso") or row["opened_at"] or metadata.get("placed_at") or "")
 
         # pnl_r: P&L divided by initial dollar risk.
         #
@@ -3239,10 +3312,15 @@ def sync_closed_positions(
             "fee": round(fee, 2),
             "net_profit": pnl,
         }
+        if deal.get("open_time_iso"):
+            metadata["broker_position_opened_at"] = str(deal["open_time_iso"])
+        if deal.get("open_price"):
+            metadata["broker_position_entry_price"] = float(deal["open_price"])
         conn.execute(
             """
             UPDATE trade_orders
             SET status = 'closed',
+                opened_at = COALESCE(opened_at, ?),
                 close_price = ?,
                 pnl = ?,
                 pnl_r = ?,
@@ -3251,7 +3329,7 @@ def sync_closed_positions(
                 updated_at = ?
             WHERE id = ?
             """,
-            (close_price, pnl, pnl_r, closed_at, json.dumps(metadata), now, row["id"]),
+            (opened_at or None, close_price, pnl, pnl_r, closed_at, json.dumps(metadata), now, row["id"]),
         )
         closed_any = True
         if not already_closed:
@@ -3357,7 +3435,7 @@ def live_trade_count_today(conn: Connection, symbol: str, *, account_label: str 
           AND account_label = ?
           AND source = 'live'
           AND status IN ('filled', 'pending_fill', 'closed')
-          AND opened_at >= ?
+          AND COALESCE(opened_at, created_at) >= ?
         """,
         (symbol, account_label, day_prefix),
     ).fetchone()
@@ -3444,6 +3522,7 @@ def _build_trade_metadata(
         "entry_signal": candidate.get("entry"),
         "broker_order_id": broker_order_id,
         "broker_deal_id": broker_deal_id,
+        "placed_at": now,
         "playbook": candidate.get("playbook"),
         "primary_zone_id": candidate.get("primary_zone_id"),
         "zone_reaction_state": candidate.get("zone_reaction_state"),
