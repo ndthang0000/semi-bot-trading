@@ -4,6 +4,17 @@ Zone Reaction V2 la playbook research-first tap trung vao phan ung M15 tai tung 
 
 ## Runtime Scope
 
+### Live Risk
+
+Live executor khoa risk rieng cho `zone_reaction_v2` cung muc voi Manual AI va
+H1 Impulse, bat ke account-level `RISK_PER_TRADE_PCT`:
+
+- `ftmo_challenge` va `the5ers`: `0.75%` moi trade.
+- `personal` va `personal_cent`: `1.5%` moi trade.
+
+Risk manager van tinh lot dong tu khoang cach Entry-SL va account balance; cac
+daily-loss, spread, news, position-limit va execution gate khac khong thay doi.
+
 `zone_reaction_v2` la playbook runtime/research/backtest chinh cho reject/internal reject. Playbook breakout SR duoc tach rieng thanh `sr_breakout_v1` de tranh tron logic reject va breakout trong cung mot state machine.
 
 Live worker chi dung H1 price zones lam primary trade zones; M15 van la timeframe reaction/trigger/entry. Rule nay giu cho lenh live khop voi zone dang hien thi tren dashboard H1 va tranh trade theo M15 zone ma human khong thay tren chart H1.

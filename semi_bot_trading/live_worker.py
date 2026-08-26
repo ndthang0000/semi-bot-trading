@@ -1918,12 +1918,15 @@ def process_manual_ai_plans(
             continue
 
         try:
-            open_bot_positions, _pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
+            open_bot_positions, pending_bot_orders = client.bot_order_counts(broker_symbol, magic=env.mt5_magic)
         except AttributeError:
             open_bot_positions = 0
-        if open_bot_positions > 0:
-            # Pending Manual AI limits may coexist. Once one becomes a live
-            # position, reserve the account/symbol risk for that exposure.
+            pending_bot_orders = 0
+        active_bot_exposure = open_bot_positions + pending_bot_orders
+        if active_bot_exposure >= env.max_open_positions_per_symbol:
+            # A pending limit reserves a slot because multiple broker orders
+            # can fill between worker polls. Leave the approved plan queued
+            # rather than allowing fills to exceed the configured capacity.
             continue
 
         partial = json.loads(row["partial_take_profit_json"] or "{}")
@@ -2085,11 +2088,20 @@ def maybe_execute_candidates(
             dedupe_key=f"pricing-failed:{candidate.get('id')}:{datetime.now(UTC).date().isoformat()}",
         )
         return
-    # Risk check: compute lot size and verify daily loss limit
+    # Risk check: compute lot size and verify daily loss limit. Zone Reaction V2
+    # deliberately uses the same reduced profile risk as human-approved plans;
+    # other automated playbooks keep the account-level/default risk policy.
+    selected_risk_pct = risk_pct_override
+    if selected_risk_pct is None:
+        selected_risk_pct = (
+            zone_reaction_v2_risk_pct(env.account_profile)
+            if str(candidate.get("playbook") or "") == "zone_reaction_v2"
+            else env.risk_per_trade_pct
+        )
     risk_manager = build_risk_manager(
         client,
         env.account_profile,
-        env.risk_per_trade_pct if risk_pct_override is None else risk_pct_override,
+        selected_risk_pct,
         env.account_balance_scale,
     )
     assessment = risk_manager.assess_trade(
@@ -2171,6 +2183,11 @@ def manual_ai_risk_pct(account_profile: str) -> float:
     if account_profile in {"ftmo_challenge", "the5ers"}:
         return 0.75
     return 1.5
+
+
+def zone_reaction_v2_risk_pct(account_profile: str) -> float:
+    """Return the reduced profile risk reserved for Zone Reaction V2."""
+    return manual_ai_risk_pct(account_profile)
 
 
 def maybe_ftmo_news_flatten(

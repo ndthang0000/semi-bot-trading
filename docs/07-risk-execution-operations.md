@@ -20,7 +20,8 @@ Risk Engine kiểm tra trước khi executor nhận request.
 Rule MVP:
 
 - Risk mặc định theo account profile: tài khoản quỹ 1%, tài khoản thường 2%.
-- Riêng Manual AI dùng mức thấp hơn: tài khoản quỹ 0.75%, tài khoản thường 1.5%.
+- Manual AI, H1 Impulse và Zone Reaction V2 dùng mức thấp hơn: tài khoản quỹ
+  0.75%, tài khoản thường 1.5%.
 - Max total open risk.
 - Max daily loss: 5%.
 - Max trades per day: 10.
@@ -39,8 +40,8 @@ Ví dụ:
 risk_policy:
   prop_firm_risk_per_trade_pct: 1.0
   personal_risk_per_trade_pct: 2.0
-  manual_ai_prop_firm_risk_per_trade_pct: 0.75
-  manual_ai_personal_risk_per_trade_pct: 1.5
+  reduced_playbook_prop_firm_risk_per_trade_pct: 0.75
+  reduced_playbook_personal_risk_per_trade_pct: 1.5
   max_daily_loss_pct: 5.0
   max_trades_per_day: 10
   max_open_positions_per_symbol: 1

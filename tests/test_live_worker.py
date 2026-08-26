@@ -58,6 +58,7 @@ from semi_bot_trading.live_worker import (
     sync_closed_positions,
     trading_session,
     validate_live_account_startup,
+    zone_reaction_v2_risk_pct,
 )
 from semi_bot_trading.mt5_client import MT5OrderRequest
 from semi_bot_trading.runtime_env import RuntimeEnv
@@ -1246,19 +1247,69 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self._conn.commit()
         client = _fake_client(current_price=3000.0)
         client.bot_order_counts.return_value = (0, 1)
+        env_with_three_slots = replace(self._env, max_open_positions_per_symbol=3)
 
         with patch("semi_bot_trading.live_worker.maybe_execute_candidates") as execute:
-            process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+            process_manual_ai_plans(self._conn, self._config, env_with_three_slots, client, "XAUUSDm", now)
 
         self.assertEqual(2, execute.call_count)
         for call_args in execute.call_args_list:
             self.assertEqual({"risk_pct_override": 1.5}, call_args.kwargs)
+
+    def test_approved_plan_respects_configured_open_position_capacity(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        upsert_candles(
+            self._conn,
+            [
+                Candle(
+                    symbol="XAUUSD",
+                    timeframe="M5",
+                    open_time=now - timedelta(minutes=5),
+                    close_time=now,
+                    open=3000.0,
+                    high=3002.0,
+                    low=2998.0,
+                    close=3000.0,
+                    volume=100,
+                    source="test",
+                )
+            ],
+        )
+        self._conn.execute(
+            """
+            INSERT INTO manual_ai_plans (
+                id, client_id, account_label, symbol, side, status, execution_state,
+                entry_price, stop_loss, take_profit, risk_pct, risk_reward, expires_at,
+                cancel_conditions_json, created_at, updated_at
+            ) VALUES ('manual-plan-capacity', 'manual-client-capacity', 'Test', 'XAUUSD',
+                      'buy', 'approved', 'primary', 2999.0, 2979.0, 3039.0, 1.0,
+                      2.0, ?, '[]', ?, ?)
+            """,
+            (
+                (now + timedelta(minutes=30)).isoformat(),
+                now.isoformat(),
+                now.isoformat(),
+            ),
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3000.0)
+        client.bot_order_counts.return_value = (1, 0)
+
+        with patch("semi_bot_trading.live_worker.maybe_execute_candidates") as execute:
+            process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+            execute.assert_not_called()
+
+            env_with_two_slots = replace(self._env, max_open_positions_per_symbol=2)
+            process_manual_ai_plans(self._conn, self._config, env_with_two_slots, client, "XAUUSDm", now)
+            execute.assert_called_once()
 
     def test_manual_ai_uses_lower_risk_by_account_type(self):
         self.assertEqual(0.75, manual_ai_risk_pct("ftmo_challenge"))
         self.assertEqual(0.75, manual_ai_risk_pct("the5ers"))
         self.assertEqual(1.5, manual_ai_risk_pct("personal"))
         self.assertEqual(1.5, manual_ai_risk_pct("personal_cent"))
+        self.assertEqual(0.75, zone_reaction_v2_risk_pct("ftmo_challenge"))
+        self.assertEqual(1.5, zone_reaction_v2_risk_pct("personal"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1531,6 +1582,52 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         candidates = [_make_candidate(status="waiting_confirmation")]
         self._run(candidates)
         self.assertEqual(0, self._order_count())
+
+    def test_zone_reaction_v2_uses_reduced_profile_risk(self):
+        cases = (
+            ("ftmo_challenge", 0.75),
+            ("the5ers", 0.75),
+            ("personal", 1.5),
+            ("personal_cent", 1.5),
+        )
+        for index, (profile, expected_risk) in enumerate(cases):
+            with self.subTest(profile=profile):
+                client = _fake_client()
+                risk_manager = _fake_risk_manager()
+                candidate = _make_candidate(id=f"zone-risk-{index}")
+                with patch(
+                    "semi_bot_trading.live_worker.build_risk_manager",
+                    return_value=risk_manager,
+                ) as build:
+                    maybe_execute_candidates(
+                        self._conn,
+                        self._config,
+                        _make_env(account_profile=profile, risk_per_trade_pct=0.25),
+                        client,
+                        [candidate],
+                        "XAUUSDm",
+                    )
+
+                self.assertEqual(expected_risk, build.call_args.args[2])
+
+    def test_other_playbooks_keep_configured_account_risk(self):
+        client = _fake_client()
+        risk_manager = _fake_risk_manager()
+        candidate = _make_candidate(id="sr-risk", playbook="sr_breakout_v1")
+        with patch(
+            "semi_bot_trading.live_worker.build_risk_manager",
+            return_value=risk_manager,
+        ) as build:
+            maybe_execute_candidates(
+                self._conn,
+                self._config,
+                _make_env(risk_per_trade_pct=0.25),
+                client,
+                [candidate],
+                "XAUUSDm",
+            )
+
+        self.assertEqual(0.25, build.call_args.args[2])
 
     # ── already executed guard ────────────────────────────────────────────────
     def test_already_executed_pending_not_re_traded(self):
