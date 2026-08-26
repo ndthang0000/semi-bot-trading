@@ -1235,6 +1235,57 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self.assertEqual("cancelled", plan["status"])
         self.assertEqual("cancelled", order["status"])
 
+    def test_h1_impulse_ignores_target_touched_cancel_condition_after_approval(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        self._conn.execute(
+            """
+            INSERT INTO manual_ai_plans (
+                id, client_id, account_label, symbol, side, status, execution_state,
+                entry_price, stop_loss, take_profit, risk_pct, risk_reward, expires_at,
+                cancel_conditions_json, raw_payload_json, created_at, updated_at
+            ) VALUES ('h1-approved-plan', 'h1-client', 'Test', 'XAUUSD', 'buy',
+                      'approved', 'primary', 4568.0, 4557.0, 4604.0, 1.0, 3.27,
+                      ?, ?, ?, ?, ?)
+            """,
+            (
+                (now + timedelta(hours=12)).isoformat(),
+                json.dumps([
+                    {"type": "price_reached_target_without_fill"},
+                    {"type": "news_blackout_started"},
+                ]),
+                json.dumps({"playbook": "h1_impulse_retest_v1", "candidates": [{"client_id": "h1-client"}]}),
+                now.isoformat(),
+                now.isoformat(),
+            ),
+        )
+        upsert_candles(
+            self._conn,
+            [
+                Candle(
+                    symbol="XAUUSD",
+                    timeframe="M5",
+                    open_time=now - timedelta(minutes=5),
+                    close_time=now,
+                    open=4620.0,
+                    high=4622.0,
+                    low=4616.0,
+                    close=4620.0,
+                    volume=100,
+                    source="test",
+                )
+            ],
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=4620.0)
+        client.bot_order_counts.return_value = (0, 0)
+
+        with patch("semi_bot_trading.live_worker.maybe_execute_candidates") as execute:
+            process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        execute.assert_called_once()
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'h1-approved-plan'").fetchone()
+        self.assertEqual("approved", plan["status"])
+
     def test_approved_plans_can_arm_while_other_bot_limits_are_pending(self):
         now = datetime.now(UTC).replace(microsecond=0)
         upsert_candles(

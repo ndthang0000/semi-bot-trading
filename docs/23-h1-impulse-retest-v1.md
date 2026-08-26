@@ -154,6 +154,13 @@ Setup card hiển thị cả timestamp và duration của limit, ví dụ
 `Hết hạn 06:00 13-08 (6h)`. Preview local đọc `expiry_hours` từ calculator;
 execution plan persisted giữ lại duration từ `expires_in_minutes` trong payload.
 
+Sau khi trader đã approve một H1 Impulse setup, worker không tự hủy plan chỉ vì
+điều kiện `price_reached_target_without_fill` đã đúng. Với playbook này, trạng
+thái “TP đã từng chạm trước fill” thuộc nhóm cảnh báo discretionary trong
+revalidation audit. Worker vẫn giữ các guard runtime như hết TTL, news blackout,
+M5 close vượt invalidation/SL và giới hạn account trước khi gửi hoặc giữ lệnh
+pending trên MT5.
+
 ## Human approval và MT5
 
 Setup preview không tự gửi lệnh. Trader chọn Entry source (previous H1 edge,

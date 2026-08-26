@@ -1670,6 +1670,7 @@ def process_manual_ai_plans(
         plan_id = str(row["id"])
         trade_idea_id = row["trade_idea_id"]
         plan_status = str(row["status"])
+        plan_playbook, _entry_source_for_cancel_rules = plan_playbook_and_entry_source(row)
         linked_order = None
         if trade_idea_id:
             linked_order = conn.execute(
@@ -1886,6 +1887,12 @@ def process_manual_ai_plans(
         cancelled_reason: str | None = None
         for condition in cancel_conditions:
             condition_type = str(condition.get("type") or "")
+            if plan_playbook == "h1_impulse_retest_v1" and condition_type == "price_reached_target_without_fill":
+                # H1 Impulse revalidation is advisory after trader approval. A
+                # historical/current TP touch before fill is still visible in
+                # the saved revalidation audit, but it must not silently delete
+                # a discretionary H1 limit before MT5 sees it.
+                continue
             condition_price = condition.get("price")
             close_value = float(latest_m5["close"]) if condition_type.startswith("m5_") else float(latest_m15["close"]) if latest_m15 else None
             if condition_type.endswith("close_below") and condition_price is not None and close_value is not None and close_value < float(condition_price):
