@@ -94,9 +94,6 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
         takeProfit: candidate.take_profit[0],
       });
       setRevalidation(latestRevalidation);
-      if (!latestRevalidation.can_reorder) {
-        throw new Error(latestRevalidation.hard_blocked_reasons.join(" "));
-      }
       let planId = draftPlanId;
       if (!planId) {
         const requestedAt = new Date().toISOString();
@@ -187,7 +184,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
   );
   const revalidationHardBlocks = revalidation?.hard_blocked_reasons ?? [];
   const ready = !revalidating
-    && revalidation?.can_reorder === true
+    && revalidation !== null
     && executionReview.hardBlockedReasons.length === 0
     && overrideReady
     && calm
@@ -214,7 +211,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
           <div className="mt-2 text-[10px] text-slate-500">Suggested by Body/ATR: {suggestedExpiryHours}h · Allowed {configuredMinTtl}–{configuredMaxTtl}h</div>
         </div>
         {revalidating ? <div className="mt-3 flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.05] p-3 text-xs text-cyan-100"><Loader2 className="animate-spin" size={14} />Revalidating signal age and untouched levels…</div> : null}
-        {revalidation ? <div className={`mt-3 rounded-lg border p-3 text-xs ${revalidation.can_reorder ? "border-emerald-400/25 bg-emerald-400/[0.06] text-emerald-100" : "border-rose-400/35 bg-rose-400/[0.08] text-rose-100"}`}><div className="font-bold">{revalidation.can_reorder ? "✓ Signal remains actionable" : "⛔ Signal cannot be renewed"}</div><div className="mt-1 text-slate-400">Age {revalidation.signal_age_hours.toFixed(1)}h / {revalidation.max_signal_age_hours}h · Checked with {revalidation.timeframe_used}</div></div> : null}
+        {revalidation ? <div className={`mt-3 rounded-lg border p-3 text-xs ${revalidation.can_reorder ? "border-emerald-400/25 bg-emerald-400/[0.06] text-emerald-100" : "border-amber-400/35 bg-amber-400/[0.08] text-amber-100"}`}><div className="font-bold">{revalidation.can_reorder ? "✓ Signal remains actionable" : "⚠ Signal has renewal warnings"}</div><div className="mt-1 text-slate-400">Age {revalidation.signal_age_hours.toFixed(1)}h / {revalidation.max_signal_age_hours}h · Checked with {revalidation.timeframe_used}</div></div> : null}
         {executionReview.softBlockedReasons.length > 0 ? (
           <ReviewReasons
             icon="⚠"
@@ -231,7 +228,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             tone="rose"
           />
         ) : null}
-        {revalidationHardBlocks.length > 0 ? <ReviewReasons icon="⛔" reasons={revalidationHardBlocks} title="Renewal blocks · cannot execute" tone="rose" /> : null}
+        {revalidationHardBlocks.length > 0 ? <ReviewReasons icon="⚠" reasons={revalidationHardBlocks} title="Renewal warnings · trader decides" tone="amber" /> : null}
         {requiresOverride ? (
           <div className="mt-4 grid gap-2 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] p-3">
             <div className="text-xs font-bold uppercase tracking-wide text-amber-200">Human override audit</div>

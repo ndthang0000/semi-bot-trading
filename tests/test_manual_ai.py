@@ -317,7 +317,7 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertEqual(1, persisted["candidates"][0]["renewal_count"])
             self.assertTrue(persisted["market_context"]["revalidations"]["h1-renew-child"]["can_reorder"])
 
-    def test_h1_revalidation_blocks_a_signal_after_entry_touch(self) -> None:
+    def test_h1_revalidation_warns_after_entry_touch(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "test.sqlite3"
@@ -354,6 +354,45 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertEqual(200, response.status_code, response.text)
             self.assertFalse(response.json()["can_reorder"])
             self.assertTrue(response.json()["entry_touched"])
+
+    def test_h1_plan_allows_revalidation_warnings_and_persists_audit(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            payload = copy.deepcopy(envelope(client_id="h1-entry-touch-warning"))
+            prepare_h1_payload(payload, db_path)
+            signal_time = payload["market_context"]["signal_candle_time"]
+            signal_close = datetime.fromisoformat(signal_time) + timedelta(hours=1)
+            with connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO candles (id, symbol, timeframe, open_time, close_time, open, high, low, close, volume, source)
+                    VALUES ('recent-m5-entry-touch-warning', 'XAUUSD', 'M5', ?, ?, 2006, 2008, 1999, 2004, 100, 'test')
+                    """,
+                    (
+                        (signal_close + timedelta(minutes=5)).isoformat(),
+                        (signal_close + timedelta(minutes=10)).isoformat(),
+                    ),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+
+            response = client.post("/api/manual-ai/plans", json=payload)
+
+            self.assertEqual(200, response.status_code, response.text)
+            plan_id = response.json()["plans"][0]["id"]
+            with connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT raw_payload_json FROM manual_ai_plans WHERE id = ?",
+                    (plan_id,),
+                ).fetchone()
+            persisted = json.loads(row["raw_payload_json"])
+            revalidation = persisted["market_context"]["revalidations"]["h1-entry-touch-warning"]
+            self.assertFalse(revalidation["can_reorder"])
+            self.assertTrue(revalidation["entry_touched"])
+            self.assertTrue(revalidation["hard_blocked_reasons"])
 
     def test_import_recalculates_rr_and_approval_requires_discipline(self) -> None:
         with TemporaryDirectory() as temp_dir:

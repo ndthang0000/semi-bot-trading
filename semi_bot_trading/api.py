@@ -2105,15 +2105,6 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                         as_of=now_dt,
                         preview_config=preview_config,
                     )
-                    if not revalidation["can_reorder"]:
-                        raise HTTPException(
-                            status_code=422,
-                            detail={
-                                "message": "H1 signal cannot be ordered or renewed",
-                                "hard_blocked_reasons": revalidation["hard_blocked_reasons"],
-                                "revalidation": revalidation,
-                            },
-                        )
                     if candidate.renewed_from_plan_id:
                         parent = conn.execute(
                             "SELECT id, symbol, status, raw_payload_json FROM manual_ai_plans WHERE id = ?",

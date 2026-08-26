@@ -119,13 +119,18 @@ config dưới tên `min_order_ttl_hours`, `max_order_ttl_hours` và
 Plan đã expired vẫn là terminal để giữ đúng lịch sử. `Revalidate & re-order`
 không hồi sinh plan cũ mà tạo plan con mới, lưu `renewed_from_plan_id` và
 `renewal_count`. Trước khi tạo, Backend duyệt M5 từ lúc signal đóng (fallback H1)
-và hard-block nếu:
+và trả cảnh báo cho trader nếu:
 
 - giá đã chạm Entry — setup đã được thị trường consume;
 - giá đã chạm SL/invalidation;
 - giá đã tới TP mà chưa chạm Entry;
 - signal quá `max_signal_age_hours`;
 - signal cũ nhưng không có candle sau signal để audit an toàn.
+
+Các cảnh báo renewal này không tự khóa execution. UI vẫn hiển thị rõ ràng để
+trader biết setup có thể đã bị consume/invalidation/TP trong lịch sử, nhưng
+quyết định cuối cùng thuộc về trader sau khi tick checklist kỷ luật. Backend vẫn
+lưu snapshot `revalidations` vào payload để audit sau này.
 
 Expiry của plan `draft/approved` có thể sửa trực tiếp. Nếu pending order đã
 `armed`, thay đổi expiry tạo `replace_requested`; worker xác nhận order cũ chưa
@@ -186,9 +191,10 @@ Calculator phân loại lý do block thành hai nhóm và vẫn giữ `blocked_r
   trước. Trader có thể gửi dưới dạng discretionary override sau khi nhập lý do
   tối thiểu 20 ký tự và xác nhận đã đọc từng soft block.
 - `hard_blocked_reason`: doji, geometry Entry/SL/TP sai hoặc stop size ngoài
-  `0.5–1.2 ATR`. Khi re-order còn gồm signal quá tuổi, setup đã consume,
-  invalidation/TP đã chạm hoặc thiếu lịch sử xác minh. Những lỗi này khóa
-  execution cho tới khi levels được sửa hoặc setup bị loại bỏ.
+  `0.5–1.2 ATR`. Những lỗi kỹ thuật này khóa execution cho tới khi levels được
+  sửa hoặc setup bị loại bỏ. Revalidation sau signal close như setup đã consume,
+  invalidation/TP đã chạm, signal quá tuổi hoặc thiếu lịch sử xác minh chỉ còn
+  là cảnh báo discretionary và được lưu vào payload.
 
 `Review blocked setup` mở màn hình audit để trader thấy cả hai nhóm. Mỗi lần
 Entry/SL/TP thay đổi, UI tính lại geometry, RR và stop/ATR;
