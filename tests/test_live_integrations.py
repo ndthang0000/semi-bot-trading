@@ -271,6 +271,37 @@ class LiveIntegrationTest(unittest.TestCase):
 
         self.assertEqual([], alerts)
 
+    def test_h1_impulse_setup_alert_is_suppressed_after_trader_approval_flow(self) -> None:
+        config = load_config()
+        env = replace(load_runtime_env(), account_label="FTMO")
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                queue_setup_alerts(
+                    conn,
+                    config,
+                    env,
+                    [
+                        {
+                            "id": "h1-impulse-1",
+                            "playbook": "h1_impulse_retest_v1",
+                            "direction": "long",
+                            "status": "eligible",
+                            "entry": 4568.229,
+                            "stop_loss": 4557.2071,
+                            "take_profit": [4601.2947],
+                            "metadata": {"order_type": "limit"},
+                        }
+                    ],
+                )
+                alerts = pending_alerts(conn, "FTMO")
+            finally:
+                conn.close()
+
+        self.assertEqual([], alerts)
+
     def test_system_telegram_message_uses_system_scope_and_category_emoji(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

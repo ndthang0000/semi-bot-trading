@@ -191,6 +191,10 @@ alert_event:
   chi do primary data worker `LIVE_RUN_DETECTORS=true` queue/send. Secondary
   worker phai dat `LIVE_RUN_DETECTORS=false`; no van evaluate/execute setup theo
   account nhung khong spam lai Telegram.
+- `manual_ai_v1` và `h1_impulse_retest_v1` không gửi `setup_candidate` Telegram
+  vì trader đã chủ động tạo/approve plan; chỉ gửi execution lifecycle thật như
+  `Limit order placed`, block/fail, filled, partial TP hoặc closed theo từng
+  account.
 - Telegram API lỗi: retry exponential backoff sau 30, 60, 120 và 240 giây.
 - Sau tổng cộng 5 lần gửi thất bại: chuyển event sang `failed` và giữ
   `failure_reason` để debug.

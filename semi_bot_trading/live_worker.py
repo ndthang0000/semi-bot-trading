@@ -1351,7 +1351,7 @@ def queue_setup_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, can
     if not env.live_run_detectors:
         return
     for candidate in candidates:
-        if candidate.get("playbook") == "manual_ai_v1":
+        if candidate.get("playbook") in {"manual_ai_v1", "h1_impulse_retest_v1"}:
             continue
         if candidate.get("status") not in {"eligible", "waiting_confirmation", "blocked"}:
             continue
