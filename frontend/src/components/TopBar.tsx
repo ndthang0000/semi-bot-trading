@@ -807,7 +807,9 @@ function LayerMenu() {
       >
         <Layers size={15} />
         Layers
-        <span className="rounded bg-ink-950 px-1.5 py-0.5 text-[11px] text-slate-400">{totalVisibleCount}</span>
+        <span className="inline-flex w-6 shrink-0 justify-center rounded bg-ink-950 py-0.5 text-[11px] tabular-nums text-slate-400">
+          {totalVisibleCount}
+        </span>
         <ChevronDown className={open ? "rotate-180 transition" : "transition"} size={14} />
       </button>
 
@@ -978,6 +980,11 @@ function playbookRequirementLabel(playbook: PlaybookKey): string {
   };
   const requirements = playbookLayerRequirements[playbook];
   const zoneLabels = requirements.zones.map((zoneType) => labels[zoneType]).join(", ");
-  const parts = [...(zoneLabels ? [zoneLabels] : []), ...(requirements.structure ? ["Structure + ZigZag"] : [])];
+  const structureLabel = requirements.structure
+    ? "Structure + ZigZag"
+    : requirements.structureDefaultOn
+      ? "Structure + ZigZag (default)"
+      : null;
+  const parts = [...(zoneLabels ? [zoneLabels] : []), ...(structureLabel ? [structureLabel] : [])];
   return `Layers: ${parts.join(" + ") || "None"}`;
 }

@@ -29,12 +29,15 @@ export const defaultSelectedPlaybooks: PlaybookKey[] = ["zone_reaction_v2"];
 
 export type InspectorTab = "zones" | "setups" | "trades";
 
-export const playbookLayerRequirements: Record<PlaybookKey, { zones: ZoneVisibilityKey[]; structure: boolean }> = {
+export const playbookLayerRequirements: Record<
+  PlaybookKey,
+  { zones: ZoneVisibilityKey[]; structure: boolean; structureDefaultOn?: boolean }
+> = {
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
   manual_ai_v1: { zones: [], structure: true },
   liquidity_sweep_reclaim_v1: { zones: ["liquidity_pool"], structure: true },
-  h1_impulse_retest_v1: { zones: [], structure: false },
+  h1_impulse_retest_v1: { zones: [], structure: false, structureDefaultOn: true },
 };
 
 type ChartState = {
@@ -365,7 +368,7 @@ export function playbookControlledLayers(
       liquidity_pool: requiredZoneTypes.has("liquidity_pool"),
       consolidation: requiredZoneTypes.has("consolidation"),
     },
-    showStructure: requiresStructureForPlaybooks(playbooks),
+    showStructure: requiresStructureForPlaybooks(playbooks) || defaultsStructureOnForPlaybooks(playbooks),
     tradeVisibilityMode: liquidityOnly || manualAiOnly || h1ImpulseOnly ? "off" : currentTradeVisibility,
   };
 }
@@ -385,6 +388,10 @@ function requiredZoneTypesForPlaybooks(playbooks: PlaybookKey[]): Set<ZoneVisibi
 
 function requiresStructureForPlaybooks(playbooks: PlaybookKey[]): boolean {
   return playbooks.some((playbook) => playbookLayerRequirements[playbook].structure);
+}
+
+function defaultsStructureOnForPlaybooks(playbooks: PlaybookKey[]): boolean {
+  return playbooks.some((playbook) => playbookLayerRequirements[playbook].structureDefaultOn === true);
 }
 
 function normalizeTradeVisibilityMode(value: unknown): TradeVisibilityMode {

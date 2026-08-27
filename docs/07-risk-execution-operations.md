@@ -282,6 +282,14 @@ PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 
 Rule nay chi ap dung cho `trade_orders.source = live` dang `filled`; pending limit order phai filled thanh position truoc khi duoc quan ly.
 
+Moi pending limit duoc broker xac nhan fill deu di qua mot transition chung,
+khong phu thuoc playbook. Transition nay dong bo `trade_orders`,
+`execution_requests` va plan lien ket sang `filled`, ghi actual fill/open time tu
+MT5 neu co, sau do queue mot `execution_event` Telegram. Dedupe key dung
+`account_label + trade_order_id + filled`, nen poll lai hoac hai detector cung
+nhin thay fill cung khong gui trung message. Worker kiem tra ca position dang mo
+va order history de khong mat event neu lenh fill roi dong giua hai lan poll.
+
 Chart inspector cho phep doi Partial TP theo tung account: bat/tat va chon moc
 tu `0.5R` den `2.0R`. Thay doi duoc worker ap dung cho tat ca lenh live dang
 `armed` (chua partial) va cac lenh tao sau do; lich su lenh da partial/da dong

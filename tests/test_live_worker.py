@@ -710,6 +710,43 @@ class TestExecuteCandidate(unittest.TestCase):
         self.assertEqual("2026-08-25T22:00:00+00:00", order["opened_at"])
         metadata = json.loads(order["metadata_json"])
         self.assertEqual("2026-08-25T22:00:00+00:00", metadata["broker_position_opened_at"])
+        request = self._conn.execute("SELECT status FROM execution_requests").fetchone()
+        self.assertEqual("filled", request["status"])
+        alerts = self._conn.execute(
+            "SELECT dedupe_key, message_payload_json FROM alert_events ORDER BY created_at"
+        ).fetchall()
+        self.assertEqual(2, len(alerts))
+        self.assertTrue(alerts[-1]["dedupe_key"].endswith(f":{order['id']}:filled"))
+        payload = json.loads(alerts[-1]["message_payload_json"])
+        self.assertEqual("filled", payload["outcome"])
+        self.assertEqual("zone_reaction_v2", payload["setup"]["playbook"])
+        self.assertEqual(3000.0, payload["entry"])
+
+        # Repeated worker polls must not emit duplicate fill notifications.
+        sync_filled_pending_orders(self._conn, self._config, self._env, client, "XAUUSDm")
+        alert_count = self._conn.execute("SELECT COUNT(*) FROM alert_events").fetchone()[0]
+        self.assertEqual(2, alert_count)
+
+    def test_pending_limit_history_fill_queues_alert_after_position_already_closed(self):
+        client = _fake_client(place_limit_result={
+            "order": "444", "deal": "0", "price": 0, "retcode": 10008
+        })
+        plan = _make_pricing_plan(order_type="limit", entry_price=3000.0,
+                                  stop_loss=2980.0, take_profit=[3040.0])
+        self._run(client, pricing_plan=plan)
+        client.get_open_positions.return_value = []
+        client.get_pending_order_state.return_value = "filled"
+
+        sync_filled_pending_orders(self._conn, self._config, self._env, client, "XAUUSDm")
+
+        order = self._conn.execute("SELECT status, opened_at FROM trade_orders").fetchone()
+        self.assertEqual("filled", order["status"])
+        self.assertIsNotNone(order["opened_at"])
+        filled_alerts = self._conn.execute(
+            "SELECT message_payload_json FROM alert_events WHERE dedupe_key LIKE '%:filled'"
+        ).fetchall()
+        self.assertEqual(1, len(filled_alerts))
+        self.assertEqual("filled", json.loads(filled_alerts[0][0])["outcome"])
 
     # ── MT5 failure ───────────────────────────────────────────────────────────
     def test_mt5_failure_execution_request_marked_failed(self):
@@ -1088,7 +1125,55 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self.assertEqual("filled", order["status"])
         client.cancel_pending_order.assert_not_called()
         alerts = self._conn.execute("SELECT dedupe_key FROM alert_events").fetchall()
-        self.assertEqual(["manual-ai-lifecycle:Test:manual-plan:filled"], [row["dedupe_key"] for row in alerts])
+        self.assertEqual(
+            ["order-lifecycle:Test:manual-order:filled"],
+            [row["dedupe_key"] for row in alerts],
+        )
+
+    def test_h1_fill_sync_updates_plan_and_queues_one_alert_before_plan_poll(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        self._conn.execute(
+            "UPDATE trade_ideas SET playbook = 'h1_impulse_retest_v1' WHERE id = 'manual-idea'"
+        )
+        self._conn.execute(
+            """
+            UPDATE trade_orders
+            SET metadata_json = ?
+            WHERE id = 'manual-order'
+            """,
+            (json.dumps({
+                "broker_order_id": "33333",
+                "broker_deal_id": "0",
+                "playbook": "h1_impulse_retest_v1",
+                "candidate_metadata": {"entry_source": "fib_0.382"},
+            }),),
+        )
+        self._conn.commit()
+        client = _fake_client()
+        client.get_open_positions.return_value = [{
+            "ticket": "33333",
+            "price_open": 3000.25,
+            "opened_at": "2026-08-26T01:26:11+00:00",
+        }]
+
+        # This is the production ordering that previously swallowed the H1 alert.
+        sync_filled_pending_orders(self._conn, self._config, self._env, client, "XAUUSDm")
+        process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+
+        plan = self._conn.execute(
+            "SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'"
+        ).fetchone()
+        self.assertEqual("filled", plan["status"])
+        alerts = self._conn.execute(
+            "SELECT dedupe_key, message_payload_json FROM alert_events"
+        ).fetchall()
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("order-lifecycle:Test:manual-order:filled", alerts[0]["dedupe_key"])
+        payload = json.loads(alerts[0]["message_payload_json"])
+        self.assertEqual("h1_impulse_retest_v1 limit filled", payload["title"])
+        self.assertEqual("fib_0.382", payload["entry_source"])
+        self.assertEqual(3000.25, payload["entry"])
 
     def test_expired_armed_limit_is_cancelled_at_broker_before_db_closes(self):
         now = datetime.now(UTC)

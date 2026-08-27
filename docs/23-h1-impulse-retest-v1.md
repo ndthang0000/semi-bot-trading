@@ -150,6 +150,13 @@ Global system claim theo symbol + close time bảo đảm nhiều account worker
 dùng chung database chỉ queue một message cho cùng cây H1; worker claim đầu tiên
 sẽ dùng Telegram connection của account đó để gửi.
 
+Khi H1 Impulse limit thật sự khớp, alert setup `WAIT` trước đó không được xem là
+fill confirmation. Worker chỉ gửi message `[FILLED]` sau khi MT5 xác nhận bằng
+open position hoặc order history. Event fill dùng lifecycle chung của mọi
+playbook, mang theo account, playbook, direction, actual/planned Entry, SL, TP,
+lot, Entry source, broker IDs và fill time; dedupe theo `trade_order_id` để mỗi
+lệnh chỉ báo một lần.
+
 Setup card hiển thị cả timestamp và duration của limit, ví dụ
 `Hết hạn 06:00 13-08 (6h)`. Preview local đọc `expiry_hours` từ calculator;
 execution plan persisted giữ lại duration từ `expires_in_minutes` trong payload.
@@ -162,6 +169,12 @@ M5 close vượt invalidation/SL và giới hạn account trước khi gửi ho�
 pending trên MT5.
 
 ## Human approval và MT5
+
+Khi chọn riêng playbook H1 Impulse Retest trên chart, UI tự bật layer
+`Structure + ZigZag` và ẩn các zone không thuộc playbook để trader đọc impulse,
+pullback và cấu trúc liên quan rõ hơn. Đây là default khi chọn playbook hoặc tải
+lại trang, không phải layer bắt buộc; trader vẫn có thể tắt trong menu Layers để
+đọc chart trống hơn trong phiên hiện tại.
 
 Setup preview không tự gửi lệnh. Trader chọn Entry source (previous H1 edge,
 Fib 0.382/0.5/0.618, min/max Stop ATR hoặc custom), có thể chỉnh Entry/SL/TP rồi bấm

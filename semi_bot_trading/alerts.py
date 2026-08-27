@@ -59,6 +59,7 @@ def queue_alert(
     entity_ids: list[str],
     payload: dict[str, Any],
     dedupe_key: str,
+    commit: bool = True,
 ) -> bool:
     try:
         conn.execute(
@@ -82,7 +83,8 @@ def queue_alert(
                 utc_now_iso(),
             ),
         )
-        conn.commit()
+        if commit:
+            conn.commit()
         return True
     except IntegrityError as exc:
         if "alert_events.account_label, alert_events.dedupe_key" not in str(exc):
@@ -262,6 +264,30 @@ def format_alert_message(alert: AlertEvent) -> str:
     return _fmt_generic(alert)
 
 
+def _execution_outcome(payload: dict[str, Any]) -> str:
+    outcome = str(payload.get("outcome") or "").lower()
+    if outcome:
+        return outcome
+    title = str(payload.get("title") or "").lower()
+    if "blocked" in title:
+        return "blocked"
+    if "failed" in title:
+        return "failed"
+    if "filled" in title:
+        return "filled"
+    if "opened" in title or "executed" in title:
+        return "opened"
+    if "expired" in title:
+        return "expired"
+    if "closed" in title:
+        return "closed"
+    if "take profit" in title or "partial tp" in title or " tp" in title:
+        return "take_profit"
+    if "stop" in title or "loss" in title or "sl" in title:
+        return "stop_loss"
+    return "info"
+
+
 def alert_message_emoji(alert: AlertEvent) -> str:
     """Return one stable leading emoji for fast Telegram message scanning."""
     if alert.event_type == "setup_candidate":
@@ -270,26 +296,11 @@ def alert_message_emoji(alert: AlertEvent) -> str:
         return {"eligible": "🎯", "blocked": "🚫"}.get(status, "⏳")
     if alert.event_type == "execution_event":
         title = str(alert.payload.get("title") or "").lower()
-        outcome = str(alert.payload.get("outcome") or "").lower()
         if "manual" in title and "lock" in title:
             return "🔒"
         if "ftmo" in title or "news" in title:
             return "🛡️"
-        if not outcome:
-            if "blocked" in title:
-                outcome = "blocked"
-            elif "failed" in title:
-                outcome = "failed"
-            elif "opened" in title or "executed" in title:
-                outcome = "opened"
-            elif "expired" in title:
-                outcome = "expired"
-            elif "closed" in title:
-                outcome = "closed"
-            elif "take profit" in title or "partial tp" in title:
-                outcome = "take_profit"
-            elif "stop" in title or "loss" in title:
-                outcome = "stop_loss"
+        outcome = _execution_outcome(alert.payload)
         return {
             "opened": "🟢",
             "filled": "🟢",
@@ -518,24 +529,8 @@ def _fmt_execution(alert: AlertEvent) -> str:
         "failed": "[FAILED]",
         "info": "[INFO]",
     }
-    outcome = str(p.get("outcome") or "").lower()
-    tag = outcome_tags.get(outcome)
-    if tag is None:
-        t_lower = title.lower()
-        if "blocked" in t_lower:
-            tag = "[BLOCK]"
-        elif "failed" in t_lower:
-            tag = "[FAILED]"
-        elif "opened" in t_lower or "executed" in t_lower:
-            tag = "[OPEN]"
-        elif "closed" in t_lower:
-            tag = "[CLOSE]"
-        elif " tp" in t_lower:
-            tag = "[TP]"
-        elif "sl" in t_lower or "stop" in t_lower or "loss" in t_lower:
-            tag = "[SL]"
-        else:
-            tag = "[INFO]"
+    outcome = _execution_outcome(p)
+    tag = outcome_tags.get(outcome, "[INFO]")
 
     sym = "[" + alert.symbol + "]"
     lines = [sym + " " + tag + " " + title]
@@ -553,6 +548,11 @@ def _fmt_execution(alert: AlertEvent) -> str:
         if lots:
             price_line += "  " + str(lots) + " lots"
         lines.append(price_line)
+
+    if p.get("entry_source"):
+        lines.append("Entry source: " + str(p["entry_source"]))
+    if p.get("filled_at"):
+        lines.append("Filled at: " + str(p["filled_at"]))
 
     if pnl_r is not None:
         sign = "+" if float(pnl_r) >= 0 else ""

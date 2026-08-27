@@ -2139,7 +2139,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           return (
             <button
               key={`${marker.time}:${marker.status}`}
-              className={`group pointer-events-auto absolute z-[27] flex h-5 w-5 -translate-x-1/2 items-center justify-center transition hover:z-[60] hover:scale-110 ${
+              className={`group pointer-events-auto absolute z-[45] flex h-5 w-5 -translate-x-1/2 items-center justify-center transition hover:z-[70] hover:scale-110 ${
                 short ? "-translate-y-[calc(100%+6px)]" : "translate-y-[6px]"
               } ${className}`}
               style={{ left: x, top: y }}

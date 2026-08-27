@@ -819,7 +819,6 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             sync_filled_pending_orders(conn, config, env, client, broker_symbol)
             process_manual_ai_plans(conn, config, env, client, broker_symbol, now)
         if broker_symbol:
-            sync_filled_pending_orders(conn, config, env, client, broker_symbol)
             sync_closed_positions(conn, config, env, client, broker_symbol)
             if ftmo_news_guard is None:
                 manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
@@ -1566,7 +1565,7 @@ def queue_manual_ai_lifecycle_alert(
     status: str,
 ) -> bool:
     normalized_status = status.lower()
-    if normalized_status not in {"filled", "expired"}:
+    if normalized_status != "expired":
         return False
     playbook, entry_source = plan_playbook_and_entry_source(row)
     return queue_alert(
@@ -1600,22 +1599,19 @@ def mark_manual_ai_filled(
     now_iso: str,
 ) -> None:
     if linked_order is not None:
-        conn.execute(
-            """
-            UPDATE trade_orders
-            SET status = 'filled',
-                opened_at = COALESCE(opened_at, ?),
-                updated_at = ?
-            WHERE id = ? AND status = 'pending_fill'
-            """,
-            (now_iso, now_iso, linked_order["id"]),
+        mark_pending_order_filled(
+            conn,
+            config,
+            env,
+            str(linked_order["id"]),
+            opened_at=now_iso,
         )
+        return
     conn.execute(
         "UPDATE manual_ai_plans SET status = 'filled', updated_at = ? WHERE id = ?",
         (now_iso, row["id"]),
     )
     conn.commit()
-    queue_manual_ai_lifecycle_alert(conn, config, env, row, "filled")
 
 
 def plan_playbook_and_entry_source(row: Any, replacement: dict[str, Any] | None = None) -> tuple[str, str]:
@@ -2858,6 +2854,119 @@ def _partial_take_profit_metadata(
     }
 
 
+def mark_pending_order_filled(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    trade_order_id: str,
+    *,
+    opened_at: str,
+    fill_price: float | None = None,
+    broker_position_id: str | None = None,
+) -> bool:
+    """Atomically persist one broker-confirmed limit fill and its outbox event."""
+    row = conn.execute(
+        """
+        SELECT o.*, i.playbook
+        FROM trade_orders o
+        JOIN trade_ideas i ON i.id = o.trade_idea_id
+        WHERE o.id = ?
+        """,
+        (trade_order_id,),
+    ).fetchone()
+    if row is None or str(row["status"]) != "pending_fill":
+        return False
+
+    now = utc_now_iso()
+    metadata = json.loads(row["metadata_json"] or "{}")
+    actual_entry = float(fill_price) if fill_price is not None else float(row["entry_price"])
+    metadata["broker_position_opened_at"] = opened_at
+    metadata["broker_position_entry_price"] = actual_entry
+    if broker_position_id:
+        metadata["broker_position_id"] = broker_position_id
+
+    updated = conn.execute(
+        """
+        UPDATE trade_orders
+        SET status = 'filled', opened_at = ?, metadata_json = ?, updated_at = ?
+        WHERE id = ? AND status = 'pending_fill'
+        """,
+        (opened_at, json.dumps(metadata, sort_keys=True, default=str), now, trade_order_id),
+    ).rowcount
+    if not updated:
+        return False
+
+    conn.execute(
+        """
+        UPDATE execution_requests
+        SET status = 'filled', updated_at = ?
+        WHERE trade_idea_id = ? AND account_label = ? AND status IN ('pending', 'sent')
+        """,
+        (now, row["trade_idea_id"], env.account_label),
+    )
+    conn.execute(
+        """
+        UPDATE manual_ai_plans
+        SET status = 'filled', updated_at = ?
+        WHERE trade_idea_id = ? AND account_label = ?
+          AND status IN ('approved', 'arming', 'armed', 'cancel_requested', 'replace_requested')
+        """,
+        (now, row["trade_idea_id"], env.account_label),
+    )
+
+    candidate_metadata = metadata.get("candidate_metadata")
+    candidate_metadata = candidate_metadata if isinstance(candidate_metadata, dict) else {}
+    entry_source = str(
+        metadata.get("entry_source")
+        or candidate_metadata.get("entry_source")
+        or candidate_metadata.get("entry_model")
+        or "strategy_calculated"
+    )
+    take_profit = json.loads(row["take_profit_json"] or "[]")
+    playbook = str(metadata.get("playbook") or row["playbook"] or "unknown")
+    broker_order_id = str(metadata.get("broker_order_id") or "")
+    broker_deal_id = str(metadata.get("broker_deal_id") or "")
+    direction = "long" if str(row["side"]) == "buy" else "short"
+    queue_alert(
+        conn,
+        account_label=env.account_label,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="critical",
+        entity_ids=[str(row["trade_idea_id"]), trade_order_id],
+        payload={
+            "title": f"{playbook} limit filled",
+            "outcome": "filled",
+            "account": env.account_label,
+            "direction": direction,
+            "entry": actual_entry,
+            "planned_entry": float(row["entry_price"]),
+            "stop_loss": float(row["stop_loss"]),
+            "take_profit": take_profit,
+            "quantity": float(row["quantity"]),
+            "entry_source": entry_source,
+            "filled_at": opened_at,
+            "broker_order_id": broker_order_id,
+            "broker_deal_id": broker_deal_id,
+            "broker_position_id": broker_position_id,
+            "setup": {
+                "playbook": playbook,
+                "direction": direction,
+                "order_type": "limit",
+                "entry": actual_entry,
+                "stop_loss": float(row["stop_loss"]),
+                "take_profit": take_profit,
+            },
+            "chart_url": env.chart_url_base,
+        },
+        dedupe_key=f"order-lifecycle:{env.account_label}:{trade_order_id}:filled",
+        commit=False,
+    )
+    conn.commit()
+    return True
+
+
 def sync_filled_pending_orders(
     conn: Connection,
     config: AppConfig,
@@ -2887,38 +2996,46 @@ def sync_filled_pending_orders(
     try:
         open_positions = client.get_open_positions(broker_symbol)
     except AttributeError:
-        return
+        open_positions = []
     positions_by_ticket = {str(position.get("ticket")): position for position in open_positions}
-    if not positions_by_ticket:
-        return
 
     now = utc_now_iso()
-    updated_any = False
     for row in rows:
         metadata = json.loads(row["metadata_json"] or "{}")
         broker_order_id = str(metadata.get("broker_order_id") or "")
         broker_deal_id = str(metadata.get("broker_deal_id") or "")
         position = positions_by_ticket.get(broker_order_id) or positions_by_ticket.get(broker_deal_id)
-        if position is None:
+        if position is not None:
+            opened_at = str(position.get("opened_at") or row["opened_at"] or now)
+            position_ticket = str(position.get("ticket") or broker_order_id or broker_deal_id)
+            position_price = position.get("price_open")
+            mark_pending_order_filled(
+                conn,
+                config,
+                env,
+                str(row["id"]),
+                opened_at=opened_at,
+                fill_price=float(position_price) if position_price is not None else None,
+                broker_position_id=position_ticket or None,
+            )
             continue
-        opened_at = str(position.get("opened_at") or row["opened_at"] or now)
-        metadata["broker_position_opened_at"] = opened_at
-        if position.get("price_open"):
-            metadata["broker_position_entry_price"] = float(position["price_open"])
-        conn.execute(
-            """
-            UPDATE trade_orders
-            SET status = 'filled',
-                opened_at = ?,
-                metadata_json = ?,
-                updated_at = ?
-            WHERE id = ? AND status = 'pending_fill'
-            """,
-            (opened_at, json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
-        )
-        updated_any = True
-    if updated_any:
-        conn.commit()
+        ticket = broker_order_id or broker_deal_id
+        if not ticket:
+            continue
+        try:
+            broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket)
+        except AttributeError:
+            broker_state = None
+        if broker_state == "filled":
+            # The position may already have closed between polls. Broker history
+            # still confirms the fill even though no open position remains.
+            mark_pending_order_filled(
+                conn,
+                config,
+                env,
+                str(row["id"]),
+                opened_at=str(row["opened_at"] or now),
+            )
 
 
 def manage_open_trade_partial_take_profit(

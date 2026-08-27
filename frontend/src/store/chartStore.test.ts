@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { playbookControlledLayers, setupSelectionState } from "./chartStore";
+import { playbookControlledLayers, playbookLayerRequirements, setupSelectionState } from "./chartStore";
 import { isZoneVisibleForPlaybooks, zoneDisplayName } from "../components/chart/chartCore";
 import type { PriceZone } from "../types";
 
@@ -39,6 +39,15 @@ describe("playbook-controlled chart layers", () => {
     expect(layers.showZones).toBe(false);
     expect(layers.showStructure).toBe(true);
     expect(layers.tradeVisibilityMode).toBe("off");
+  });
+
+  it("shows Structure and ZigZag by default for H1 Impulse Retest", () => {
+    const layers = playbookControlledLayers(["h1_impulse_retest_v1"]);
+
+    expect(layers.showZones).toBe(false);
+    expect(layers.showStructure).toBe(true);
+    expect(layers.tradeVisibilityMode).toBe("off");
+    expect(playbookLayerRequirements.h1_impulse_retest_v1.structure).toBe(false);
   });
 });
 
