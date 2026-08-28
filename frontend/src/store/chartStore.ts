@@ -50,6 +50,7 @@ type ChartState = {
   showZones: boolean;
   zoneTypeVisibility: ZoneTypeVisibility;
   showStructure: boolean;
+  showWaveMetrics: boolean;
   showIntradayLevels: boolean;
   showBrokenIntradayLevels: boolean;
   showH1ImpulseCandidates: boolean;
@@ -77,6 +78,7 @@ type ChartState = {
   setZoneTypeVisible: (zoneType: ZoneVisibilityKey, visible: boolean) => void;
   setAllZoneTypesVisible: (visible: boolean) => void;
   setShowStructure: (showStructure: boolean) => void;
+  setShowWaveMetrics: (showWaveMetrics: boolean) => void;
   setShowIntradayLevels: (showIntradayLevels: boolean) => void;
   setShowBrokenIntradayLevels: (show: boolean) => void;
   setShowH1ImpulseCandidates: (show: boolean) => void;
@@ -111,6 +113,7 @@ export const useChartStore = create<ChartState>()(
       showZones: true,
       zoneTypeVisibility: defaultZoneTypeVisibility,
       showStructure: true,
+      showWaveMetrics: true,
       showIntradayLevels: true,
       showBrokenIntradayLevels: false,
       showH1ImpulseCandidates: true,
@@ -194,6 +197,7 @@ export const useChartStore = create<ChartState>()(
         set((state) => ({
           showStructure: requiresStructureForPlaybooks(state.selectedPlaybooks) ? true : showStructure,
         })),
+      setShowWaveMetrics: (showWaveMetrics) => set({ showWaveMetrics }),
       setShowIntradayLevels: (showIntradayLevels) => set({ showIntradayLevels }),
       setShowBrokenIntradayLevels: (showBrokenIntradayLevels) => set({ showBrokenIntradayLevels }),
       setShowH1ImpulseCandidates: (showH1ImpulseCandidates) => set({ showH1ImpulseCandidates }),
@@ -290,6 +294,7 @@ export const useChartStore = create<ChartState>()(
         showZones: state.showZones,
         zoneTypeVisibility: state.zoneTypeVisibility,
         showStructure: state.showStructure,
+        showWaveMetrics: state.showWaveMetrics,
         showIntradayLevels: state.showIntradayLevels,
         showBrokenIntradayLevels: state.showBrokenIntradayLevels,
         showH1ImpulseCandidates: state.showH1ImpulseCandidates,

@@ -388,6 +388,50 @@ export type H1ImpulseMarker = {
   blocked_reason: string[];
 };
 
+export type WaveLeg = {
+  id: string;
+  direction: "up" | "down";
+  start_time: string;
+  end_time: string;
+  start_price: number;
+  end_price: number;
+  mid_time: string;
+  mid_price: number;
+  price_move: number;
+  bars: number | null;
+  duration_hours: number;
+  confirmed: boolean;
+};
+
+export type WaveMetrics = {
+  legs: WaveLeg[];
+  strength: {
+    up_median_price: number | null;
+    down_median_price: number | null;
+    up_median_bars: number | null;
+    down_median_bars: number | null;
+    up_median_speed: number | null;
+    down_median_speed: number | null;
+    ratio: number | null;
+    control: "buy" | "sell" | "balanced" | "unknown";
+    up_samples: number;
+    down_samples: number;
+    latest: {
+      direction: "up" | "down";
+      price_move: number;
+      bars: number | null;
+      speed: number | null;
+    } | null;
+    latest_to_previous_ratio: number | null;
+    up_change_pct: number | null;
+    down_change_pct: number | null;
+    efficiency: number | null;
+    efficiency_direction: "up" | "down" | "flat";
+    market_state: "trending_up" | "trending_down" | "rotational" | "choppy" | "unknown";
+    efficiency_samples: number;
+  };
+};
+
 export type ChartPayload = {
   version: number;
   symbol: string;
@@ -404,6 +448,7 @@ export type ChartPayload = {
     candles: ChartCandle[];
     structure: StructurePoint[];
     structure_timeframe: string;
+    wave_metrics: WaveMetrics;
     zones: PriceZone[];
     contexts: Record<string, Record<string, MarketContext>>;
     atr: Record<string, AtrSnapshot>;

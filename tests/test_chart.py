@@ -13,6 +13,7 @@ from semi_bot_trading.chart import (
     build_chart_payload,
     build_m15_signal_snapshot,
     build_m15_trigger_overlays,
+    build_wave_metrics,
     filter_traded_setup_candidates,
     load_manual_ai_setup_candidates,
     load_chart_trades,
@@ -90,6 +91,7 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual(len(payload["layers"]["candles"]), 2)
         self.assertIn("structure", payload["layers"])
         self.assertEqual(payload["layers"]["structure_timeframe"], "H1")
+        self.assertIn("wave_metrics", payload["layers"])
         self.assertIn("zones", payload["layers"])
         self.assertIn("contexts", payload["layers"])
         self.assertIn("trades", payload["layers"])
@@ -115,6 +117,103 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual(payload["layers"]["contexts"]["M15"]["bias"]["effective_value"], "bullish")
         self.assertEqual(payload["layers"]["zones"][0]["visual_start"], "2026-01-01T00:00:00+00:00")
         self.assertEqual(payload["layers"]["zones"][0]["visual_end"], "2027-01-01T00:00:00+00:00")
+
+    def test_wave_metrics_measure_confirmed_zigzag_legs_and_strength(self) -> None:
+        candles = [
+            {
+                "time": f"2026-01-{1 + hour // 24:02d}T{hour % 24:02d}:00:00+00:00",
+                "high": 105.0,
+                "low": 95.0,
+                "close": 100.0,
+            }
+            for hour in range(24)
+        ]
+        prices = [100.0, 130.0, 110.0, 140.0, 120.0, 150.0, 130.0]
+        hours = [12, 14, 16, 18, 20, 22, 23]
+        points = [
+            {
+                "id": f"swing-{index}",
+                "time": f"2026-01-01T{hour:02d}:00:00+00:00",
+                "type": "swing_low" if index % 2 == 0 else "swing_high",
+                "price": price,
+                "metadata": {
+                    "swing_type": "low" if index % 2 == 0 else "high",
+                    "confirmed_at": f"2026-01-01T{hour:02d}:00:00+00:00",
+                },
+            }
+            for index, (hour, price) in enumerate(zip(hours, prices))
+        ]
+        points.append(
+            {
+                "id": "future-confirmation",
+                "time": "2026-01-01T23:00:00+00:00",
+                "type": "swing_high",
+                "price": 170.0,
+                "metadata": {
+                    "swing_type": "high",
+                    "confirmed_at": "2026-01-02T01:00:00+00:00",
+                },
+            }
+        )
+
+        metrics = build_wave_metrics(
+            points,
+            candles,
+            as_of="2026-01-01T23:00:00+00:00",
+        )
+
+        self.assertEqual(6, len(metrics["legs"]))
+        self.assertEqual(["up", "down", "up", "down", "up", "down"], [leg["direction"] for leg in metrics["legs"]])
+        self.assertEqual(30.0, metrics["legs"][0]["price_move"])
+        self.assertEqual(2.0, metrics["legs"][0]["duration_hours"])
+        self.assertEqual(1.5, metrics["strength"]["ratio"])
+        self.assertEqual("buy", metrics["strength"]["control"])
+        self.assertEqual(2, metrics["strength"]["up_samples"])
+        self.assertEqual(2, metrics["strength"]["down_samples"])
+        self.assertEqual(30.0, metrics["strength"]["up_median_price"])
+        self.assertEqual(20.0, metrics["strength"]["down_median_price"])
+        self.assertEqual(15.0, metrics["strength"]["up_median_speed"])
+        self.assertEqual(10.0, metrics["strength"]["down_median_speed"])
+        self.assertEqual("down", metrics["strength"]["latest"]["direction"])
+        self.assertEqual(20.0, metrics["strength"]["latest"]["speed"])
+        self.assertEqual(0.6667, metrics["strength"]["latest_to_previous_ratio"])
+        self.assertEqual(0.0, metrics["strength"]["up_change_pct"])
+        self.assertEqual(0.0, metrics["strength"]["down_change_pct"])
+        self.assertEqual(0.2, metrics["strength"]["efficiency"])
+        self.assertEqual("up", metrics["strength"]["efficiency_direction"])
+        self.assertEqual("choppy", metrics["strength"]["market_state"])
+
+    def test_wave_metrics_keep_twelve_recent_legs(self) -> None:
+        candles = [
+            {
+                "time": f"2026-01-{1 + hour // 24:02d}T{hour % 24:02d}:00:00+00:00",
+                "high": 125.0,
+                "low": 95.0,
+                "close": 110.0,
+            }
+            for hour in range(40)
+        ]
+        points = [
+            {
+                "id": f"swing-{index}",
+                "time": f"2026-01-{1 + hour // 24:02d}T{hour % 24:02d}:00:00+00:00",
+                "type": "swing_low" if index % 2 == 0 else "swing_high",
+                "price": 100.0 if index % 2 == 0 else 120.0,
+                "metadata": {
+                    "swing_type": "low" if index % 2 == 0 else "high",
+                    "confirmed_at": f"2026-01-{1 + hour // 24:02d}T{hour % 24:02d}:00:00+00:00",
+                },
+            }
+            for index, hour in enumerate(range(14, 29))
+        ]
+
+        metrics = build_wave_metrics(points, candles, as_of="2026-01-02T15:00:00+00:00")
+
+        self.assertEqual(12, len(metrics["legs"]))
+        self.assertEqual("swing-2:swing-3", metrics["legs"][0]["id"])
+        self.assertEqual("swing-13:swing-14", metrics["legs"][-1]["id"])
+        self.assertEqual(4, metrics["strength"]["up_samples"])
+        self.assertEqual(4, metrics["strength"]["down_samples"])
 
     def test_can_render_m15_chart_with_h1_structure(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -4,6 +4,7 @@ import json
 import math
 from datetime import UTC, datetime
 from sqlite3 import Connection
+from statistics import median
 from typing import Any
 
 from .context import score_macro_trend
@@ -19,6 +20,203 @@ from .zones import CandleSlice, latest_atr
 
 CHART_PAYLOAD_VERSION = 1
 MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS = 500
+WAVE_METRIC_LEG_LIMIT = 12
+WAVE_STRENGTH_SAMPLE_SIZE = 4
+
+
+def build_wave_metrics(
+    structure_points: list[dict[str, Any]],
+    candles: list[dict[str, Any]],
+    *,
+    as_of: str,
+    leg_limit: int = WAVE_METRIC_LEG_LIMIT,
+) -> dict[str, Any]:
+    """Measure confirmed ZigZag legs without leaking unconfirmed replay swings."""
+    if leg_limit < 1:
+        raise ValueError("leg_limit must be >= 1")
+
+    available: list[tuple[dict[str, Any], str]] = []
+    for point in structure_points:
+        metadata = point.get("metadata") if isinstance(point.get("metadata"), dict) else {}
+        swing_type = metadata.get("swing_type")
+        if swing_type not in {"high", "low"}:
+            swing_type = _fallback_swing_type(str(point.get("type") or ""))
+        confirmed_at = metadata.get("confirmed_at")
+        if swing_type is None or str(point.get("time") or "") > as_of:
+            continue
+        if isinstance(confirmed_at, str) and confirmed_at > as_of:
+            continue
+        available.append((point, swing_type))
+
+    collapsed: list[tuple[dict[str, Any], str]] = []
+    for point, swing_type in sorted(available, key=lambda item: str(item[0]["time"])):
+        if not collapsed or collapsed[-1][1] != swing_type:
+            collapsed.append((point, swing_type))
+            continue
+        previous_point = collapsed[-1][0]
+        replaces_previous = (
+            float(point["price"]) > float(previous_point["price"])
+            if swing_type == "high"
+            else float(point["price"]) < float(previous_point["price"])
+        )
+        if replaces_previous:
+            collapsed[-1] = (point, swing_type)
+
+    ordered_candles = sorted(
+        (candle for candle in candles if str(candle.get("time") or "") <= as_of),
+        key=lambda candle: str(candle["time"]),
+    )
+    candle_times = [str(candle["time"]) for candle in ordered_candles]
+    legs: list[dict[str, Any]] = []
+    for (start_point, _), (end_point, _) in zip(collapsed, collapsed[1:]):
+        start_price = float(start_point["price"])
+        end_price = float(end_point["price"])
+        if math.isclose(start_price, end_price):
+            continue
+        start_time = str(start_point["time"])
+        end_time = str(end_point["time"])
+        start_index = _last_time_index_at_or_before(candle_times, start_time)
+        end_index = _last_time_index_at_or_before(candle_times, end_time)
+        price_move = abs(end_price - start_price)
+        bars = max(1, end_index - start_index) if start_index is not None and end_index is not None else None
+        duration_hours = max(
+            0.0,
+            (datetime.fromisoformat(end_time) - datetime.fromisoformat(start_time)).total_seconds() / 3600,
+        )
+        midpoint = datetime.fromisoformat(start_time) + (
+            datetime.fromisoformat(end_time) - datetime.fromisoformat(start_time)
+        ) / 2
+        legs.append(
+            {
+                "id": f"{start_point['id']}:{end_point['id']}",
+                "direction": "up" if end_price > start_price else "down",
+                "start_time": start_time,
+                "end_time": end_time,
+                "start_price": start_price,
+                "end_price": end_price,
+                "mid_time": midpoint.isoformat(),
+                "mid_price": (start_price + end_price) / 2,
+                "price_move": round(price_move, 5),
+                "bars": bars,
+                "duration_hours": round(duration_hours, 2),
+                "confirmed": True,
+            }
+        )
+
+    recent_legs = legs[-leg_limit:]
+    all_up_legs = [leg for leg in recent_legs if leg["direction"] == "up"]
+    all_down_legs = [leg for leg in recent_legs if leg["direction"] == "down"]
+    up_legs = all_up_legs[-(WAVE_STRENGTH_SAMPLE_SIZE + 1):-1]
+    down_legs = all_down_legs[-(WAVE_STRENGTH_SAMPLE_SIZE + 1):-1]
+    up_price = [float(leg["price_move"]) for leg in up_legs]
+    down_price = [float(leg["price_move"]) for leg in down_legs]
+    up_bars = [float(leg["bars"]) for leg in up_legs if leg["bars"] is not None]
+    down_bars = [float(leg["bars"]) for leg in down_legs if leg["bars"] is not None]
+    up_speed = [
+        float(leg["price_move"]) / float(leg["bars"])
+        for leg in up_legs
+        if leg["bars"]
+    ]
+    down_speed = [
+        float(leg["price_move"]) / float(leg["bars"])
+        for leg in down_legs
+        if leg["bars"]
+    ]
+    up_median_price = median(up_price) if up_price else None
+    down_median_price = median(down_price) if down_price else None
+    ratio = up_median_price / down_median_price if up_median_price is not None and down_median_price else None
+    control = "unknown"
+    if ratio is not None:
+        control = "buy" if ratio > 1.25 else "sell" if ratio < 0.8 else "balanced"
+
+    latest = recent_legs[-1] if recent_legs else None
+    previous = recent_legs[-2] if len(recent_legs) >= 2 else None
+    latest_to_previous = (
+        float(latest["price_move"]) / float(previous["price_move"])
+        if latest is not None and previous is not None and previous["price_move"]
+        else None
+    )
+    efficiency_legs = recent_legs[-6:]
+    total_path = sum(float(leg["price_move"]) for leg in efficiency_legs)
+    net_move = (
+        float(efficiency_legs[-1]["end_price"]) - float(efficiency_legs[0]["start_price"])
+        if efficiency_legs
+        else 0.0
+    )
+    efficiency = abs(net_move) / total_path if total_path else None
+    efficiency_direction = "up" if net_move > 0 else "down" if net_move < 0 else "flat"
+    if efficiency is None:
+        market_state = "unknown"
+    elif efficiency <= 0.25:
+        market_state = "choppy"
+    elif efficiency >= 0.55:
+        market_state = "trending_up" if net_move > 0 else "trending_down" if net_move < 0 else "choppy"
+    else:
+        market_state = "rotational"
+
+    up_change_pct = _latest_direction_change_pct(recent_legs, "up", WAVE_STRENGTH_SAMPLE_SIZE)
+    down_change_pct = _latest_direction_change_pct(recent_legs, "down", WAVE_STRENGTH_SAMPLE_SIZE)
+    return {
+        "legs": recent_legs,
+        "strength": {
+            "up_median_price": round(up_median_price, 5) if up_median_price is not None else None,
+            "down_median_price": round(down_median_price, 5) if down_median_price is not None else None,
+            "up_median_bars": round(median(up_bars), 1) if up_bars else None,
+            "down_median_bars": round(median(down_bars), 1) if down_bars else None,
+            "up_median_speed": round(median(up_speed), 5) if up_speed else None,
+            "down_median_speed": round(median(down_speed), 5) if down_speed else None,
+            "ratio": round(ratio, 4) if ratio is not None else None,
+            "control": control,
+            "up_samples": len(up_legs),
+            "down_samples": len(down_legs),
+            "latest": {
+                "direction": latest["direction"],
+                "price_move": latest["price_move"],
+                "bars": latest["bars"],
+                "speed": round(float(latest["price_move"]) / float(latest["bars"]), 5) if latest["bars"] else None,
+            }
+            if latest is not None
+            else None,
+            "latest_to_previous_ratio": round(latest_to_previous, 4) if latest_to_previous is not None else None,
+            "up_change_pct": round(up_change_pct, 1) if up_change_pct is not None else None,
+            "down_change_pct": round(down_change_pct, 1) if down_change_pct is not None else None,
+            "efficiency": round(efficiency, 4) if efficiency is not None else None,
+            "efficiency_direction": efficiency_direction,
+            "market_state": market_state,
+            "efficiency_samples": len(efficiency_legs),
+        },
+    }
+
+
+def _latest_direction_change_pct(
+    legs: list[dict[str, Any]],
+    direction: str,
+    sample_size: int,
+) -> float | None:
+    direction_legs = [leg for leg in legs if leg["direction"] == direction]
+    if len(direction_legs) < 2:
+        return None
+    latest_move = float(direction_legs[-1]["price_move"])
+    baseline_moves = [float(leg["price_move"]) for leg in direction_legs[-(sample_size + 1):-1]]
+    baseline = median(baseline_moves) if baseline_moves else None
+    return (latest_move / baseline - 1) * 100 if baseline else None
+
+
+def _fallback_swing_type(point_type: str) -> str | None:
+    if point_type in {"HH", "LH", "EQH", "swing_high"}:
+        return "high"
+    if point_type in {"HL", "LL", "EQL", "swing_low"}:
+        return "low"
+    return None
+
+
+def _last_time_index_at_or_before(times: list[str], target: str) -> int | None:
+    result: int | None = None
+    for index, value in enumerate(times):
+        if value > target:
+            break
+        result = index
+    return result
 
 
 def load_manual_ai_setup_candidates(
@@ -1192,6 +1390,8 @@ def build_chart_payload(
         setup_candidates,
         include_live_candle=is_latest_mode,
     )
+    chart_structure = load_chart_structure(conn, symbol, effective_structure_timeframe, range_start, range_end)
+    wave_candles = load_chart_candles(conn, symbol, effective_structure_timeframe, 500, end=range_end)
     return {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,
@@ -1206,8 +1406,9 @@ def build_chart_payload(
         },
         "layers": {
             "candles": candles,
-            "structure": load_chart_structure(conn, symbol, effective_structure_timeframe, range_start, range_end),
+            "structure": chart_structure,
             "structure_timeframe": effective_structure_timeframe,
+            "wave_metrics": build_wave_metrics(chart_structure, wave_candles, as_of=range_end),
             "zones": zones,
             "contexts": contexts,
             "atr": build_atr_snapshot(conn, symbol, ["H1", "M15"], period=14, end=range_end),

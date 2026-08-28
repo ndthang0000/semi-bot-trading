@@ -66,7 +66,9 @@ import { CandleInfoCard } from "./chart/CandleInfoCard";
 import { isCandleShapeHit } from "./chart/candleInfo";
 import { ManualAiLevelEditDialog, type ManualAiEditableLevels } from "./chart/ManualAiLevelEditDialog";
 import { IntradayMapPanel } from "./chart/IntradayMapPanel";
+import { WaveStrengthBadge } from "./chart/WaveStrengthBadge";
 import { levelStatusLabel, selectIntradayLevels } from "./chart/intradayMap";
+import { formatWaveDuration, formatWaveLegLabel } from "./chart/waveMetrics";
 import { type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import {
@@ -97,6 +99,7 @@ import type {
   SpreadSummary,
   StructurePoint,
   TradeOrder,
+  WaveLeg,
   ZoneTypeVisibility,
 } from "../types";
 
@@ -157,6 +160,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showWaveMetrics = useChartStore((state) => state.showWaveMetrics);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -176,6 +180,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [manualAiLevelEdit, setManualAiLevelEdit] = useState<ManualAiLevelEditState | null>(null);
   const [m15TriggerMarkers, setM15TriggerMarkers] = useState<M15TriggerMarker[]>([]);
   const [h1ImpulseChartMarkers, setH1ImpulseChartMarkers] = useState<H1ImpulseChartMarker[]>([]);
+  const [waveMetricMarkers, setWaveMetricMarkers] = useState<Array<{ leg: WaveLeg; x: number; y: number }>>([]);
   const [intradayLevelMarkers, setIntradayLevelMarkers] = useState<Array<{ level: IntradayLevel; y: number; bandY: number; bandHeight: number; plotWidth: number }>>([]);
   const [newsTimelineMarkers, setNewsTimelineMarkers] = useState<NewsTimelineMarker[]>([]);
   const [hoveredNewsMarker, setHoveredNewsMarker] = useState<NewsTimelineMarker | null>(null);
@@ -214,6 +219,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooksRef = useRef(selectedPlaybooks);
   const showHistoricalLiquiditySweepsRef = useRef(showHistoricalLiquiditySweeps);
   const showStructureRef = useRef(showStructure);
+  const showWaveMetricsRef = useRef(showWaveMetrics);
   const showIntradayLevelsRef = useRef(showIntradayLevels);
   const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
   const showH1ImpulseCandidatesRef = useRef(showH1ImpulseCandidates);
@@ -269,6 +275,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   selectedPlaybooksRef.current = selectedPlaybooks;
   showHistoricalLiquiditySweepsRef.current = showHistoricalLiquiditySweeps;
   showStructureRef.current = showStructure;
+  showWaveMetricsRef.current = showWaveMetrics;
   showIntradayLevelsRef.current = showIntradayLevels;
   showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
   showH1ImpulseCandidatesRef.current = showH1ImpulseCandidates;
@@ -449,6 +456,16 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           return [{ marker, x, y }];
         })
       : [];
+    const waveLegs = showStructureRef.current && showWaveMetricsRef.current
+      ? (currentPayload.layers.wave_metrics?.legs ?? []).slice(-12)
+      : [];
+    const waveMarkers = waveLegs.flatMap((leg) => {
+      const endX = timeScale.timeToCoordinate(toUnixTime(leg.end_time));
+      const y = series.priceToCoordinate(leg.end_price);
+      if (endX === null || y === null || endX < -12 || endX > plotWidth + 12 || y < -12 || y > height + 12) return [];
+      const x = clampNumber(endX, 58, Math.max(58, plotWidth - 58));
+      return [{ leg, x, y }];
+    });
     const rawIntradayLevels = showIntradayLevelsRef.current
       ? selectIntradayLevels(
           currentPayload.layers.intraday_map,
@@ -537,6 +554,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setSetupBoxes(chartSetups);
     setM15TriggerMarkers(m15Triggers);
     setH1ImpulseChartMarkers(h1Markers);
+    setWaveMetricMarkers(waveMarkers);
     setIntradayLevelMarkers(intradayLevels);
     setNewsTimelineMarkers(newsMarkers);
     setRenderedDrawings(chartDrawings);
@@ -1396,6 +1414,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     showH1ImpulseCandidates,
     showIntradayLevels,
     showStructure,
+    showWaveMetrics,
     showZones,
     tradeVisibilityMode,
     zoneTypeVisibility,
@@ -1933,6 +1952,9 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           bias={payload.layers.contexts.H1?.bias?.effective_value ?? "neutral"}
         />
       ) : null}
+      {showStructure && showWaveMetrics && !addEntityKind ? (
+        <WaveStrengthBadge metrics={payload.layers.wave_metrics} />
+      ) : null}
       <div className="pointer-events-none absolute inset-0">
         {zoneBoxes.map((box) => {
           const isSelected = selected?.kind === "zone" && selected.entity.id === box.zone.id;
@@ -2127,6 +2149,24 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
             >
               M15
             </div>
+          );
+        })}
+        {waveMetricMarkers.map(({ leg, x, y }) => {
+          const up = leg.direction === "up";
+          const duration = formatWaveDuration(leg);
+          return (
+            <span
+              key={leg.id}
+              className={`absolute z-[23] -translate-x-1/2 whitespace-nowrap rounded-sm bg-ink-950/65 px-1 py-0.5 font-mono text-[9px] font-medium tabular-nums shadow-sm backdrop-blur-[1px] ${
+                up ? "-translate-y-[calc(100%+30px)]" : "translate-y-[30px]"
+              } ${
+                up ? "text-emerald-300/85" : "text-rose-300/85"
+              }`}
+              style={{ left: x, top: y }}
+              title={`${up ? "Up" : "Down"} wave ${leg.price_move.toFixed(2)} · ${duration}H`}
+            >
+              {formatWaveLegLabel(leg)}
+            </span>
           );
         })}
         {h1ImpulseChartMarkers.map(({ marker, x, y }) => {

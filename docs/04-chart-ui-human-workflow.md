@@ -95,6 +95,32 @@ guidance có điều kiện. Nội dung phải luôn nhắc rằng liquidity lev
 sát, không phải tín hiệu tự động Buy/Sell. Mobile giới hạn sáu level ưu tiên;
 desktop giới hạn mười và loại label đè nhau theo tọa độ giá.
 
+## ZigZag wave metrics
+
+Chart payload có layer `wave_metrics` được dựng từ chính các swing confirmed mà
+ZigZag sử dụng. Các swing liên tiếp cùng phía được collapse về cực trị cao/thấp
+nhất trước khi tạo leg, nên đường ZigZag và số đo sóng luôn cùng một nguồn dữ
+liệu. Replay chỉ dùng point có `confirmed_at <= as_of` để tránh look-ahead.
+
+Mỗi leg có hướng, start/end, số giá di chuyển, số nến và thời lượng. Payload chỉ
+giữ mười hai leg hoàn chỉnh gần nhất. Baseline mỗi hướng dùng median tối đa bốn
+leg cùng hướng trước đó và loại leg cùng hướng mới nhất khỏi mẫu, để Latest không
+tự ảnh hưởng số liệu dùng so sánh. Ratio
+trên `1.25` là `buy`, dưới `0.8` là `sell`, còn lại là `balanced`; đây là mô tả
+sức mạnh gần đây, không phải tín hiệu tự động hoặc dự đoán đảo chiều.
+
+Toggle `Wave metrics` nằm dưới `Structure + ZigZag` và được persist local. Chart
+chỉ hiện tối đa mười hai label. Label neo tại swing kết thúc:
+sóng tăng nằm phía trên swing high, sóng giảm nằm phía dưới swing low, với style
+nhỏ `+42.6 · 6H` màu xanh hoặc `−27.3 · 6H` màu đỏ. `H` biểu diễn số nến
+H1 thực tế, tránh weekend/market break làm thời lượng calendar bị phóng đại.
+Badge Wave Strength chỉ là summary tinh gọn; H1 impulse candidate, swing marker
+và setup interaction vẫn có visual priority cao hơn. Phase này không dùng wave
+metrics để tự chỉnh hoặc cảnh báo TP. Click badge mở bảng chi tiết gồm latest
+wave, baseline move/time/speed theo giá mỗi nến, tỷ lệ wave mới nhất so với wave
+trước, expansion/contraction của từng hướng và efficiency của sáu wave gần nhất.
+Wave UI không hiển thị hoặc dùng ATR.
+
 ## Inspect candle
 
 Ở tool `Cursor`, click/tap trực tiếp vào body hoặc wick của một candle để mở thẻ

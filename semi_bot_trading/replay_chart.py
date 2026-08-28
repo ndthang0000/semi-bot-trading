@@ -10,6 +10,7 @@ from .chart import (
     build_atr_snapshot,
     build_h1_impulse_marker_layer,
     build_rsi_snapshot,
+    build_wave_metrics,
     load_chart_candles,
     load_chart_trades,
     load_chart_zones,
@@ -210,6 +211,11 @@ def build_realtime_replay_payload(
         setup_candidates,
         avg_body_period=config.strategy.zone_reaction_v2_reject_avg_body_period,
     )
+    chart_structure = [
+        structure_point_to_chart(point)
+        for point in structure_points
+        if range_start <= point.event_time <= range_end
+    ]
     payload = {
         "version": CHART_PAYLOAD_VERSION,
         "symbol": symbol,
@@ -224,8 +230,9 @@ def build_realtime_replay_payload(
         },
         "layers": {
             "candles": candles,
-            "structure": [structure_point_to_chart(point) for point in structure_points if range_start <= point.event_time <= range_end],
+            "structure": chart_structure,
             "structure_timeframe": structure_timeframe,
+            "wave_metrics": build_wave_metrics(chart_structure, structure_candles, as_of=replay_at),
             "zones": chart_zones,
             "contexts": contexts,
             "atr": build_atr_snapshot(conn, symbol, ["H1", "M15"], period=14, end=range_end),
