@@ -210,6 +210,55 @@ def _fake_risk_manager(allowed: bool = True, lot_size: float = 0.01, reason: str
 
 
 class TestAccountExecutionCommands(unittest.TestCase):
+    def _insert_trade_command(
+        self,
+        conn,
+        *,
+        command_type: str,
+        side: str = "buy",
+        trade_id: str = "managed-trade",
+        ticket: str = "11111",
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        conn.execute(
+            """
+            INSERT INTO trade_ideas (
+                id, symbol, direction, playbook, status, related_zone_ids_json,
+                context_snapshot_json, suggested_stop_loss, suggested_take_profit_json, risk_reward, created_at
+            ) VALUES ('managed-idea', 'XAUUSD', ?, 'h1_impulse_retest_v1', 'filled', '[]', '{}', 2980, '[3040]', 2, ?)
+            """,
+            ("long" if side == "buy" else "short", now),
+        )
+        conn.execute(
+            """
+            INSERT INTO trade_orders (
+                id, trade_idea_id, account_label, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity, opened_at, source,
+                metadata_json, created_at, updated_at
+            ) VALUES (?, 'managed-idea', 'Test', 'XAUUSD', ?, 'market', 'filled',
+                      3000, ?, ?, 0.2, ?, 'live', ?, ?, ?)
+            """,
+            (
+                trade_id,
+                side,
+                2980 if side == "buy" else 3020,
+                "[3040]" if side == "buy" else "[2960]",
+                now,
+                json.dumps({"broker_position_id": ticket, "initial_stop_loss": 2980 if side == "buy" else 3020}),
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO account_execution_commands (
+                id, account_label, command_type, status, requested_at, payload_json, idempotency_key
+            ) VALUES ('trade-command', 'Test', ?, 'pending', ?, ?, 'trade-command')
+            """,
+            (command_type, now, json.dumps({"trade_order_id": trade_id})),
+        )
+        conn.commit()
+
     def test_close_all_preserves_bot_execution_switch(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path, conn = _setup_db(temp_dir)
@@ -255,6 +304,163 @@ class TestAccountExecutionCommands(unittest.TestCase):
                 self.assertEqual("succeeded", command["status"])
                 self.assertTrue(control["requested_enabled"])
                 self.assertTrue(control["effective_enabled"])
+            finally:
+                conn.close()
+
+    def test_close_one_trade_uses_exact_position_ticket(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                self._insert_trade_command(conn, command_type="close_trade_position")
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", mt5_magic=260612)
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "magic": 260612, "side": "buy", "volume": 0.2, "price_open": 3000, "sl": 2980, "tp": 3040}
+                ]
+                client.close_position.return_value = {"deal": "close-deal", "retcode": 10009}
+                client.get_open_position_tickets.return_value = set()
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                client.close_position.assert_called_once_with(
+                    "XAUUSDm", position_ticket="11111", side="buy", volume=0.2,
+                    magic=260612, comment="Dashboard close trade",
+                )
+                command = conn.execute("SELECT status, result_json FROM account_execution_commands WHERE id = 'trade-command'").fetchone()
+                self.assertEqual("succeeded", command["status"])
+                self.assertEqual(0.2, json.loads(command["result_json"])["closed_volume"])
+            finally:
+                conn.close()
+
+    def test_manual_partial_closes_half_and_moves_remaining_position_to_entry(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                self._insert_trade_command(conn, command_type="partial_trade_position")
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", mt5_magic=260612)
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "magic": 260612, "side": "buy", "volume": 0.2, "price_open": 3000, "sl": 2980, "tp": 3040}
+                ]
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                client.close_partial_position.assert_called_once_with(
+                    "XAUUSDm", position_ticket="11111", side="buy", volume=0.1,
+                    magic=260612, comment="Dashboard partial 50pct",
+                )
+                client.modify_position_sltp.assert_called_once_with(
+                    "XAUUSDm", position_ticket="11111", stop_loss=3000.0,
+                    take_profit=3040.0, magic=260612, comment="Dashboard partial BE",
+                )
+                trade = conn.execute("SELECT stop_loss, metadata_json FROM trade_orders WHERE id = 'managed-trade'").fetchone()
+                partial = json.loads(trade["metadata_json"])["partial_take_profit"]
+                self.assertEqual(3000, trade["stop_loss"])
+                self.assertTrue(partial["done"])
+                self.assertTrue(partial["breakeven_applied"])
+                self.assertEqual(0.1, partial["closed_volume"])
+            finally:
+                conn.close()
+
+    def test_manual_partial_does_not_degrade_a_better_stop(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                self._insert_trade_command(conn, command_type="partial_trade_position")
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", mt5_magic=260612)
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "magic": 260612, "side": "buy", "volume": 0.2, "price_open": 3000, "sl": 3005, "tp": 3040}
+                ]
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                client.close_partial_position.assert_called_once()
+                client.modify_position_sltp.assert_not_called()
+                trade = conn.execute("SELECT stop_loss, metadata_json FROM trade_orders WHERE id = 'managed-trade'").fetchone()
+                partial = json.loads(trade["metadata_json"])["partial_take_profit"]
+                self.assertEqual(3005, trade["stop_loss"])
+                self.assertTrue(partial["breakeven_applied"])
+                self.assertTrue(partial["breakeven_already_protected"])
+            finally:
+                conn.close()
+
+    def test_manual_partial_is_recorded_done_when_break_even_fails(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                self._insert_trade_command(conn, command_type="partial_trade_position")
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", mt5_magic=260612)
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "magic": 260612, "side": "buy", "volume": 0.2, "price_open": 3000, "sl": 2980, "tp": 3040}
+                ]
+                client.modify_position_sltp.side_effect = RuntimeError("modify rejected")
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                command = conn.execute("SELECT status, result_json FROM account_execution_commands WHERE id = 'trade-command'").fetchone()
+                partial = json.loads(conn.execute("SELECT metadata_json FROM trade_orders WHERE id = 'managed-trade'").fetchone()["metadata_json"])["partial_take_profit"]
+                self.assertEqual("succeeded", command["status"])
+                self.assertEqual("modify rejected", json.loads(command["result_json"])["break_even_error"])
+                self.assertTrue(partial["done"])
+                self.assertFalse(partial["breakeven_applied"])
+                self.assertEqual(0.1, partial["closed_volume"])
+            finally:
+                conn.close()
+
+    def test_break_even_preserves_tp_and_uses_broker_entry(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                self._insert_trade_command(conn, command_type="break_even_trade_position", side="sell")
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", mt5_magic=260612)
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "magic": 260612, "side": "sell", "volume": 0.2, "price_open": 3001.5, "sl": 3020, "tp": 2960}
+                ]
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                client.modify_position_sltp.assert_called_once_with(
+                    "XAUUSDm", position_ticket="11111", stop_loss=3001.5,
+                    take_profit=2960.0, magic=260612, comment="Dashboard break even",
+                )
+                trade = conn.execute("SELECT stop_loss, metadata_json FROM trade_orders WHERE id = 'managed-trade'").fetchone()
+                self.assertEqual(3001.5, trade["stop_loss"])
+                self.assertEqual("manual_breakeven", json.loads(trade["metadata_json"])["stop_management_state"])
+            finally:
+                conn.close()
+
+    def test_trade_action_rejects_position_owned_by_another_magic(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path, conn = _setup_db(temp_dir)
+            try:
+                self._insert_trade_command(conn, command_type="break_even_trade_position")
+                config = replace(load_config(), database=db_path)
+                env = _make_env(account_label="Test", mt5_magic=260612)
+                client = _fake_client()
+                client.bot_order_counts.return_value = (0, 0)
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "magic": 0, "side": "buy", "volume": 0.2, "price_open": 3000, "sl": 2980, "tp": 3040}
+                ]
+
+                process_account_execution_commands(conn, config, env, client, "XAUUSDm")
+
+                client.modify_position_sltp.assert_not_called()
+                command = conn.execute("SELECT status, error FROM account_execution_commands WHERE id = 'trade-command'").fetchone()
+                self.assertEqual("failed", command["status"])
+                self.assertIn("magic", command["error"])
             finally:
                 conn.close()
 

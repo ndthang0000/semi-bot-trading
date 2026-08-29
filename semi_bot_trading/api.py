@@ -32,6 +32,7 @@ from .api_models import (
     RefreshRequest,
     TradeReviewAttachmentRequest,
     TradeReviewRequest,
+    TradeManagementActionRequest,
     TradeVisibilityRequest,
     WeeklyJournalRequest,
     ZoneActivationRequest,
@@ -1338,6 +1339,99 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 raise HTTPException(status_code=404, detail=f"Trade not found: {trade_order_id}")
             conn.commit()
         return {"id": trade_order_id, "hidden_on_chart": request.hidden_on_chart}
+
+    @app.post("/api/trades/{trade_order_id}/actions", status_code=202)
+    def queue_trade_management_action(
+        trade_order_id: str,
+        request: TradeManagementActionRequest = Body(...),
+        username: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        command_types = {
+            "close_now": "close_trade_position",
+            "partial_50_be": "partial_trade_position",
+            "break_even": "break_even_trade_position",
+        }
+        command_id = f"trade-command-{uuid.uuid4()}"
+        idempotency_key = request.idempotency_key or command_id
+        now = datetime.now(UTC).isoformat()
+        with connect(config.database) as conn:
+            init_db(conn)
+            trade = conn.execute(
+                """
+                SELECT id, account_label, symbol, status, source, metadata_json
+                FROM trade_orders
+                WHERE id = ?
+                """,
+                (trade_order_id,),
+            ).fetchone()
+            if trade is None:
+                raise HTTPException(status_code=404, detail=f"Trade not found: {trade_order_id}")
+            if str(trade["source"]) != "live":
+                raise HTTPException(status_code=409, detail="Trade management actions are only available for live trades")
+            if str(trade["status"]) != "filled":
+                raise HTTPException(status_code=409, detail="Trade must be filled and still open")
+            metadata = json_loads(trade["metadata_json"], {})
+            partial = metadata.get("partial_take_profit") if isinstance(metadata, dict) else None
+            management = metadata.get("trade_management") if isinstance(metadata, dict) else None
+            if request.action == "partial_50_be" and isinstance(partial, dict) and partial.get("done") is True:
+                raise HTTPException(status_code=409, detail="This trade has already taken a partial profit")
+            if isinstance(management, dict) and management.get("last_action") == "close_now":
+                raise HTTPException(status_code=409, detail="A close command has already executed for this trade")
+            existing = conn.execute(
+                "SELECT id, status FROM account_execution_commands WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing:
+                return {
+                    "command_id": existing["id"],
+                    "status": existing["status"],
+                    "trade_order_id": trade_order_id,
+                    "action": request.action,
+                }
+            active_commands = conn.execute(
+                """
+                SELECT id, payload_json
+                FROM account_execution_commands
+                WHERE account_label = ?
+                  AND command_type IN ('close_trade_position', 'partial_trade_position', 'break_even_trade_position')
+                  AND status IN ('pending', 'processing')
+                ORDER BY requested_at
+                """,
+                (trade["account_label"],),
+            ).fetchall()
+            if any(
+                str(json_loads(command["payload_json"], {}).get("trade_order_id") or "") == trade_order_id
+                for command in active_commands
+            ):
+                raise HTTPException(status_code=409, detail="Another management action is already pending for this trade")
+            conn.execute(
+                """
+                INSERT INTO account_execution_commands
+                    (id, account_label, command_type, status, requested_by, requested_at, payload_json, idempotency_key)
+                VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+                """,
+                (
+                    command_id,
+                    trade["account_label"],
+                    command_types[request.action],
+                    username,
+                    now,
+                    json.dumps({
+                        "trade_order_id": trade_order_id,
+                        "action": request.action,
+                        "reason": request.reason,
+                    }),
+                    idempotency_key,
+                ),
+            )
+            conn.commit()
+        return {
+            "command_id": command_id,
+            "status": "pending",
+            "trade_order_id": trade_order_id,
+            "account_label": trade["account_label"],
+            "action": request.action,
+        }
 
     @app.get("/api/trades/{trade_order_id}/review")
     def get_trade_review(trade_order_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:

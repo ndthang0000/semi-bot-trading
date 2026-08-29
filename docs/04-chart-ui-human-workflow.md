@@ -320,6 +320,14 @@ account; trade da partial hoac da dong chi hien thi snapshot lich su, khong bi
 viet lai. Neu ha trigger xuong duoi muc loi nhuan hien tai, worker co the partial
 ngay o vong poll ke tiep.
 
+Với trade `live` đang `filled`, Inspector có thêm nhóm quản lý trực tiếp theo
+đúng trade/account: `Close now`, `Partial 50% + BE`, và `Break even`. Mỗi action
+phải xác nhận trước khi queue command. UI poll trạng thái command từ worker;
+trade đã đóng, backtest hoặc chưa fill không hiển thị action. `Partial 50% + BE`
+dùng volume position hiện tại, đánh dấu partial hoàn tất trước khi retry BE để
+không thể đóng lặp thêm 50%. Cả `Partial 50% + BE` và `Break even` đều dùng
+broker entry, giữ TP hiện tại và không kéo lùi một SL đã tốt hơn entry.
+
 ## Context strip
 
 Context strip có card `M15 Trigger`, dùng cùng snapshot với strategy:

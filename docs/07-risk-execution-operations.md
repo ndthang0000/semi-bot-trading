@@ -282,6 +282,25 @@ PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 
 Rule nay chi ap dung cho `trade_orders.source = live` dang `filled`; pending limit order phai filled thanh position truoc khi duoc quan ly.
 
+### Dashboard trade management
+
+Trade Inspector có thể queue ba command giảm exposure cho một trade `live`
+đang `filled`:
+
+- `close_trade_position`: đóng toàn bộ volume còn lại tại market.
+- `partial_trade_position`: đóng 50% volume hiện tại rồi dời SL phần còn lại về
+  broker entry; nếu bước BE lỗi, partial vẫn được ghi `done` và worker chỉ retry
+  BE, không partial lần hai. Nếu SL đã tốt hơn entry thì giữ nguyên SL đó.
+- `break_even_trade_position`: giữ nguyên TP và dời SL về broker entry; nếu SL
+  hiện tại đã hòa vốn hoặc tốt hơn thì command thành công mà không gửi modify.
+
+API chỉ ghi `account_execution_commands`; worker đúng `account_label` mới được
+gọi MT5. Trước mọi action, worker bắt buộc khớp broker position ticket từ trade
+metadata, side và `MT5_MAGIC`. Mismatch fail closed. Các command vẫn tuân theo
+FTMO hard-news freeze/stale-calendar guard giống close-all và automation quản lý
+lệnh. UI dùng idempotency key và poll `/api/account-commands/{command_id}` để
+hiển thị kết quả thực thi thay vì coi HTTP `202` là broker đã hoàn tất.
+
 Moi pending limit duoc broker xac nhan fill deu di qua mot transition chung,
 khong phu thuoc playbook. Transition nay dong bo `trade_orders`,
 `execution_requests` va plan lien ket sang `filled`, ghi actual fill/open time tu

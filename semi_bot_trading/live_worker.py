@@ -720,8 +720,13 @@ def process_account_execution_commands(
 ) -> None:
     row = conn.execute(
         """
-        SELECT id, payload_json FROM account_execution_commands
-        WHERE account_label = ? AND command_type IN ('close_all_positions', 'close_all_bot_orders') AND status = 'pending'
+        SELECT id, command_type, payload_json FROM account_execution_commands
+        WHERE account_label = ?
+          AND command_type IN (
+              'close_all_positions', 'close_all_bot_orders',
+              'close_trade_position', 'partial_trade_position', 'break_even_trade_position'
+          )
+          AND status = 'pending'
         ORDER BY requested_at LIMIT 1
         """,
         (env.account_label,),
@@ -729,6 +734,7 @@ def process_account_execution_commands(
     if row is None:
         return
     command_id = str(row["id"])
+    command_type = str(row["command_type"])
     payload = json.loads(row["payload_json"] or "{}")
     include_manual_positions = bool(payload.get("include_manual_positions", False))
     now = utc_now_iso()
@@ -738,32 +744,284 @@ def process_account_execution_commands(
     )
     conn.commit()
     try:
-        cancelled = client.cancel_pending_orders(broker_symbol, magic=env.mt5_magic, comment="Dashboard close all")
-        closed = client.close_open_positions(
-            broker_symbol,
-            magic=None if include_manual_positions else env.mt5_magic,
-            comment="Dashboard close all",
-        )
-        if closed:
-            sync_closed_positions(conn, config, env, client, broker_symbol)
-        result = {
-            "cancelled_bot_orders": len(cancelled),
-            "closed_positions": len(closed),
-            "manual_positions_included": include_manual_positions,
-            "manual_pending_orders_untouched": True,
-        }
+        if command_type in {"close_all_positions", "close_all_bot_orders"}:
+            cancelled = client.cancel_pending_orders(broker_symbol, magic=env.mt5_magic, comment="Dashboard close all")
+            closed = client.close_open_positions(
+                broker_symbol,
+                magic=None if include_manual_positions else env.mt5_magic,
+                comment="Dashboard close all",
+            )
+            if closed:
+                sync_closed_positions(conn, config, env, client, broker_symbol)
+            result = {
+                "cancelled_bot_orders": len(cancelled),
+                "closed_positions": len(closed),
+                "manual_positions_included": include_manual_positions,
+                "manual_pending_orders_untouched": True,
+            }
+        else:
+            result = _execute_trade_management_command(
+                conn,
+                config,
+                env,
+                client,
+                broker_symbol,
+                command_id=command_id,
+                command_type=command_type,
+                payload=payload,
+            )
         conn.execute(
             "UPDATE account_execution_commands SET status = 'succeeded', completed_at = ?, result_json = ? WHERE id = ?",
             (utc_now_iso(), json.dumps(result, sort_keys=True), command_id),
         )
     except Exception as exc:
-        logger.exception("Dashboard close-all command failed for %s", env.account_label)
+        logger.exception("Dashboard execution command %s failed for %s", command_type, env.account_label)
         conn.execute(
             "UPDATE account_execution_commands SET status = 'failed', completed_at = ?, error = ? WHERE id = ?",
             (utc_now_iso(), str(exc), command_id),
         )
     conn.commit()
     refresh_account_execution_control(conn, env, client, broker_symbol)
+
+
+def _execute_trade_management_command(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    *,
+    command_id: str,
+    command_type: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    trade_order_id = str(payload.get("trade_order_id") or "")
+    if not trade_order_id:
+        raise RuntimeError("Trade management command is missing trade_order_id")
+    row = conn.execute(
+        """
+        SELECT id, account_label, symbol, side, status, source, entry_price,
+               stop_loss, take_profit_json, quantity, metadata_json
+        FROM trade_orders
+        WHERE id = ? AND account_label = ?
+        """,
+        (trade_order_id, env.account_label),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"Trade {trade_order_id} does not belong to account {env.account_label}")
+    if str(row["source"]) != "live" or str(row["status"]) != "filled":
+        raise RuntimeError("Trade is no longer an open live position")
+
+    metadata = json.loads(row["metadata_json"] or "{}")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    open_positions = client.get_open_positions(broker_symbol)
+    position = _find_trade_position(metadata, open_positions)
+    if position is None:
+        raise RuntimeError("Broker position for this trade is not open")
+    position_magic = int(position.get("magic") or 0)
+    if position_magic != env.mt5_magic:
+        raise RuntimeError("Broker position magic does not match this bot worker")
+    side = str(row["side"]).lower()
+    if str(position.get("side") or "").lower() != side:
+        raise RuntimeError("Broker position side does not match the trade")
+    ticket = str(position.get("ticket") or "")
+    volume = float(position.get("volume") or 0.0)
+    if not ticket or volume <= 0:
+        raise RuntimeError("Broker position ticket or volume is invalid")
+
+    entry = float(position.get("price_open") or metadata.get("broker_position_entry_price") or row["entry_price"])
+    current_stop = float(position.get("sl") or row["stop_loss"] or 0.0)
+    take_profits = json.loads(row["take_profit_json"] or "[]")
+    fallback_tp = float(take_profits[0]) if take_profits else 0.0
+    current_tp = float(position.get("tp") or fallback_tp)
+    action = {
+        "close_trade_position": "close_now",
+        "partial_trade_position": "partial_50_be",
+        "break_even_trade_position": "break_even",
+    }[command_type]
+    now = utc_now_iso()
+    result: dict[str, Any] = {
+        "trade_order_id": trade_order_id,
+        "account_label": env.account_label,
+        "action": action,
+        "position_ticket": ticket,
+    }
+
+    if command_type == "close_trade_position":
+        close_result = client.close_position(
+            broker_symbol,
+            position_ticket=ticket,
+            side=side,
+            volume=volume,
+            magic=env.mt5_magic,
+            comment="Dashboard close trade",
+        )
+        result.update({"closed_volume": volume, "close_result": close_result})
+    elif command_type == "partial_trade_position":
+        partial = metadata.get("partial_take_profit")
+        partial = partial if isinstance(partial, dict) else {}
+        if partial.get("done") is True:
+            raise RuntimeError("This trade has already taken a partial profit")
+        close_volume = _round_lot_volume(volume * 0.5)
+        if close_volume <= 0 or close_volume >= volume:
+            raise RuntimeError(f"Position volume {volume:g} is too small to close 50% safely")
+        close_result = client.close_partial_position(
+            broker_symbol,
+            position_ticket=ticket,
+            side=side,
+            volume=close_volume,
+            magic=env.mt5_magic,
+            comment="Dashboard partial 50pct",
+        )
+        already_protected = _position_stop_is_at_break_even(side, current_stop, entry)
+        if already_protected:
+            modify_result, modify_error = None, None
+        else:
+            modify_result, modify_error = _try_apply_break_even(
+                client,
+                broker_symbol=broker_symbol,
+                position_ticket=ticket,
+                stop_loss=entry,
+                take_profit=current_tp,
+                magic=env.mt5_magic,
+                comment="Dashboard partial BE",
+            )
+        partial.update({
+            "enabled": True,
+            "fraction": 0.5,
+            "move_stop_to": "breakeven",
+            "done": True,
+            "done_at": now,
+            "manual_action": True,
+            "closed_volume": close_volume,
+            "remaining_volume_estimate": round(max(volume - close_volume, 0.0), 4),
+            "breakeven_stop": entry,
+            "breakeven_applied": modify_error is None,
+            "breakeven_already_protected": already_protected,
+            "close_result": close_result,
+            "modify_result": modify_result,
+            "modify_error": modify_error,
+        })
+        metadata["partial_take_profit"] = partial
+        metadata["stop_management_state"] = "partial_taken_be" if modify_error is None else "partial_taken_be_failed"
+        result.update({
+            "closed_volume": close_volume,
+            "remaining_volume_estimate": round(max(volume - close_volume, 0.0), 4),
+            "break_even_applied": modify_error is None,
+            "already_protected": already_protected,
+            "break_even_error": modify_error,
+            "close_result": close_result,
+            "modify_result": modify_result,
+        })
+        if modify_error is None and not already_protected:
+            current_stop = entry
+    else:
+        already_protected = _position_stop_is_at_break_even(side, current_stop, entry)
+        modify_result: dict[str, Any] | None = None
+        if not already_protected:
+            modify_result = client.modify_position_sltp(
+                broker_symbol,
+                position_ticket=ticket,
+                stop_loss=entry,
+                take_profit=current_tp,
+                magic=env.mt5_magic,
+                comment="Dashboard break even",
+            )
+            current_stop = entry
+        metadata["stop_management_state"] = "manual_breakeven"
+        result.update({
+            "break_even_applied": True,
+            "already_protected": already_protected,
+            "stop_loss": current_stop,
+            "modify_result": modify_result,
+        })
+
+    metadata.setdefault("initial_stop_loss", float(row["stop_loss"]))
+    metadata["current_stop_loss"] = current_stop
+    management = metadata.get("trade_management")
+    management = management if isinstance(management, dict) else {}
+    history = management.get("history")
+    history = history if isinstance(history, list) else []
+    history.append({
+        "command_id": command_id,
+        "action": action,
+        "executed_at": now,
+        "position_ticket": ticket,
+        "closed_volume": result.get("closed_volume"),
+        "break_even_applied": result.get("break_even_applied"),
+        "break_even_error": result.get("break_even_error"),
+    })
+    management.update({"last_action": action, "last_command_id": command_id, "last_executed_at": now, "history": history[-20:]})
+    metadata["trade_management"] = management
+    conn.execute(
+        "UPDATE trade_orders SET stop_loss = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
+        (current_stop, json.dumps(metadata, sort_keys=True, default=str), now, trade_order_id),
+    )
+    conn.commit()
+    if command_type == "close_trade_position":
+        sync_closed_positions(conn, config, env, client, broker_symbol)
+
+    queue_alert(
+        conn,
+        account_label=env.account_label,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="critical" if result.get("break_even_error") else "important",
+        entity_ids=[trade_order_id],
+        payload={
+            "title": {
+                "close_now": "Trade closed from dashboard",
+                "partial_50_be": "Manual partial 50% + break-even",
+                "break_even": "Trade moved to break-even",
+            }[action],
+            "outcome": "failed" if result.get("break_even_error") else "info",
+            "account": env.account_label,
+            "reason": [
+                f"Trade: {trade_order_id}",
+                f"Position: {ticket}",
+                *([f"Break-even failed: {result['break_even_error']}"] if result.get("break_even_error") else []),
+            ],
+        },
+        dedupe_key=f"trade-management:{command_id}",
+    )
+    conn.commit()
+    result["trade_patch"] = _trade_management_patch(conn, trade_order_id)
+    return result
+
+
+def _find_trade_position(metadata: dict[str, Any], positions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    tickets = {
+        str(metadata.get(key) or "")
+        for key in ("broker_position_id", "broker_order_id", "broker_deal_id")
+    }
+    tickets.discard("")
+    return next((position for position in positions if str(position.get("ticket") or "") in tickets), None)
+
+
+def _position_stop_is_at_break_even(side: str, stop_loss: float, entry: float) -> bool:
+    if stop_loss <= 0:
+        return False
+    return stop_loss >= entry - 1e-9 if side == "buy" else stop_loss <= entry + 1e-9
+
+
+def _trade_management_patch(conn: Connection, trade_order_id: str) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT status, stop_loss, closed_at, close_price, pnl, pnl_r, metadata_json FROM trade_orders WHERE id = ?",
+        (trade_order_id,),
+    ).fetchone()
+    if row is None:
+        return {}
+    return {
+        "status": row["status"],
+        "stop_loss": float(row["stop_loss"]) if row["stop_loss"] is not None else None,
+        "closed_at": row["closed_at"],
+        "close_price": float(row["close_price"]) if row["close_price"] is not None else None,
+        "pnl": float(row["pnl"]) if row["pnl"] is not None else None,
+        "pnl_r": float(row["pnl_r"]) if row["pnl_r"] is not None else None,
+        "metadata": json.loads(row["metadata_json"] or "{}"),
+    }
 
 
 def snapshot_spread(
@@ -3016,7 +3274,12 @@ def sync_filled_pending_orders(
         metadata = json.loads(row["metadata_json"] or "{}")
         broker_order_id = str(metadata.get("broker_order_id") or "")
         broker_deal_id = str(metadata.get("broker_deal_id") or "")
-        position = positions_by_ticket.get(broker_order_id) or positions_by_ticket.get(broker_deal_id)
+        broker_position_id = str(metadata.get("broker_position_id") or "")
+        position = (
+            positions_by_ticket.get(broker_position_id)
+            or positions_by_ticket.get(broker_order_id)
+            or positions_by_ticket.get(broker_deal_id)
+        )
         if position is not None:
             opened_at = str(position.get("opened_at") or row["opened_at"] or now)
             position_ticket = str(position.get("ticket") or broker_order_id or broker_deal_id)
@@ -3114,7 +3377,12 @@ def manage_open_trade_partial_take_profit(
             continue
         broker_order_id = str(metadata.get("broker_order_id") or "")
         broker_deal_id = str(metadata.get("broker_deal_id") or "")
-        position = positions_by_ticket.get(broker_order_id) or positions_by_ticket.get(broker_deal_id)
+        broker_position_id = str(metadata.get("broker_position_id") or "")
+        position = (
+            positions_by_ticket.get(broker_position_id)
+            or positions_by_ticket.get(broker_order_id)
+            or positions_by_ticket.get(broker_deal_id)
+        )
         if position is None:
             continue
         side = str(row["side"]).lower()
@@ -3302,6 +3570,7 @@ def _try_apply_break_even(
     stop_loss: float,
     take_profit: float,
     magic: int,
+    comment: str = "BE after partial",
 ) -> tuple[dict[str, Any] | None, str | None]:
     try:
         result = client.modify_position_sltp(
@@ -3310,7 +3579,7 @@ def _try_apply_break_even(
             stop_loss=stop_loss,
             take_profit=take_profit,
             magic=magic,
-            comment="BE after partial",
+            comment=comment,
         )
     except Exception as exc:
         return None, str(exc)

@@ -179,6 +179,79 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(execution_after_close["requested_enabled"])
         self.assertTrue(execution_after_close["effective_enabled"])
 
+    def test_trade_management_action_queues_exact_account_command(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            now = datetime.now(UTC).isoformat()
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.execute(
+                    """
+                    INSERT INTO trade_ideas (
+                        id, symbol, direction, playbook, status, related_zone_ids_json,
+                        context_snapshot_json, suggested_stop_loss, suggested_take_profit_json,
+                        risk_reward, created_at
+                    ) VALUES ('managed-idea', 'XAUUSD', 'long', 'h1_impulse_retest_v1',
+                              'filled', '[]', '{}', 2990, '[3020]', 2, ?)
+                    """,
+                    (now,),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO trade_orders (
+                        id, trade_idea_id, account_label, symbol, side, order_type, status,
+                        entry_price, stop_loss, take_profit_json, quantity, opened_at,
+                        source, metadata_json, created_at, updated_at
+                    ) VALUES ('managed-order', 'managed-idea', 'Exness Personal', 'XAUUSD',
+                              'buy', 'market', 'filled', 3000, 2990, '[3020]', 0.2, ?,
+                              'live', '{"broker_position_id":"11111"}', ?, ?)
+                    """,
+                    (now, now, now),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+            try:
+                queued = client.post(
+                    "/api/trades/managed-order/actions",
+                    json={"action": "partial_50_be", "idempotency_key": "managed-order-partial-once"},
+                )
+                duplicate = client.post(
+                    "/api/trades/managed-order/actions",
+                    json={"action": "partial_50_be", "idempotency_key": "managed-order-partial-once"},
+                )
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+            with connect(db_path) as conn:
+                command = conn.execute(
+                    "SELECT account_label, command_type, payload_json FROM account_execution_commands WHERE id = ?",
+                    (queued.json()["command_id"],),
+                ).fetchone()
+
+        self.assertEqual(202, queued.status_code)
+        self.assertEqual(queued.json()["command_id"], duplicate.json()["command_id"])
+        self.assertEqual("Exness Personal", command["account_label"])
+        self.assertEqual("partial_trade_position", command["command_type"])
+        self.assertEqual("managed-order", json.loads(command["payload_json"])["trade_order_id"])
+
+    def test_trade_management_action_rejects_closed_or_backtest_trade(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_trade_filter_data(db_path)
+            client = authenticated_test_client(root, config_path)
+            try:
+                response = client.post("/api/trades/order-narrow/actions", json={"action": "close_now"})
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+        self.assertEqual(409, response.status_code)
+        self.assertIn("live trades", response.json()["detail"])
+
     def test_init_db_preserves_legacy_weekly_journal_content(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

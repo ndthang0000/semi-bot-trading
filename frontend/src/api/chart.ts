@@ -134,6 +134,39 @@ export async function updateTradeVisibility(
   return response.json();
 }
 
+export type TradeManagementAction = "close_now" | "partial_50_be" | "break_even";
+
+export type TradeManagementCommand = {
+  command_id: string;
+  status: "pending" | "processing" | "succeeded" | "failed";
+  result: Record<string, unknown>;
+  error: string | null;
+};
+
+export async function executeTradeManagementAction(
+  tradeOrderId: string,
+  action: TradeManagementAction,
+): Promise<TradeManagementCommand> {
+  const idempotencyKey = `trade-action:${tradeOrderId}:${action}:${crypto.randomUUID()}`;
+  const response = await authFetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, idempotency_key: idempotencyKey }),
+  });
+  const queued = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(queued.detail ?? `Trade action failed with ${response.status}`);
+  const commandId = String(queued.command_id);
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    const statusResponse = await authFetch(`/api/account-commands/${encodeURIComponent(commandId)}`);
+    const command = await statusResponse.json().catch(() => ({})) as TradeManagementCommand;
+    if (!statusResponse.ok) throw new Error((command as { detail?: string }).detail ?? "Could not read trade action status.");
+    if (command.status === "failed") throw new Error(command.error || "Trade action failed on the account worker.");
+    if (command.status === "succeeded") return command;
+  }
+  return { command_id: commandId, status: "pending", result: {}, error: null };
+}
+
 export type TradeReviewInput = {
   grade?: string | null;
   verdict: string;

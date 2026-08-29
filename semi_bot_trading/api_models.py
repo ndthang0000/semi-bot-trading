@@ -39,6 +39,15 @@ class AccountCloseAllRequest(BaseModel):
     include_manual_positions: bool = False
 
 
+TradeManagementAction = Literal["close_now", "partial_50_be", "break_even"]
+
+
+class TradeManagementActionRequest(BaseModel):
+    action: TradeManagementAction
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str | None = Field(default=None, max_length=160)
+
+
 ManualAiSide = Literal["buy", "sell"]
 ManualAiExecutionState = Literal["primary", "watch_only"]
 ManualAiCancelType = Literal[

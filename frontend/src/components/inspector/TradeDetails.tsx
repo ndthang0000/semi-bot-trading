@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, Copy, Eye, EyeOff, Save } from "lucide-react";
+import { Camera, Check, Copy, Eye, EyeOff, Percent, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toPng } from "html-to-image";
-import { createTradeReviewAttachment, fetchTradeReviewAttachments, updateTradeReview, updateTradeVisibility } from "../../api/chart";
+import { createTradeReviewAttachment, executeTradeManagementAction, fetchTradeReviewAttachments, updateTradeReview, updateTradeVisibility, type TradeManagementAction, type TradeManagementCommand } from "../../api/chart";
 import { authFetch } from "../../api/auth";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { compactTime, price } from "../../lib/time";
@@ -51,6 +51,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const queryClient = useQueryClient();
   const setSelected = useChartStore((state) => state.setSelected);
   const [copiedTradeId, setCopiedTradeId] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<TradeManagementAction | null>(null);
   const metadata = trade.metadata ?? {};
   const candidateMetadata = readObject(metadata.candidate_metadata);
   const stateMachine = readStateMachine(candidateMetadata.state_machine);
@@ -60,9 +61,11 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const stopLossMode = readString(candidateMetadata.stop_source) ?? readString(metadata.stop_source);
   const takeProfit = firstTakeProfitPrice(trade.take_profit);
   const partialPlan = readObject(metadata.partial_take_profit);
+  const tradeManagement = readObject(metadata.trade_management);
   const partialDone = partialPlan.done === true;
   const breakevenApplied = partialPlan.breakeven_applied === true;
   const initialStopLoss = readNumber(metadata.initial_stop_loss);
+  const brokerEntryPrice = readNumber(metadata.broker_position_entry_price) ?? trade.entry_price;
   const displayedStopLoss = initialStopLoss ?? trade.stop_loss;
   const stopLossSize =
     trade.entry_price !== null && displayedStopLoss !== null
@@ -88,6 +91,8 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const showCurrentStopLoss =
     initialStopLoss !== null && trade.stop_loss !== null && Math.abs(initialStopLoss - trade.stop_loss) > 1e-9;
   const statusNote = tradeStatusNote(trade.status);
+  const stopAtBreakEven = isStopAtBreakEven(trade.side, trade.stop_loss, brokerEntryPrice);
+  const closeExecuted = tradeManagement.last_action === "close_now";
   const visibilityMutation = useMutation({
     mutationFn: () => updateTradeVisibility(trade.id, !trade.hidden_on_chart),
     onSuccess: (saved) => {
@@ -106,6 +111,36 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
     },
     onError: (error) => {
       showToast("error", error instanceof Error ? error.message : "Could not update trade visibility.");
+    },
+  });
+  const managementMutation = useMutation({
+    mutationFn: (action: TradeManagementAction) => executeTradeManagementAction(trade.id, action),
+    onSuccess: (command, action) => {
+      setConfirmAction(null);
+      if (command.status !== "succeeded") {
+        showToast("success", "Action queued. The account worker is still processing it.");
+        return;
+      }
+      const updatedTrade = applyTradeManagementPatch(trade, command);
+      const updateTrade = (item: TradeOrder): TradeOrder => item.id === trade.id ? updatedTrade : item;
+      queryClient.setQueriesData<ChartPayload>({ queryKey: ["chart"] }, (current) =>
+        current ? { ...current, layers: { ...current.layers, trades: current.layers.trades.map(updateTrade) } } : current,
+      );
+      queryClient.setQueriesData<TradeHistoryResponse>({ queryKey: ["trade-history"] }, (current) =>
+        current ? { ...current, trades: current.trades.map(updateTrade) } : current,
+      );
+      setSelected({ kind: "trade", entity: updatedTrade });
+      void queryClient.invalidateQueries({ queryKey: ["chart"] });
+      void queryClient.invalidateQueries({ queryKey: ["trade-history"] });
+      const breakEvenError = readString(readObject(command.result).break_even_error);
+      if (breakEvenError) {
+        showToast("error", `Partial close completed, but break-even failed: ${breakEvenError}`);
+      } else {
+        showToast("success", tradeActionSuccessMessage(action));
+      }
+    },
+    onError: (error) => {
+      showToast("error", error instanceof Error ? error.message : "Trade action failed.");
     },
   });
 
@@ -137,6 +172,26 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         <div className="rounded-md border border-yellow-300/25 bg-yellow-300/[0.06] p-2 text-xs leading-relaxed text-yellow-50">
           {statusNote}
         </div>
+      ) : null}
+
+      {trade.source === "live" && trade.account_label && trade.status === "filled" && closeExecuted ? (
+        <div className="rounded-md border border-rose-400/30 bg-rose-500/[0.06] p-3 text-xs text-rose-100">
+          Close executed by the account worker; waiting for the broker close deal to sync.
+        </div>
+      ) : null}
+
+      {trade.source === "live" && trade.account_label && trade.status === "filled" && !closeExecuted ? (
+        <TradeManagementActions
+          action={confirmAction}
+          breakevenDone={breakevenApplied || stopAtBreakEven}
+          busy={managementMutation.isPending}
+          partialDone={partialDone}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => {
+            if (confirmAction) managementMutation.mutate(confirmAction);
+          }}
+          onSelect={setConfirmAction}
+        />
       ) : null}
 
       <button
@@ -238,6 +293,110 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
       />
     </div>
   );
+}
+
+function TradeManagementActions({
+  action,
+  breakevenDone,
+  busy,
+  partialDone,
+  onCancel,
+  onConfirm,
+  onSelect,
+}: {
+  action: TradeManagementAction | null;
+  breakevenDone: boolean;
+  busy: boolean;
+  partialDone: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onSelect: (action: TradeManagementAction) => void;
+}) {
+  const confirmation = action ? tradeActionConfirmation(action) : null;
+  return (
+    <div className="grid gap-2 rounded-md border border-amber-300/25 bg-amber-300/[0.04] p-3">
+      <div>
+        <div className="text-xs font-semibold text-amber-100">Manage live position</div>
+        <div className="mt-0.5 text-[10px] text-slate-500">Actions are sent to the worker for this trade only.</div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-amber-300/35 bg-amber-300/[0.08] px-2 text-xs font-semibold text-amber-100 hover:bg-amber-300/15 disabled:cursor-not-allowed disabled:opacity-35"
+          disabled={busy || partialDone}
+          title={partialDone ? "Partial profit has already been taken" : "Close 50% and move the remaining stop to entry"}
+          type="button"
+          onClick={() => onSelect("partial_50_be")}
+        >
+          <Percent size={14} /> Partial 50% + BE
+        </button>
+        <button
+          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-cyan-300/35 bg-cyan-300/[0.08] px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-35"
+          disabled={busy || breakevenDone}
+          title={breakevenDone ? "Stop loss is already at entry or better" : "Move stop loss to the broker entry price"}
+          type="button"
+          onClick={() => onSelect("break_even")}
+        >
+          <ShieldCheck size={14} /> Break even
+        </button>
+        <button
+          className="col-span-2 inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-rose-400/45 bg-rose-500/[0.08] px-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-35"
+          disabled={busy}
+          type="button"
+          onClick={() => onSelect("close_now")}
+        >
+          <XCircle size={14} /> Close now
+        </button>
+      </div>
+      {confirmation ? (
+        <div className={`grid gap-2 rounded-md border p-2.5 text-xs ${action === "close_now" ? "border-rose-400/35 bg-rose-500/[0.08]" : "border-amber-300/30 bg-ink-950/70"}`}>
+          <div className="font-semibold text-slate-100">{confirmation.title}</div>
+          <p className="leading-relaxed text-slate-400">{confirmation.description}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button className="h-8 rounded-md border border-ink-600 text-slate-300 hover:border-slate-500" disabled={busy} type="button" onClick={onCancel}>Cancel</button>
+            <button className={`h-8 rounded-md border font-semibold ${action === "close_now" ? "border-rose-400/50 bg-rose-500/15 text-rose-100" : "border-cyan-400/45 bg-cyan-400/10 text-cyan-100"}`} disabled={busy} type="button" onClick={onConfirm}>
+              {busy ? "Processing…" : "Confirm action"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function tradeActionConfirmation(action: TradeManagementAction): { title: string; description: string } {
+  if (action === "close_now") {
+    return { title: "Close this position now?", description: "The worker will close the full remaining broker position at market. Slippage may occur." };
+  }
+  if (action === "partial_50_be") {
+    return { title: "Take partial profit now?", description: "The worker will close 50% of the current position volume, then move the remaining stop loss to the broker entry price." };
+  }
+  return { title: "Move stop loss to break even?", description: "The worker will preserve the current take profit and move the stop loss to the broker entry price. A better existing stop will not be degraded." };
+}
+
+function tradeActionSuccessMessage(action: TradeManagementAction): string {
+  if (action === "close_now") return "Position close executed by the account worker.";
+  if (action === "partial_50_be") return "Closed 50% and moved the remaining position to break even.";
+  return "Stop loss moved to break even.";
+}
+
+function isStopAtBreakEven(side: string, stopLoss: number | null, entry: number | null): boolean {
+  if (stopLoss === null || entry === null || stopLoss <= 0) return false;
+  return side === "buy" ? stopLoss >= entry - 1e-9 : stopLoss <= entry + 1e-9;
+}
+
+function applyTradeManagementPatch(trade: TradeOrder, command: TradeManagementCommand): TradeOrder {
+  const patch = readObject(readObject(command.result).trade_patch);
+  const patchedMetadata = readObject(patch.metadata);
+  return {
+    ...trade,
+    status: readString(patch.status) ?? trade.status,
+    stop_loss: "stop_loss" in patch ? readNumber(patch.stop_loss) : trade.stop_loss,
+    closed_at: "closed_at" in patch ? readNullableString(patch.closed_at) : trade.closed_at,
+    close_price: "close_price" in patch ? readNumber(patch.close_price) : trade.close_price,
+    pnl: "pnl" in patch ? readNumber(patch.pnl) : trade.pnl,
+    pnl_r: "pnl_r" in patch ? readNumber(patch.pnl_r) : trade.pnl_r,
+    metadata: Object.keys(patchedMetadata).length > 0 ? patchedMetadata : trade.metadata,
+  };
 }
 
 function PartialTakeProfitControls({
@@ -737,6 +896,10 @@ function readNumber(value: unknown): number | null {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function firstTakeProfitPrice(values: TradeOrder["take_profit"]): number | null {

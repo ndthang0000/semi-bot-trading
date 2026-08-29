@@ -1137,7 +1137,7 @@ def load_chart_trades(
         LEFT JOIN trade_reviews ON trade_reviews.trade_order_id = trade_orders.id
         WHERE trade_orders.symbol = ?
           AND trade_orders.opened_at IS NOT NULL
-          AND trade_orders.status IN ('filled', 'closed')
+          AND trade_orders.status IN ('filled', 'closed', 'target_hit', 'stopped', 'time_exit')
           AND trade_orders.opened_at <= ?
           AND (trade_orders.closed_at IS NULL OR trade_orders.closed_at >= ?)
           {playbook_clause}
