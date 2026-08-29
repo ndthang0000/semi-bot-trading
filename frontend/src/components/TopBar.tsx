@@ -57,7 +57,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
 
   return (
     <>
-    <header className="flex h-12 items-center justify-between border-b border-ink-700 bg-ink-900/95 px-3 backdrop-blur lg:hidden">
+    <header className="relative z-[80] flex h-12 items-center justify-between border-b border-ink-700 bg-ink-900/95 px-3 backdrop-blur lg:hidden">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold tracking-wide text-slate-100">XAUUSD</span>
@@ -93,7 +93,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
       </div>
     </header>
 
-    <header className="hidden h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4 lg:flex">
+    <header className="relative z-[80] hidden h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4 lg:flex">
       <div className="flex items-center gap-3 font-semibold text-slate-100">
         <span className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-ink-800 text-cyan-300">
           <Activity size={18} />
@@ -288,7 +288,6 @@ function MobileLayersPanel() {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
-  const showWaveMetrics = useChartStore((state) => state.showWaveMetrics);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -302,7 +301,6 @@ function MobileLayersPanel() {
   const setShowZones = useChartStore((state) => state.setShowZones);
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
-  const setShowWaveMetrics = useChartStore((state) => state.setShowWaveMetrics);
   const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
   const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
   const setShowH1ImpulseCandidates = useChartStore((state) => state.setShowH1ImpulseCandidates);
@@ -351,12 +349,6 @@ function MobileLayersPanel() {
         ))}
       </div>
       <MobileToggleRow checked={showStructure} disabled={structureRequired} label="Structure + ZigZag" onChange={setShowStructure} />
-      <MobileToggleRow
-        checked={showWaveMetrics}
-        disabled={!showStructure}
-        label="Wave metrics"
-        onChange={setShowWaveMetrics}
-      />
       <MobileToggleRow checked={showIntradayLevels} label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
       <MobileToggleRow
         checked={showBrokenIntradayLevels}
@@ -766,7 +758,6 @@ function LayerMenu() {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
-  const showWaveMetrics = useChartStore((state) => state.showWaveMetrics);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -780,7 +771,6 @@ function LayerMenu() {
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setAllZoneTypesVisible = useChartStore((state) => state.setAllZoneTypesVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
-  const setShowWaveMetrics = useChartStore((state) => state.setShowWaveMetrics);
   const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
   const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
   const setShowH1ImpulseCandidates = useChartStore((state) => state.setShowH1ImpulseCandidates);
@@ -803,7 +793,7 @@ function LayerMenu() {
 
   const visibleZoneCount = Object.values(zoneTypeVisibility).filter(Boolean).length;
   const h1ImpulseSelected = selectedPlaybooks.includes("h1_impulse_retest_v1");
-  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showStructure && showWaveMetrics ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (h1ImpulseSelected && showH1ImpulseCandidates && timeframe === "H1" ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
+  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (h1ImpulseSelected && showH1ImpulseCandidates && timeframe === "H1" ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
   const allZonesVisible = visibleZoneCount === LAYER_ITEMS.length;
 
   return (
@@ -876,13 +866,6 @@ function LayerMenu() {
               />
             ))}
             <MenuCheck checked={showStructure} colorClass="bg-blue-400" label="Structure + ZigZag" onChange={setShowStructure} />
-            <MenuCheck
-              checked={showWaveMetrics}
-              colorClass="bg-cyan-300"
-              disabled={!showStructure}
-              label="Wave metrics"
-              onChange={setShowWaveMetrics}
-            />
             <MenuCheck checked={showIntradayLevels} colorClass="bg-amber-300" label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
             <MenuCheck
               checked={showBrokenIntradayLevels}

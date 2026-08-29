@@ -109,8 +109,9 @@ tự ảnh hưởng số liệu dùng so sánh. Ratio
 trên `1.25` là `buy`, dưới `0.8` là `sell`, còn lại là `balanced`; đây là mô tả
 sức mạnh gần đây, không phải tín hiệu tự động hoặc dự đoán đảo chiều.
 
-Toggle `Wave metrics` nằm dưới `Structure + ZigZag` và được persist local. Chart
-chỉ hiện tối đa mười hai label. Label neo tại swing kết thúc:
+Wave metrics thuộc trực tiếp layer `Structure + ZigZag`, không có toggle hoặc
+layer count riêng. Khi tắt Structure, ZigZag, swing marker, wave label và badge
+cùng ẩn; khi bật thì cùng hiện. Chart chỉ hiện tối đa mười hai label. Label neo tại swing kết thúc:
 sóng tăng nằm phía trên swing high, sóng giảm nằm phía dưới swing low, với style
 nhỏ `+42.6 · 6H` màu xanh hoặc `−27.3 · 6H` màu đỏ. `H` biểu diễn số nến
 H1 thực tế, tránh weekend/market break làm thời lượng calendar bị phóng đại.

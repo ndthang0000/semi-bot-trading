@@ -160,7 +160,6 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const showStructure = useChartStore((state) => state.showStructure);
-  const showWaveMetrics = useChartStore((state) => state.showWaveMetrics);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -219,7 +218,6 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooksRef = useRef(selectedPlaybooks);
   const showHistoricalLiquiditySweepsRef = useRef(showHistoricalLiquiditySweeps);
   const showStructureRef = useRef(showStructure);
-  const showWaveMetricsRef = useRef(showWaveMetrics);
   const showIntradayLevelsRef = useRef(showIntradayLevels);
   const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
   const showH1ImpulseCandidatesRef = useRef(showH1ImpulseCandidates);
@@ -275,7 +273,6 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   selectedPlaybooksRef.current = selectedPlaybooks;
   showHistoricalLiquiditySweepsRef.current = showHistoricalLiquiditySweeps;
   showStructureRef.current = showStructure;
-  showWaveMetricsRef.current = showWaveMetrics;
   showIntradayLevelsRef.current = showIntradayLevels;
   showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
   showH1ImpulseCandidatesRef.current = showH1ImpulseCandidates;
@@ -456,7 +453,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           return [{ marker, x, y }];
         })
       : [];
-    const waveLegs = showStructureRef.current && showWaveMetricsRef.current
+    const waveLegs = showStructureRef.current
       ? (currentPayload.layers.wave_metrics?.legs ?? []).slice(-12)
       : [];
     const waveMarkers = waveLegs.flatMap((leg) => {
@@ -1414,7 +1411,6 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     showH1ImpulseCandidates,
     showIntradayLevels,
     showStructure,
-    showWaveMetrics,
     showZones,
     tradeVisibilityMode,
     zoneTypeVisibility,
@@ -1952,7 +1948,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           bias={payload.layers.contexts.H1?.bias?.effective_value ?? "neutral"}
         />
       ) : null}
-      {showStructure && showWaveMetrics && !addEntityKind ? (
+      {showStructure && !addEntityKind ? (
         <WaveStrengthBadge metrics={payload.layers.wave_metrics} />
       ) : null}
       <div className="pointer-events-none absolute inset-0">
