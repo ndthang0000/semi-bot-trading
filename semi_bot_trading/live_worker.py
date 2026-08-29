@@ -1630,13 +1630,16 @@ def plan_playbook_and_entry_source(row: Any, replacement: dict[str, Any] | None 
     return playbook, entry_source
 
 
-def payload_with_plan_entry_source(row: Any, entry_source: str) -> str:
+def payload_with_plan_entry_source(row: Any, entry_source: str, target_mode: str | None = None) -> str:
     raw_payload = json.loads(row["raw_payload_json"] or "{}")
     candidates = raw_payload.get("candidates") if isinstance(raw_payload, dict) else []
     for candidate in (candidates if isinstance(candidates, list) else []):
         if isinstance(candidate, dict) and str(candidate.get("client_id")) == str(row["client_id"]):
             candidate["entry_source"] = entry_source
             candidate["entry_reason"] = f"Human selected entry source: {entry_source}"
+    market_context = raw_payload.get("market_context") if isinstance(raw_payload, dict) else None
+    if target_mode and isinstance(market_context, dict):
+        market_context["target_mode"] = target_mode
     return json.dumps(raw_payload, sort_keys=True)
 
 
@@ -1786,12 +1789,16 @@ def process_manual_ai_plans(
                     continue
                 if abs(float(condition["price"]) - float(row["stop_loss"])) <= 1e-9:
                     condition["price"] = float(replacement["stop_loss"])
+            partial_take_profit = json.loads(row["partial_take_profit_json"] or "{}")
+            if replacement.get("partial_take_profit_enabled") is not None:
+                partial_take_profit["enabled"] = bool(replacement["partial_take_profit_enabled"])
             conn.execute(
                 """
                 UPDATE manual_ai_plans
                 SET status = 'approved', entry_price = ?, stop_loss = ?, take_profit = ?,
                     risk_reward = ?, expires_at = ?, replacement_levels_json = '{}',
                     replacement_error = NULL, cancel_conditions_json = ?, raw_payload_json = ?,
+                    partial_take_profit_json = ?,
                     trade_idea_id = NULL, execution_request_id = NULL, updated_at = ?
                 WHERE id = ?
                 """,
@@ -1802,7 +1809,12 @@ def process_manual_ai_plans(
                     float(replacement["risk_reward"]),
                     str(replacement.get("expires_at") or row["expires_at"]),
                     json.dumps(cancel_conditions, sort_keys=True),
-                    payload_with_plan_entry_source(row, str(replacement.get("entry_source") or "human_custom")),
+                    payload_with_plan_entry_source(
+                        row,
+                        str(replacement.get("entry_source") or "human_custom"),
+                        str(replacement.get("target_mode")) if replacement.get("target_mode") else None,
+                    ),
+                    json.dumps(partial_take_profit, sort_keys=True),
                     now_iso,
                     plan_id,
                 ),

@@ -594,6 +594,7 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   const [disabledPlaybooks, setDisabledPlaybooks] = useState<Set<string>>(new Set());
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const [updatingEntryIds, setUpdatingEntryIds] = useState<Set<string>>(new Set());
+  const [updatingTargetIds, setUpdatingTargetIds] = useState<Set<string>>(new Set());
   const [executeCandidate, setExecuteCandidate] = useState<SetupCandidate | null>(null);
   const [expiryCandidate, setExpiryCandidate] = useState<SetupCandidate | null>(null);
   const [showExpired, setShowExpired] = useState(false);
@@ -686,14 +687,21 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
       showToast("error", "Entry source tạo SL size bằng 0 nên không thể áp dụng.");
       return;
     }
-    const takeProfit = roundSetupPrice(
-      candidate.direction === "long"
-        ? option.price + newRisk * riskReward
-        : option.price - newRisk * riskReward,
-    );
+    const targetMode = typeof candidate.metadata.target_mode === "string" ? candidate.metadata.target_mode : "fixed_rr";
+    const waveReward = typeof candidate.metadata.target_reward_distance === "number"
+      ? candidate.metadata.target_reward_distance
+      : null;
+    const rewardDistance = targetMode.startsWith("wave_") && waveReward !== null
+      ? waveReward
+      : newRisk * riskReward;
+    const takeProfit = roundSetupPrice(candidate.direction === "long"
+      ? option.price + rewardDistance
+      : option.price - rewardDistance);
     if (candidate.metadata.execution_plan !== true) {
-      updateH1ImpulsePreviewLevels(candidate.id, option.price, candidate.stop_loss, takeProfit, option.source);
-      showToast("success", `Đã chọn ${option.label}; TP giữ nguyên ${riskReward.toFixed(2)}R.`);
+      updateH1ImpulsePreviewLevels(candidate.id, option.price, candidate.stop_loss, takeProfit, option.source, targetMode);
+      showToast("success", targetMode.startsWith("wave_")
+        ? `Đã chọn ${option.label}; TP giữ wave budget ${rewardDistance.toFixed(2)}.`
+        : `Đã chọn ${option.label}; TP giữ nguyên ${riskReward.toFixed(2)}R.`);
       return;
     }
     setUpdatingEntryIds((current) => addSetValue(current, candidate.id));
@@ -715,6 +723,63 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
       showToast("error", error instanceof Error ? error.message : "Không thể đổi Entry source");
     } finally {
       setUpdatingEntryIds((current) => removeSetValue(current, candidate.id));
+    }
+  };
+
+  const selectCandidateTargetSource = async (
+    candidate: SetupCandidate,
+    option: SetupTargetOption,
+  ) => {
+    if (candidate.entry === null || candidate.stop_loss === null) return;
+    const risk = Math.abs(candidate.entry - candidate.stop_loss);
+    const rewardDistance = option.mode === "fixed_rr"
+      ? risk * (option.riskReward ?? 2.5)
+      : option.rewardDistance;
+    if (rewardDistance === null || rewardDistance <= 0) {
+      showToast("error", `${option.label} chưa có wave budget hợp lệ.`);
+      return;
+    }
+    const effectiveRr = rewardDistance / risk;
+    if (effectiveRr < 1 || effectiveRr > 4) {
+      showToast("error", `${option.label} tạo ${effectiveRr.toFixed(2)}R; H1 Impulse chỉ cho phép 1.00R–4.00R.`);
+      return;
+    }
+    const takeProfit = roundSetupPrice(candidate.direction === "long"
+      ? candidate.entry + rewardDistance
+      : candidate.entry - rewardDistance);
+    const entrySource = typeof candidate.metadata.entry_source === "string"
+      ? candidate.metadata.entry_source
+      : "human_custom";
+    if (candidate.metadata.execution_plan !== true) {
+      updateH1ImpulsePreviewLevels(
+        candidate.id,
+        candidate.entry,
+        candidate.stop_loss,
+        takeProfit,
+        entrySource,
+        option.mode,
+        option.mode.startsWith("wave_") ? rewardDistance : null,
+      );
+      showToast("success", `Đã chọn TP ${option.label} · ${effectiveRr.toFixed(2)}R.`);
+      return;
+    }
+    setUpdatingTargetIds((current) => addSetValue(current, candidate.id));
+    try {
+      const result = await updateManualAiPlanLevels(candidate.id, {
+        entry_price: candidate.entry,
+        stop_loss: candidate.stop_loss,
+        take_profit: takeProfit,
+        entry_source: entrySource,
+        target_mode: option.mode,
+      });
+      showToast("success", result.requires_broker_replace
+        ? `Đã yêu cầu cancel & replace theo TP ${option.label}.`
+        : `Đã cập nhật TP theo ${option.label}.`);
+      onChanged();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Không thể đổi TP source");
+    } finally {
+      setUpdatingTargetIds((current) => removeSetValue(current, candidate.id));
     }
   };
 
@@ -774,6 +839,9 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
                       entryOptions={readSetupEntryOptions(candidate.metadata.entry_options)}
                       entryBusy={updatingEntryIds.has(candidate.id)}
                       onEntrySourceSelect={(option) => { void selectCandidateEntrySource(candidate, option); }}
+                      targetOptions={readSetupTargetOptions(candidate.metadata.target_plan)}
+                      targetBusy={updatingTargetIds.has(candidate.id)}
+                      onTargetSourceSelect={(option) => { void selectCandidateTargetSource(candidate, option); }}
                       onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
                       onReject={() => { void rejectCandidate(candidate); }}
                       disableBusy={cancellingIds.has(candidate.id)}
@@ -809,6 +877,9 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
                     entryOptions={readSetupEntryOptions(candidate.metadata.entry_options)}
                     entryBusy={updatingEntryIds.has(candidate.id)}
                     onEntrySourceSelect={(option) => { void selectCandidateEntrySource(candidate, option); }}
+                    targetOptions={readSetupTargetOptions(candidate.metadata.target_plan)}
+                    targetBusy={updatingTargetIds.has(candidate.id)}
+                    onTargetSourceSelect={(option) => { void selectCandidateTargetSource(candidate, option); }}
                     onToggleWatch={() => setWatchedIds((current) => toggleSetValue(current, candidate.id))}
                     onReject={() => { void rejectCandidate(candidate); }}
                     disableBusy={cancellingIds.has(candidate.id)}
@@ -838,6 +909,9 @@ function SetupCard({
   entryOptions,
   entryBusy,
   onEntrySourceSelect,
+  targetOptions,
+  targetBusy,
+  onTargetSourceSelect,
   onToggleWatch,
   onReject,
   onDisablePlaybook,
@@ -855,6 +929,9 @@ function SetupCard({
   entryOptions: Array<{ source: string; label: string; price: number }>;
   entryBusy: boolean;
   onEntrySourceSelect: (option: { source: string; label: string; price: number }) => void;
+  targetOptions: SetupTargetOption[];
+  targetBusy: boolean;
+  onTargetSourceSelect: (option: SetupTargetOption) => void;
   onToggleWatch: () => void;
   onReject: () => void;
   onDisablePlaybook: () => void;
@@ -871,6 +948,7 @@ function SetupCard({
   const entrySource = setupEntrySource(candidate);
   const rawEntrySource = typeof candidate.metadata.entry_source === "string" ? candidate.metadata.entry_source : "strategy_calculated";
   const selectedEntryOptionSource = canonicalH1EntrySource(rawEntrySource);
+  const selectedTargetMode = String(candidate.metadata.target_mode ?? "fixed_rr");
   const stopSize = candidate.entry !== null && candidate.stop_loss !== null
     ? Math.abs(candidate.entry - candidate.stop_loss)
     : null;
@@ -914,6 +992,17 @@ function SetupCard({
         </div>
       ) : null}
       <div className="mt-1 truncate text-[10px] font-medium text-cyan-200/80">Entry source · {entrySource}</div>
+      {isH1ImpulsePreview ? (
+        <div className="mt-1 text-[10px] font-medium text-violet-200/80">
+          TP source · {String(candidate.metadata.target_mode ?? "fixed_rr").replaceAll("_", " ")}
+          {String(candidate.metadata.target_mode ?? "").startsWith("wave_") && typeof candidate.metadata.target_reward_distance === "number" ? ` · budget ${price(candidate.metadata.target_reward_distance)}` : ""}
+        </div>
+      ) : null}
+      {typeof candidate.metadata.target_warning === "string" ? (
+        <div className="mt-1 rounded border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[10px] leading-4 text-amber-200">
+          Wave TP fallback: {candidate.metadata.target_warning}
+        </div>
+      ) : null}
       {previewOutcome ? (
         <div className={`mt-2 flex items-center justify-between rounded border px-2 py-1.5 text-[10px] font-bold ${previewOutcomeClass(previewOutcome.status)}`}>
           <span>{previewOutcome.status.toUpperCase()}</span>
@@ -967,6 +1056,50 @@ function SetupCard({
                         SL {price(optionStopSize)}{atr ? ` · ${(optionStopSize / atr).toFixed(2)} ATR` : ""}
                       </span>
                     ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {isH1ImpulsePreview && targetOptions.length > 0 ? (
+        <div className="mt-1.5 rounded border border-violet-400/15 bg-black/15 p-2">
+          <div className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-violet-200/70">Quick TP source</div>
+          <div className="grid grid-cols-3 gap-1">
+            {targetOptions.map((option) => {
+              const selected = selectedTargetMode === option.mode;
+              const risk = candidate.entry !== null && candidate.stop_loss !== null
+                ? Math.abs(candidate.entry - candidate.stop_loss)
+                : null;
+              const reward = option.mode === "fixed_rr" && risk !== null
+                ? risk * (option.riskReward ?? 2.5)
+                : option.rewardDistance;
+              const targetPrice = candidate.entry === null || reward === null
+                ? null
+                : candidate.direction === "long" ? candidate.entry + reward : candidate.entry - reward;
+              const effectiveRr = risk && reward !== null ? reward / risk : null;
+              return (
+                <button
+                  key={option.mode}
+                  aria-pressed={selected}
+                  className={`min-w-0 rounded border px-1.5 py-1.5 text-left transition disabled:cursor-wait disabled:opacity-45 ${
+                    selected
+                      ? "border-violet-300/80 bg-violet-300/15 text-violet-100"
+                      : "border-ink-700 bg-ink-950 text-slate-400 hover:border-violet-400/55 hover:text-violet-100"
+                  }`}
+                  disabled={!canEditLevels || targetBusy || !option.available || targetPrice === null}
+                  title={option.reason}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onTargetSourceSelect(option);
+                  }}
+                >
+                  <span className="block truncate text-[9px] font-semibold">{shortTargetLabel(option.mode)}</span>
+                  <span className="mt-0.5 block truncate font-mono text-[9px] font-bold tabular-nums text-slate-200">TP {targetPrice === null ? "--" : price(targetPrice)}</span>
+                  <span className={`mt-0.5 block truncate font-mono text-[8px] tabular-nums ${selected ? "text-violet-200" : "text-slate-500"}`}>
+                    {reward === null ? "Unavailable" : `Δ${price(reward)} · ${effectiveRr?.toFixed(2) ?? "--"}R`}
                   </span>
                 </button>
               );
@@ -1198,6 +1331,41 @@ function readSetupEntryOptions(value: unknown): Array<{ source: string; label: s
     if (typeof option.source !== "string" || typeof option.label !== "string" || typeof option.price !== "number") return [];
     return [{ source: option.source, label: option.label, price: option.price }];
   });
+}
+
+type SetupTargetOption = {
+  mode: string;
+  label: string;
+  available: boolean;
+  riskReward: number | null;
+  rewardDistance: number | null;
+  reason: string;
+};
+
+function readSetupTargetOptions(value: unknown): SetupTargetOption[] {
+  const plan = readObject(value);
+  if (!Array.isArray(plan.options)) return [];
+  const options = plan.options.flatMap((item) => {
+    const option = readObject(item);
+    if (typeof option.mode !== "string" || typeof option.label !== "string") return [];
+    return [{
+      mode: option.mode,
+      label: option.label,
+      available: option.available !== false,
+      riskReward: typeof option.risk_reward === "number" ? option.risk_reward : null,
+      rewardDistance: typeof option.reward_distance === "number" ? option.reward_distance : null,
+      reason: typeof option.reason === "string" ? option.reason : option.label,
+    }];
+  });
+  const order = new Map([["wave_safe", 0], ["wave_base", 1], ["fixed_rr", 2]]);
+  return options.sort((left, right) => (order.get(left.mode) ?? 99) - (order.get(right.mode) ?? 99));
+}
+
+function shortTargetLabel(mode: string): string {
+  if (mode === "wave_safe") return "Safe";
+  if (mode === "wave_base") return "Base";
+  if (mode === "fixed_rr") return "Fixed RR";
+  return mode.replaceAll("_", " ");
 }
 
 function readAccountStatuses(value: unknown): Array<{ accountLabel: string; status: string }> {

@@ -125,6 +125,13 @@ class ManualAiApiTest(unittest.TestCase):
             payload["candidates"][0]["entry_options"] = [
                 {"source": "fib_0.5", "label": "Fib 0.5", "price": 2000.0}
             ]
+            payload["market_context"]["target_mode"] = "wave_safe"
+            payload["market_context"]["target_plan"] = {
+                "options": [
+                    {"mode": "wave_safe", "reward_distance": 12.5},
+                    {"mode": "wave_base", "reward_distance": 30.0},
+                ]
+            }
 
             created = client.post("/api/manual-ai/plans", json=payload)
 
@@ -156,16 +163,37 @@ class ManualAiApiTest(unittest.TestCase):
                     "stop_loss": 1991,
                     "take_profit": 2031,
                     "entry_source": "previous_h1_high",
+                    "target_mode": "wave_base",
                 },
             )
             self.assertEqual(200, edited.status_code, edited.text)
             self.assertEqual("previous_h1_high", edited.json()["plans"][0]["entry_source"])
+            refreshed_chart = client.get(
+                "/api/chart?symbol=XAUUSD&timeframe=H1&limit=20&playbooks=h1_impulse_retest_v1"
+            )
+            refreshed_setup = refreshed_chart.json()["layers"]["setup_candidates"][0]
+            self.assertEqual("wave_base", refreshed_setup["metadata"]["target_mode"])
+            self.assertEqual(30.0, refreshed_setup["metadata"]["target_reward_distance"])
+
+            safe_target = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={
+                    "entry_price": 2001,
+                    "stop_loss": 1991,
+                    "take_profit": 2013.5,
+                    "entry_source": "previous_h1_high",
+                    "target_mode": "wave_safe",
+                },
+            )
+            self.assertEqual(200, safe_target.status_code, safe_target.text)
+            self.assertFalse(safe_target.json()["plans"][0]["partial_take_profit"]["enabled"])
 
             accepted_rr = client.patch(
                 f"/api/manual-ai/plans/{plan['id']}/levels",
                 json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2041, "entry_source": "human_custom"},
             )
             self.assertEqual(200, accepted_rr.status_code, accepted_rr.text)
+            self.assertTrue(accepted_rr.json()["plans"][0]["partial_take_profit"]["enabled"])
 
             rejected_rr = client.patch(
                 f"/api/manual-ai/plans/{plan['id']}/levels",

@@ -218,6 +218,8 @@ class StrategyConfig:
     h1_impulse_retest_v1_min_body_range_ratio: float = 0.6
     h1_impulse_retest_v1_min_close_location: float = 0.75
     h1_impulse_retest_v1_max_close_side_wick_ratio: float = 0.2
+    h1_impulse_retest_v1_wave_safe_fraction: float = 0.625
+    h1_impulse_retest_v1_min_wave_samples: int = 3
     h1_impulse_retest_v1_expiry_medium_body_atr: float = 1.2
     h1_impulse_retest_v1_expiry_large_body_atr: float = 1.6
     h1_impulse_retest_v1_expiry_hours_small: int = 6
@@ -534,6 +536,12 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             ),
             h1_impulse_retest_v1_max_close_side_wick_ratio=float(
                 h1_impulse_retest_v1.get("max_close_side_wick_ratio", 0.2)
+            ),
+            h1_impulse_retest_v1_wave_safe_fraction=float(
+                h1_impulse_retest_v1.get("wave_safe_fraction", 0.625)
+            ),
+            h1_impulse_retest_v1_min_wave_samples=int(
+                h1_impulse_retest_v1.get("min_wave_samples", 3)
             ),
             h1_impulse_retest_v1_expiry_medium_body_atr=float(
                 h1_impulse_retest_v1.get("expiry_medium_body_atr", 1.2)

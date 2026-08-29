@@ -27,7 +27,7 @@ export function reviewH1Execution(candidate: SetupCandidate): H1ExecutionReview 
     const risk = Math.abs(entry - stopLoss);
     const reward = Math.abs(takeProfit - entry);
     const rr = risk > 0 ? reward / risk : 0;
-    if (rr < 1.5 || rr > 4) hardBlockedReasons.push(`Risk:reward ${rr.toFixed(2)} must be between 1.50 and 4.00.`);
+    if (rr < 1 || rr > 4) hardBlockedReasons.push(`Risk:reward ${rr.toFixed(2)} must be between 1.00 and 4.00.`);
 
     const atr = Number(metadata.atr ?? 0);
     const parameters = isRecord(metadata.parameters) ? metadata.parameters : {};

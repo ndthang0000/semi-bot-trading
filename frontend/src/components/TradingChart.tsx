@@ -12,7 +12,7 @@ import { ArrowDown, ArrowUp, Newspaper, Star } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
 import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
-import { h1ImpulsePreviewToSetupCandidate, previewH1Impulse } from "../api/h1Impulse";
+import { h1ImpulsePreviewToSetupCandidate, previewH1Impulse, type H1ImpulsePreview, type H1ImpulseTargetMode } from "../api/h1Impulse";
 import { updateManualAiPlanLevels } from "../api/manualAi";
 import { isEditableHotkeyTarget } from "../lib/appHotkeys";
 import { copyTextToClipboard } from "../lib/clipboard";
@@ -200,6 +200,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [selectedCandleMarker, setSelectedCandleMarker] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [h1PreviewLoading, setH1PreviewLoading] = useState(false);
   const [h1PreviewError, setH1PreviewError] = useState<string | null>(null);
+  const [h1TargetQuote, setH1TargetQuote] = useState<H1ImpulsePreview | null>(null);
+  const [h1TargetQuoteLoading, setH1TargetQuoteLoading] = useState(false);
   const [pointerY, setPointerY] = useState<number | null>(null);
   const scheduledRecalcRef = useRef<number | null>(null);
   const interactionRecalcRef = useRef<number | null>(null);
@@ -762,7 +764,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       return;
     }
     const isH1Impulse = edit.candidate.playbook === "h1_impulse_retest_v1";
-    const rrMin = 1.5;
+    const rrMin = isH1Impulse ? 1.0 : 1.5;
     const rrMax = 4;
     if (rr < rrMin || rr > rrMax) {
       setManualAiLevelEdit({ ...edit, error: `R:R mới là ${rr.toFixed(2)}R; playbook chỉ cho phép ${rrMin.toFixed(1)}R–${rrMax.toFixed(1)}R.` });
@@ -1834,7 +1836,28 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const canPreviewSelectedH1Impulse = payload.timeframe === "H1"
     && selectedPlaybooks.includes("h1_impulse_retest_v1")
     && selectedH1ImpulseMarker !== null;
-  const addH1SetupPreview = useCallback(async (riskReward: number) => {
+  useEffect(() => {
+    let active = true;
+    setH1TargetQuote(null);
+    setH1TargetQuoteLoading(false);
+    if (!selectedCandle || !canPreviewSelectedH1Impulse) return () => { active = false; };
+    setH1TargetQuoteLoading(true);
+    void previewH1Impulse({
+      symbol: payload.symbol,
+      signalCandleTime: selectedCandle.time,
+      riskReward: 2.5,
+      targetMode: "wave_safe",
+      asOf: payload.replay?.as_of ?? payload.range.end,
+    }).then((preview) => {
+      if (active) setH1TargetQuote(preview);
+    }).catch(() => {
+      // The explicit Add action still surfaces preview errors to the trader.
+    }).finally(() => {
+      if (active) setH1TargetQuoteLoading(false);
+    });
+    return () => { active = false; };
+  }, [canPreviewSelectedH1Impulse, payload.range.end, payload.replay?.as_of, payload.symbol, selectedCandle]);
+  const addH1SetupPreview = useCallback(async (riskReward: number, targetMode: H1ImpulseTargetMode) => {
     if (!selectedCandle || !canPreviewSelectedH1Impulse) return;
     setH1PreviewLoading(true);
     setH1PreviewError(null);
@@ -1843,6 +1866,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         symbol: payload.symbol,
         signalCandleTime: selectedCandle.time,
         riskReward,
+        targetMode,
         asOf: payload.replay?.as_of ?? payload.range.end,
       });
       const candidate = h1ImpulsePreviewToSetupCandidate(preview);
@@ -2445,9 +2469,11 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           canPreviewH1Impulse={canPreviewSelectedH1Impulse}
           previewError={h1PreviewError}
           previewLoading={h1PreviewLoading}
+          targetOptions={h1TargetQuote?.signal_candle_time === selectedCandle.time ? h1TargetQuote.target_plan.options : []}
+          targetQuoteLoading={h1TargetQuoteLoading}
           timeframe={payload.timeframe}
           timezone={payload.layers.intraday_map.timezone || "UTC"}
-          onPreviewH1Impulse={(riskReward) => { void addH1SetupPreview(riskReward); }}
+          onPreviewH1Impulse={(riskReward, targetMode) => { void addH1SetupPreview(riskReward, targetMode); }}
           onClose={() => setSelectedCandle(null)}
         />
       ) : null}

@@ -91,6 +91,8 @@ M15 = { window = 3, tolerance = 0.1 }
         self.assertEqual(config.strategy.timeframe, "M15")
         self.assertEqual(config.strategy.breakout_buffer_atr_multiplier, 0.15)
         self.assertEqual(config.strategy.min_risk_reward, 2.0)
+        self.assertEqual(config.strategy.h1_impulse_retest_v1_wave_safe_fraction, 0.625)
+        self.assertEqual(config.strategy.h1_impulse_retest_v1_min_wave_samples, 3)
         self.assertTrue(config.backtest.auto_accept)
         self.assertEqual(config.backtest.spread, 0.3)
         self.assertEqual(config.backtest.slippage, 0.1)

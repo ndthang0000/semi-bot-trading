@@ -94,7 +94,7 @@ type ChartState = {
   setManualAiEditSetupId: (setupId: string | null) => void;
   addH1ImpulsePreview: (candidate: SetupCandidate) => void;
   removeH1ImpulsePreview: (setupId: string) => void;
-  updateH1ImpulsePreviewLevels: (setupId: string, entry: number, stopLoss: number, takeProfit: number, entrySource: string) => void;
+  updateH1ImpulsePreviewLevels: (setupId: string, entry: number, stopLoss: number, takeProfit: number, entrySource: string, targetMode?: string, targetRewardDistance?: number | null) => void;
   focusZone: (zone: PriceZone) => void;
   focusTrade: (trade: TradeOrder) => void;
 };
@@ -241,7 +241,7 @@ export const useChartStore = create<ChartState>()(
         h1ImpulsePreviews: state.h1ImpulsePreviews.filter((item) => item.id !== setupId),
         ...(state.selectedSetupId === setupId ? { selectedSetupId: null } : {}),
       })),
-      updateH1ImpulsePreviewLevels: (setupId, entry, stopLoss, takeProfit, entrySource) => set((state) => ({
+      updateH1ImpulsePreviewLevels: (setupId, entry, stopLoss, takeProfit, entrySource, targetMode, targetRewardDistance) => set((state) => ({
         h1ImpulsePreviews: state.h1ImpulsePreviews.map((candidate) => {
           if (candidate.id !== setupId) return candidate;
           const risk = Math.abs(entry - stopLoss);
@@ -256,6 +256,11 @@ export const useChartStore = create<ChartState>()(
             metadata: {
               ...candidate.metadata,
               entry_source: entrySource,
+              target_mode: targetMode ?? "custom",
+              target_reward_distance: targetMode?.startsWith("wave_")
+                ? targetRewardDistance ?? candidate.metadata.target_reward_distance
+                : null,
+              target_warning: null,
               human_modified: true,
               outcome: {
                 status: "modified",

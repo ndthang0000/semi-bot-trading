@@ -63,7 +63,14 @@ from .auth import (
     store_refresh_token,
     verify_password,
 )
-from .chart import build_atr_snapshot, build_chart_payload, load_chart_candles, trade_order_row_to_chart
+from .chart import (
+    build_atr_snapshot,
+    build_chart_payload,
+    build_wave_metrics,
+    load_chart_candles,
+    load_chart_structure,
+    trade_order_row_to_chart,
+)
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .context import MarketContext, detect_bias_context, detect_regime_context
 from .db import connect, init_db
@@ -74,6 +81,7 @@ from .smc_zones import apply_persisted_fvg_mitigation
 from .spread import spread_summary
 from .strategy.types import DEFAULT_TRADE_MODES_BY_ZONE_TYPE, TRADE_MODES
 from .strategy.h1_impulse_retest_v1 import (
+    apply_h1_impulse_target_mode,
     build_h1_impulse_preview,
     evaluate_h1_impulse_preview,
     h1_impulse_preview_config_from_strategy,
@@ -217,6 +225,8 @@ def manual_ai_entry_source(raw_payload: dict[str, Any], client_id: str) -> str:
 
 
 def playbook_risk_reward_limits(playbook: str) -> tuple[float, float]:
+    if playbook == "h1_impulse_retest_v1":
+        return (1.0, 4.0)
     return (1.5, 4.0)
 
 
@@ -258,13 +268,28 @@ def manual_ai_cancel_conditions_for_new_stop(raw_json: str, old_stop: float, new
     return json.dumps(conditions, sort_keys=True)
 
 
-def manual_ai_payload_with_entry_source(raw_json: str, client_id: str, entry_source: str) -> str:
+def manual_ai_partial_for_target(raw_json: str, playbook: str, risk_reward: float) -> str:
+    partial = json_loads(raw_json, {})
+    if playbook == "h1_impulse_retest_v1":
+        partial["enabled"] = risk_reward >= 1.5
+    return json.dumps(partial, sort_keys=True)
+
+
+def manual_ai_payload_with_entry_source(
+    raw_json: str,
+    client_id: str,
+    entry_source: str,
+    target_mode: str | None = None,
+) -> str:
     payload = json_loads(raw_json, {})
     candidates = payload.get("candidates") if isinstance(payload, dict) else None
     for candidate in candidates if isinstance(candidates, list) else []:
         if isinstance(candidate, dict) and str(candidate.get("client_id")) == client_id:
             candidate["entry_source"] = entry_source
             candidate["entry_reason"] = f"Human selected entry source: {entry_source}"
+    market_context = payload.get("market_context") if isinstance(payload, dict) else None
+    if target_mode and isinstance(market_context, dict):
+        market_context["target_mode"] = target_mode
     return json.dumps(payload, sort_keys=True)
 
 
@@ -698,6 +723,29 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     reference_price=reference_price,
                     risk_reward=body.risk_reward,
                     config=preview_config,
+                )
+                wave_candles = load_chart_candles(
+                    conn,
+                    symbol,
+                    "H1",
+                    500,
+                    end=body.signal_candle_time,
+                )
+                wave_metrics = build_wave_metrics(
+                    load_chart_structure(
+                        conn,
+                        symbol,
+                        "H1",
+                        str(wave_candles[0]["time"]),
+                        str(signal["close_time"]),
+                    ) if wave_candles else [],
+                    wave_candles,
+                    as_of=str(signal["close_time"]),
+                )
+                preview = apply_h1_impulse_target_mode(
+                    preview,
+                    wave_metrics,
+                    requested_mode=body.target_mode,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2401,6 +2449,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     "take_profit": request.take_profit,
                     "risk_reward": risk_reward,
                     "entry_source": request.entry_source,
+                    "target_mode": request.target_mode,
+                    "partial_take_profit_enabled": risk_reward >= 1.5 if plan_playbook == "h1_impulse_retest_v1" else None,
                     "requested_at": now,
                 },
                 sort_keys=True,
@@ -2417,7 +2467,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                         """
                         UPDATE manual_ai_plans
                         SET entry_price = ?, stop_loss = ?, take_profit = ?, risk_reward = ?,
-                            cancel_conditions_json = ?, raw_payload_json = ?, replacement_levels_json = '{}',
+                            cancel_conditions_json = ?, partial_take_profit_json = ?, raw_payload_json = ?, replacement_levels_json = '{}',
                             replacement_error = NULL, updated_at = ?
                         WHERE id = ?
                         """,
@@ -2431,10 +2481,16 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                                 float(group_row["stop_loss"]),
                                 request.stop_loss,
                             ),
+                            manual_ai_partial_for_target(
+                                str(group_row["partial_take_profit_json"]),
+                                plan_playbook,
+                                risk_reward,
+                            ),
                             manual_ai_payload_with_entry_source(
                                 str(group_row["raw_payload_json"]),
                                 str(group_row["client_id"]),
                                 request.entry_source,
+                                request.target_mode,
                             ),
                             now,
                             group_row["id"],

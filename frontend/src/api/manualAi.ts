@@ -95,6 +95,7 @@ export type ManualAiLevelsUpdate = {
   stop_loss: number;
   take_profit: number;
   entry_source: string;
+  target_mode?: string;
 };
 
 export async function updateManualAiPlanLevels(

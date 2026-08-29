@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from semi_bot_trading.api import create_app
+from semi_bot_trading.api import create_app, validate_manual_ai_levels
 from semi_bot_trading.auth import create_access_token
 from semi_bot_trading.db import connect, init_db
 
@@ -37,6 +37,17 @@ def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
 
 
 class ApiTest(unittest.TestCase):
+    def test_h1_wave_target_accepts_rr_below_fixed_rr_floor(self) -> None:
+        rr = validate_manual_ai_levels(
+            "sell",
+            entry_price=4554.61,
+            stop_loss=4585.67,
+            take_profit=4514.26812,
+            playbook="h1_impulse_retest_v1",
+        )
+
+        self.assertAlmostEqual(1.29884, rr, places=5)
+
     def test_h1_impulse_preview_is_read_only_and_uses_historical_atr(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -67,6 +78,8 @@ class ApiTest(unittest.TestCase):
         self.assertEqual("h1_impulse_retest_v1", payload["playbook"])
         self.assertEqual("eligible", payload["status"])
         self.assertEqual("previous_h1_high", payload["entry_source"])
+        self.assertEqual("fixed_rr", payload["target_mode"])
+        self.assertEqual("fixed_rr", payload["target_plan"]["applied_mode"])
         self.assertEqual("2026-08-20T15:00:00+00:00", payload["signal_candle_time"])
         self.assertEqual(14, payload["atr_period"])
         self.assertEqual("unfilled", payload["outcome"]["status"])

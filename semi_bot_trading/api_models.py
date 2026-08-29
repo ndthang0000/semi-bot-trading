@@ -131,6 +131,7 @@ class ManualAiLevelsUpdateRequest(BaseModel):
     stop_loss: float = Field(gt=0)
     take_profit: float = Field(gt=0)
     entry_source: str = Field(default="human_custom", min_length=1, max_length=100)
+    target_mode: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class ManualAiExpiryUpdateRequest(BaseModel):
@@ -142,6 +143,7 @@ class H1ImpulsePreviewRequest(BaseModel):
     signal_candle_time: str = Field(min_length=1, max_length=64)
     as_of: str | None = Field(default=None, max_length=64)
     risk_reward: float = Field(default=2.5, ge=1.5, le=4)
+    target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"
 
 
 class H1ImpulseRevalidateRequest(BaseModel):

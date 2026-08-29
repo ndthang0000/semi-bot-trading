@@ -32,6 +32,9 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
   const [revalidating, setRevalidating] = useState(true);
   const signalTime = String(candidate.metadata.signal_candle_time ?? "");
   const entrySource = String(candidate.metadata.entry_source ?? "strategy_calculated");
+  const targetMode = String(candidate.metadata.target_mode ?? "custom");
+  const finalRiskReward = candidate.risk_reward ?? 0;
+  const partialTakeProfitEnabled = finalRiskReward >= 1.5;
   const executionReview = useMemo(() => reviewH1Execution(candidate), [candidate]);
   const requiresOverride = executionReview.softBlockedReasons.length > 0;
   const renewedFromPlanId = candidate.metadata.execution_plan === true
@@ -109,6 +112,8 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             atr: candidate.metadata.atr,
             parameters: candidate.metadata.parameters,
             entry_options: candidate.metadata.entry_options,
+            target_mode: targetMode,
+            target_plan: candidate.metadata.target_plan,
             original_status: candidate.metadata.original_status,
             original_blocked_reasons: candidate.metadata.original_blocked_reasons,
             human_override: requiresOverride,
@@ -127,7 +132,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             take_profit: candidate.take_profit[0],
             risk_pct: 1,
             expires_in_minutes: expiryHours * 60,
-            partial_take_profit: { enabled: true, trigger_r: 1.25, close_fraction: 0.5, move_stop_to: "breakeven", breakeven_buffer: 0 },
+            partial_take_profit: { enabled: partialTakeProfitEnabled, trigger_r: 1.25, close_fraction: 0.5, move_stop_to: "breakeven", breakeven_buffer: 0 },
             cancel_conditions: [
               { type: candidate.direction === "long" ? "m5_close_below" : "m5_close_above", price: candidate.stop_loss },
               { type: "price_reached_target_without_fill" },
@@ -145,7 +150,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             renewal_count: Number(candidate.metadata.renewal_count ?? 0) + (renewedFromPlanId ? 1 : 0),
             entry_reason: `H1 impulse entry from ${entrySource}`,
             stop_reason: "H1 wick invalidation plus ATR buffer; human-confirmed levels",
-            target_reason: `${candidate.risk_reward?.toFixed(2) ?? "--"}R target selected by trader`,
+            target_reason: `${targetMode} target · ${candidate.risk_reward?.toFixed(2) ?? "--"}R${partialTakeProfitEnabled ? " · partial at 1.25R" : " · full exit, partial disabled"}`,
             confidence: candidate.status === "eligible" ? 0.8 : 0.4,
           }],
         }, "manual");
@@ -204,6 +209,9 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
           <Level label="ENTRY" value={candidate.entry} /><Level label="SL" value={candidate.stop_loss} /><Level label="TP" value={candidate.take_profit[0]} /><Level label="EXPIRY" value={`${expiryHours}h`} />
         </div>
         <div className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2 text-xs text-cyan-100">Entry source: <strong>{entrySource.replace(/_/g, " ")}</strong></div>
+        <div className="mt-2 rounded-lg border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2 text-xs text-violet-100">
+          TP source: <strong>{targetMode.replace(/_/g, " ")}</strong> · {finalRiskReward.toFixed(2)}R · {partialTakeProfitEnabled ? "partial 50% at 1.25R, then BE" : "full exit at Wave TP"}
+        </div>
         <div className="mt-3 rounded-lg border border-ink-700 bg-ink-900/60 p-3">
           <div className="flex items-center justify-between gap-3 text-xs"><span className="font-bold uppercase tracking-wide text-slate-400">Order TTL</span><span className="font-mono font-bold text-cyan-200">{expiryHours}h</span></div>
           <div className="mt-2 flex flex-wrap gap-1.5">{[6, 12, 18, 24, 48].filter((hours) => hours >= configuredMinTtl && hours <= configuredMaxTtl).map((hours) => <button key={hours} className={`rounded border px-2 py-1 text-xs ${expiryHours === hours ? "border-cyan-300 bg-cyan-300/15 text-cyan-100" : "border-ink-600 text-slate-400"}`} type="button" onClick={() => setExpiryHours(hours)}>{hours}h</button>)}</div>

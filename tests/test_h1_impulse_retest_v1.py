@@ -4,6 +4,7 @@ import unittest
 
 from semi_bot_trading.strategy.h1_impulse_retest_v1 import (
     H1ImpulsePreviewConfig,
+    apply_h1_impulse_target_mode,
     build_h1_impulse_markers,
     build_h1_impulse_preview,
     evaluate_h1_impulse_preview,
@@ -24,6 +25,63 @@ def candle(time: str, open_: float, high: float, low: float, close: float) -> di
 
 
 class H1ImpulseRetestV1Test(unittest.TestCase):
+    def test_wave_safe_target_uses_625_of_directional_median(self) -> None:
+        preview = {
+            "direction": "short",
+            "entry": 4554.61,
+            "stop_loss": 4585.67,
+            "take_profit": 4476.96,
+            "risk_reward": 2.5,
+            "signal_candle_close_time": "2026-08-28T16:00:00+00:00",
+        }
+        metrics = {
+            "strength": {
+                "up_median_price": 56.8255,
+                "down_median_price": 64.547,
+                "up_samples": 4,
+                "down_samples": 4,
+                "market_state": "choppy",
+                "control": "balanced",
+                "latest": {"direction": "up", "price_move": 43.311, "bars": 3, "speed": 14.437},
+            }
+        }
+
+        result = apply_h1_impulse_target_mode(preview, metrics, requested_mode="wave_safe")
+
+        self.assertEqual("wave_safe", result["target_mode"])
+        self.assertAlmostEqual(4514.27, result["take_profit"], places=2)
+        self.assertAlmostEqual(1.2988, result["risk_reward"], places=4)
+        self.assertEqual(4, result["target_plan"]["wave_snapshot"]["sample_count"])
+        self.assertIsNone(result["target_plan"]["fallback_reason"])
+
+    def test_unavailable_wave_target_falls_back_without_inflating_rr(self) -> None:
+        preview = {
+            "direction": "long",
+            "entry": 100,
+            "stop_loss": 90,
+            "take_profit": 125,
+            "risk_reward": 2.5,
+            "signal_candle_close_time": "2026-08-28T16:00:00+00:00",
+        }
+        metrics = {
+            "strength": {
+                "up_median_price": 8,
+                "down_median_price": 20,
+                "up_samples": 4,
+                "down_samples": 4,
+                "market_state": "choppy",
+                "control": "balanced",
+                "latest": None,
+            }
+        }
+
+        result = apply_h1_impulse_target_mode(preview, metrics, requested_mode="wave_safe")
+
+        self.assertEqual("fixed_rr", result["target_mode"])
+        self.assertEqual(125, result["take_profit"])
+        self.assertEqual(2.5, result["risk_reward"])
+        self.assertIn("0.50R", result["target_plan"]["fallback_reason"])
+
     def test_marker_layer_separates_body_candidate_from_fully_eligible_signal(self) -> None:
         candles = [
             candle("2026-08-20T09:00:00+00:00", 100, 105, 95, 100),
@@ -52,6 +110,8 @@ class H1ImpulseRetestV1Test(unittest.TestCase):
         self.assertEqual(12, expiry_hours_for_body_atr(1.2, config))
         self.assertEqual(18, expiry_hours_for_body_atr(1.6, config))
         self.assertEqual(48, config.max_signal_age_hours)
+        self.assertEqual(0.625, config.wave_safe_fraction)
+        self.assertEqual(3, config.min_wave_samples)
         self.assertEqual((1, 48), (config.min_order_ttl_hours, config.max_order_ttl_hours))
 
     def test_revalidation_allows_untouched_signal_within_max_age(self) -> None:

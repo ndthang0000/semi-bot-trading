@@ -9,6 +9,21 @@ export type H1ImpulseEntrySource =
   | "atr_1.2_max_stop_cap"
   | "unavailable";
 
+export type H1ImpulseTargetMode = "fixed_rr" | "wave_safe" | "wave_base";
+
+export type H1ImpulseTargetOption = {
+  mode: H1ImpulseTargetMode;
+  label: string;
+  available: boolean;
+  price: number | null;
+  risk_reward: number | null;
+  reward_distance: number | null;
+  baseline_move: number | null;
+  multiplier: number | null;
+  sample_count: number | null;
+  reason: string;
+};
+
 export type H1ImpulsePreview = {
   schema_version: 1;
   playbook: "h1_impulse_retest_v1";
@@ -27,6 +42,22 @@ export type H1ImpulsePreview = {
   atr_as_of: string | null;
   reference_price: number | null;
   risk_reward: number;
+  target_mode: H1ImpulseTargetMode;
+  target_plan: {
+    requested_mode: H1ImpulseTargetMode;
+    applied_mode: H1ImpulseTargetMode;
+    fallback_reason: string | null;
+    options: H1ImpulseTargetOption[];
+    wave_snapshot: {
+      as_of: string;
+      baseline_direction: "up" | "down";
+      baseline_move: number | null;
+      sample_count: number;
+      market_state: string;
+      control: string;
+      latest: Record<string, unknown> | null;
+    };
+  };
   entry: number;
   entry_source: H1ImpulseEntrySource;
   entry_options: Array<{ source: string; label: string; price: number }>;
@@ -87,6 +118,8 @@ export type H1ImpulsePreview = {
     min_body_range_ratio: number;
     min_close_location: number;
     max_close_side_wick_ratio: number;
+    wave_safe_fraction: number;
+    min_wave_samples: number;
     expiry_medium_body_atr: number;
     expiry_large_body_atr: number;
     expiry_hours_small: number;
@@ -121,6 +154,7 @@ export async function previewH1Impulse(payload: {
   symbol: string;
   signalCandleTime: string;
   riskReward: number;
+  targetMode?: H1ImpulseTargetMode;
   asOf?: string;
 }): Promise<H1ImpulsePreview> {
   const response = await authFetch("/api/playbooks/h1-impulse-retest/preview", {
@@ -130,6 +164,7 @@ export async function previewH1Impulse(payload: {
       symbol: payload.symbol,
       signal_candle_time: payload.signalCandleTime,
       risk_reward: payload.riskReward,
+      target_mode: payload.targetMode ?? "fixed_rr",
       ...(payload.asOf ? { as_of: payload.asOf } : {}),
     }),
   });
@@ -170,7 +205,7 @@ export async function revalidateH1Impulse(payload: {
 export function h1ImpulsePreviewToSetupCandidate(preview: H1ImpulsePreview): SetupCandidate {
   const outcomeLabel = preview.outcome.status.toUpperCase();
   return {
-    id: `h1-impulse:${preview.symbol}:${preview.signal_candle_time}:${preview.risk_reward}`,
+    id: `h1-impulse:${preview.symbol}:${preview.signal_candle_time}:${preview.target_mode}:${preview.risk_reward}`,
     symbol: preview.symbol,
     timeframe: "H1",
     playbook: "h1_impulse_retest_v1",
@@ -198,6 +233,10 @@ export function h1ImpulsePreviewToSetupCandidate(preview: H1ImpulsePreview): Set
       signal_candle_time: preview.signal_candle_time,
       previous_candle_time: preview.previous_candle_time,
       entry_source: preview.entry_source,
+      target_mode: preview.target_mode,
+      target_plan: preview.target_plan,
+      target_reward_distance: preview.target_plan.options.find((option) => option.mode === preview.target_mode)?.reward_distance ?? null,
+      target_warning: preview.target_plan.fallback_reason,
       entry_options: preview.entry_options,
       limit_expires_at: preview.expires_at,
       expiry_hours: preview.expiry_hours,

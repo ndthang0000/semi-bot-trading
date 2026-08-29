@@ -17,6 +17,8 @@ class H1ImpulsePreviewConfig:
     min_body_range_ratio: float = 0.6
     min_close_location: float = 0.75
     max_close_side_wick_ratio: float = 0.2
+    wave_safe_fraction: float = 0.625
+    min_wave_samples: int = 3
     expiry_medium_body_atr: float = 1.2
     expiry_large_body_atr: float = 1.6
     expiry_hours_small: int = 6
@@ -28,6 +30,178 @@ class H1ImpulsePreviewConfig:
 
 
 DEFAULT_H1_IMPULSE_PREVIEW_CONFIG = H1ImpulsePreviewConfig()
+H1_IMPULSE_TARGET_MODES = {"fixed_rr", "wave_safe", "wave_base"}
+H1_IMPULSE_MIN_TARGET_RR = 1.0
+H1_IMPULSE_MAX_TARGET_RR = 4.0
+H1_IMPULSE_MIN_WAVE_SAMPLES = 3
+
+
+def apply_h1_impulse_target_mode(
+    preview: dict[str, Any],
+    wave_metrics: dict[str, Any],
+    *,
+    requested_mode: str,
+) -> dict[str, Any]:
+    """Attach auditable TP choices and apply a point-in-time-safe target mode."""
+    if requested_mode not in H1_IMPULSE_TARGET_MODES:
+        raise ValueError(f"Unsupported H1 impulse target mode: {requested_mode}")
+
+    direction = str(preview["direction"])
+    entry = float(preview["entry"])
+    stop_loss = float(preview["stop_loss"])
+    stop_distance = abs(entry - stop_loss)
+    fixed_rr = float(preview["risk_reward"])
+    fixed_reward = stop_distance * fixed_rr
+    strength = wave_metrics.get("strength") if isinstance(wave_metrics.get("strength"), dict) else {}
+    parameters = preview.get("parameters") if isinstance(preview.get("parameters"), dict) else {}
+    safe_fraction = float(parameters.get("wave_safe_fraction", 0.625))
+    min_wave_samples = int(parameters.get("min_wave_samples", H1_IMPULSE_MIN_WAVE_SAMPLES))
+    if not 0 < safe_fraction <= 1:
+        raise ValueError("H1 impulse wave_safe_fraction must be greater than 0 and at most 1")
+    if min_wave_samples < 1:
+        raise ValueError("H1 impulse min_wave_samples must be at least 1")
+    baseline_key = "up_median_price" if direction == "long" else "down_median_price"
+    samples_key = "up_samples" if direction == "long" else "down_samples"
+    baseline_raw = strength.get(baseline_key)
+    baseline_move = float(baseline_raw) if isinstance(baseline_raw, (int, float)) else None
+    sample_count = int(strength.get(samples_key) or 0)
+    market_state = str(strength.get("market_state") or "unknown")
+    control = str(strength.get("control") or "unknown")
+    multiplier, state_reason = _wave_safe_multiplier(direction, market_state, safe_fraction)
+
+    options = [
+        _target_option(
+            mode="fixed_rr",
+            label=f"Fixed {fixed_rr:.2f}R",
+            direction=direction,
+            entry=entry,
+            stop_distance=stop_distance,
+            reward_distance=fixed_reward,
+            available=True,
+            reason="Trader-selected fixed risk:reward target.",
+        )
+    ]
+    common_unavailable: str | None = None
+    if direction not in {"long", "short"}:
+        common_unavailable = "Directional wave target is unavailable for a neutral signal."
+    elif baseline_move is None or baseline_move <= 0:
+        common_unavailable = "Same-direction wave baseline is unavailable."
+    elif sample_count < min_wave_samples:
+        common_unavailable = (
+            f"Wave target needs at least {min_wave_samples} completed same-direction legs; "
+            f"only {sample_count} available."
+        )
+
+    base_reason = common_unavailable
+    options.append(
+        _target_option(
+            mode="wave_base",
+            label="Wave Base",
+            direction=direction,
+            entry=entry,
+            stop_distance=stop_distance,
+            reward_distance=baseline_move,
+            available=base_reason is None,
+            reason=base_reason or f"Full same-direction median from {sample_count} completed waves.",
+            baseline_move=baseline_move,
+            multiplier=1.0,
+            sample_count=sample_count,
+        )
+    )
+
+    safe_reason = common_unavailable or state_reason
+    safe_reward = baseline_move * multiplier if baseline_move is not None and multiplier is not None else None
+    options.append(
+        _target_option(
+            mode="wave_safe",
+            label="Wave Safe",
+            direction=direction,
+            entry=entry,
+            stop_distance=stop_distance,
+            reward_distance=safe_reward,
+            available=safe_reason is None,
+            reason=safe_reason or f"Same-direction median × {multiplier:.3f} for {market_state} conditions.",
+            baseline_move=baseline_move,
+            multiplier=multiplier,
+            sample_count=sample_count,
+        )
+    )
+
+    requested = next(option for option in options if option["mode"] == requested_mode)
+    applied = requested if requested["available"] else options[0]
+    fallback_reason = None if requested["available"] else requested["reason"]
+    preview["take_profit"] = applied["price"]
+    preview["risk_reward"] = applied["risk_reward"]
+    preview["target_mode"] = applied["mode"]
+    preview["target_plan"] = {
+        "requested_mode": requested_mode,
+        "applied_mode": applied["mode"],
+        "fallback_reason": fallback_reason,
+        "options": options,
+        "wave_snapshot": {
+            "as_of": preview.get("signal_candle_close_time"),
+            "baseline_direction": "up" if direction == "long" else "down",
+            "baseline_move": _round_optional(baseline_move),
+            "sample_count": sample_count,
+            "market_state": market_state,
+            "control": control,
+            "latest": strength.get("latest"),
+        },
+    }
+    return preview
+
+
+def _wave_safe_multiplier(direction: str, market_state: str, safe_fraction: float) -> tuple[float | None, str | None]:
+    opposed = (direction == "long" and market_state == "trending_down") or (
+        direction == "short" and market_state == "trending_up"
+    )
+    if opposed:
+        return None, f"Wave state {market_state} opposes the setup direction."
+    if market_state in {"trending_up", "trending_down", "rotational", "choppy"}:
+        return safe_fraction, None
+    return None, "Wave market state is not established yet."
+
+
+def _target_option(
+    *,
+    mode: str,
+    label: str,
+    direction: str,
+    entry: float,
+    stop_distance: float,
+    reward_distance: float | None,
+    available: bool,
+    reason: str,
+    baseline_move: float | None = None,
+    multiplier: float | None = None,
+    sample_count: int | None = None,
+) -> dict[str, Any]:
+    rr = reward_distance / stop_distance if reward_distance is not None and stop_distance > 0 else None
+    if available and (rr is None or rr < H1_IMPULSE_MIN_TARGET_RR or rr > H1_IMPULSE_MAX_TARGET_RR):
+        available = False
+        reason = (
+            f"Wave geometry produces {rr:.2f}R; allowed execution range is "
+            f"{H1_IMPULSE_MIN_TARGET_RR:.1f}R–{H1_IMPULSE_MAX_TARGET_RR:.1f}R."
+        )
+    price = _target_price(direction, entry, reward_distance) if reward_distance is not None else None
+    return {
+        "mode": mode,
+        "label": label,
+        "available": available,
+        "price": _round_optional(price),
+        "risk_reward": _round_optional(rr),
+        "reward_distance": _round_optional(reward_distance),
+        "baseline_move": _round_optional(baseline_move),
+        "multiplier": _round_optional(multiplier),
+        "sample_count": sample_count,
+        "reason": reason,
+    }
+
+
+def _target_price(direction: str, entry: float, reward_distance: float | None) -> float | None:
+    if reward_distance is None:
+        return None
+    return entry + reward_distance if direction == "long" else entry - reward_distance
 
 
 def h1_impulse_preview_config_from_strategy(strategy_config: Any) -> H1ImpulsePreviewConfig:
@@ -42,6 +216,8 @@ def h1_impulse_preview_config_from_strategy(strategy_config: Any) -> H1ImpulsePr
         min_body_range_ratio=float(strategy_config.h1_impulse_retest_v1_min_body_range_ratio),
         min_close_location=float(strategy_config.h1_impulse_retest_v1_min_close_location),
         max_close_side_wick_ratio=float(strategy_config.h1_impulse_retest_v1_max_close_side_wick_ratio),
+        wave_safe_fraction=float(strategy_config.h1_impulse_retest_v1_wave_safe_fraction),
+        min_wave_samples=int(strategy_config.h1_impulse_retest_v1_min_wave_samples),
         expiry_medium_body_atr=float(strategy_config.h1_impulse_retest_v1_expiry_medium_body_atr),
         expiry_large_body_atr=float(strategy_config.h1_impulse_retest_v1_expiry_large_body_atr),
         expiry_hours_small=int(strategy_config.h1_impulse_retest_v1_expiry_hours_small),

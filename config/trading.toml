@@ -230,6 +230,10 @@ max_range_atr = 2.5
 min_body_range_ratio = 0.6
 min_close_location = 0.75
 max_close_side_wick_ratio = 0.2
+# Wave Safe captures a conservative fraction of the historical same-direction
+# median wave instead of targeting the whole baseline move.
+wave_safe_fraction = 0.625
+min_wave_samples = 3
 expiry_medium_body_atr = 1.2
 expiry_large_body_atr = 1.6
 expiry_hours_small = 6

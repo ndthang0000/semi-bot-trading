@@ -268,6 +268,16 @@ def load_manual_ai_setup_candidates(
         if all(str(item["expires_at"]) <= as_of for item in display_group):
             plan_status = "expired"
         market_context = raw_payload.get("market_context") if isinstance(raw_payload.get("market_context"), dict) else {}
+        target_plan = market_context.get("target_plan") if isinstance(market_context.get("target_plan"), dict) else {}
+        target_mode = str(market_context.get("target_mode") or "custom")
+        target_options = target_plan.get("options") if isinstance(target_plan.get("options"), list) else []
+        target_option = next(
+            (
+                option for option in target_options
+                if isinstance(option, dict) and str(option.get("mode")) == target_mode
+            ),
+            {},
+        )
         signal_candle_time = str(market_context.get("signal_candle_time") or "")
         if plan_status == "expired":
             if plan_playbook != "h1_impulse_retest_v1" or not signal_candle_time:
@@ -297,6 +307,14 @@ def load_manual_ai_setup_candidates(
                 if str(item["status"]) == "replace_requested"
             ),
             {},
+        )
+        target_mode = str(replacement.get("target_mode") or target_mode)
+        target_option = next(
+            (
+                option for option in target_options
+                if isinstance(option, dict) and str(option.get("mode")) == target_mode
+            ),
+            target_option,
         )
         entry_price = float(replacement.get("entry_price", row["entry_price"]))
         stop_loss = float(replacement.get("stop_loss", row["stop_loss"]))
@@ -345,6 +363,10 @@ def load_manual_ai_setup_candidates(
                     "account_statuses": account_statuses,
                     "order_type": "limit",
                     "entry_source": entry_source,
+                    "target_mode": target_mode,
+                    "target_plan": target_plan,
+                    "target_reward_distance": target_option.get("reward_distance"),
+                    "target_warning": target_plan.get("fallback_reason"),
                     "entry_options": raw_candidate.get("entry_options") or [],
                     "original_status": raw_candidate.get("original_status"),
                     "original_blocked_reasons": raw_candidate.get("original_blocked_reasons") or [],

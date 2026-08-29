@@ -116,8 +116,12 @@ sóng tăng nằm phía trên swing high, sóng giảm nằm phía dưới swing
 nhỏ `+42.6 · 6H` màu xanh hoặc `−27.3 · 6H` màu đỏ. `H` biểu diễn số nến
 H1 thực tế, tránh weekend/market break làm thời lượng calendar bị phóng đại.
 Badge Wave Strength chỉ là summary tinh gọn; H1 impulse candidate, swing marker
-và setup interaction vẫn có visual priority cao hơn. Phase này không dùng wave
-metrics để tự chỉnh hoặc cảnh báo TP. Click badge mở bảng chi tiết gồm latest
+và setup interaction vẫn có visual priority cao hơn. Riêng H1 Impulse Retest,
+preview có thể dùng baseline completed wave point-in-time để dựng `Wave Safe`
+(`62.5%` median cùng hướng) hoặc `Wave Base`; RR trở thành output và fixed RR vẫn
+là fallback. Candle card tải quote point-in-time khi chọn signal và hiện trực
+tiếp TP price, wave budget cùng effective RR trên nút `Wave Safe/Wave Base`.
+Click badge mở bảng chi tiết gồm latest
 wave, baseline move/time/speed theo giá mỗi nến, tỷ lệ wave mới nhất so với wave
 trước, expansion/contraction của từng hướng và efficiency của sáu wave gần nhất.
 Wave UI không hiển thị hoặc dùng ATR.

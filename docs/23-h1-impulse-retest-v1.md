@@ -87,9 +87,32 @@ Sau khi chọn Entry, calculator kiểm tra lại khoảng stop cuối cùng. V�
 không được ép nhân tạo ra xa SL, setup vẫn có thể bị chặn nếu midpoint còn gần
 hơn minimum stop.
 
-## Take profit và limit validity
+## Take profit theo wave và limit validity
 
-Trader có thể preview và chỉnh RR trong cùng khoảng với Manual AI: `1.5–4.0`:
+Preview hỗ trợ ba TP mode:
+
+- `wave_safe` mặc định trên UI: lấy `62.5%` median move của tối đa bốn completed
+  ZigZag legs cùng hướng trước signal.
+- `wave_base`: lấy toàn bộ median move cùng hướng.
+- `fixed_rr`: fallback/manual preset trong khoảng `1.5–4.0R` như trước.
+
+Wave target được chiếu từ limit Entry; vì vậy khi đổi Entry source, target giữ
+nguyên wave budget theo giá và RR được tính lại như output:
+
+```text
+wave_safe_budget = same_direction_median_move * 0.625
+LONG  TP = Entry + wave_budget
+SHORT TP = Entry - wave_budget
+RR = abs(TP - Entry) / abs(Entry - SL)
+```
+
+Calculator chỉ dùng structure point có `confirmed_at <= signal close`, yêu cầu
+ít nhất ba completed legs cùng hướng và lưu snapshot baseline/sample/market state
+vào `target_plan`. Nếu thiếu mẫu, wave state chưa xác định, trend wave chạy ngược
+hướng setup, hoặc geometry wave nằm ngoài `1.0–4.0R`, requested wave mode fallback
+rõ ràng về `fixed_rr`; calculator không kéo Wave TP ra xa chỉ để đạt RR tối thiểu.
+
+Fixed RR vẫn dùng công thức:
 
 ```text
 LONG  TP = Entry + RR * (Entry - SL)
@@ -183,6 +206,11 @@ tâm lý/risk và account đích trước khi approve. Worker sau đó vẫn áp
 news blackout, exposure, position limit và dynamic sizing trước khi đặt pending
 order.
 
+Setup card có `Quick TP source` dạng ba ô compact `Safe / Base / Fixed RR`. Mỗi
+ô hiển thị TP price, reward distance và effective RR theo Entry/SL hiện tại.
+Đổi TP source giữ nguyên Entry/SL; preview local cập nhật ngay, còn plan đã armed
+dùng lifecycle cancel-and-replace và persist `target_mode` trong market context.
+
 H1 Impulse dùng chung giới hạn vị thế theo account tại
 `MAX_OPEN_POSITIONS_PER_SYMBOL`, nhưng giới hạn này chỉ áp dụng cho position đã
 khớp. Pending limit là kế hoạch chờ nên không giữ slot; trader có thể stage nhiều
@@ -194,10 +222,11 @@ Khi pending order đã tồn tại, chỉnh levels tạo `replace_requested`; wo
 pending cũ rồi đặt lại levels mới. Entry source được lưu cùng payload để Setup UI
 và audit trail luôn giải thích Entry đến từ đâu.
 
-Mỗi H1 plan mới khóa Partial TP mặc định tại `+1.25R`: đóng `50%` volume, sau đó
-dời SL của phần còn lại về Entry với BE buffer `0`. TP cuối của setup được giữ
-nguyên. Snapshot đã khóa không bị account-level setting thay đổi giữa vòng đời
-trade.
+H1 plan có final target từ `1.5R` trở lên khóa Partial TP tại `+1.25R`: đóng
+`50%` volume, sau đó dời SL phần còn lại về Entry với BE buffer `0`. Nếu Wave TP
+nằm dưới `1.5R`, plan dùng full exit tại final TP và tự tắt Partial TP để tránh
+partial gần như trùng với target cuối. Snapshot đã khóa không bị account-level
+setting thay đổi giữa vòng đời trade.
 
 ### Blocked setup review
 
@@ -244,7 +273,7 @@ Outcome chỉ giúp kiểm tra trực quan, không thay thế backtest. Đặc b
 ## API preview
 
 `POST /api/playbooks/h1-impulse-retest/preview` nhận symbol, timestamp chính xác
-của signal candle H1, RR và `as_of` tùy chọn. Backend tải signal candle, H1 liền
+của signal candle H1, `target_mode`, RR fallback và `as_of` tùy chọn. Backend tải signal candle, H1 liền
 trước và ATR lịch sử đúng tại thời điểm signal để tránh look-ahead trong replay.
 
 Response luôn có `preview_only: true` và bao gồm toàn bộ levels, metrics,
