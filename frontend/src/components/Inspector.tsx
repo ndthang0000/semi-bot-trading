@@ -18,6 +18,7 @@ import { H1ExpiryEditDialog } from "./chart/H1ExpiryEditDialog";
 import { h1SetupExpiryDuration } from "./chart/setupExpiry";
 
 type InspectorProps = {
+  accountLabels?: string[];
   payload: ChartPayload | undefined;
   onZoneUpdated: () => void;
 };
@@ -30,7 +31,7 @@ type ToastMessage = {
 
 const TRADE_FILTER_STORAGE_KEY = "semi-bot-trade-history-filters";
 
-export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
+export function Inspector({ accountLabels = [], payload, onZoneUpdated }: InspectorProps) {
   const selected = useChartStore((state) => state.selected);
   const activeTab = useChartStore((state) => state.inspectorTab);
   const setActiveTab = useChartStore((state) => state.setInspectorTab);
@@ -140,6 +141,7 @@ export function Inspector({ payload, onZoneUpdated }: InspectorProps) {
         <SetupsPanel candidates={setupCandidates} m15Triggers={payload?.layers.m15_triggers ?? []} zones={zones} onChanged={onZoneUpdated} showToast={showToast} />
       ) : (
         <TradesTab
+          accountLabels={accountLabels}
           focusTrade={focusTrade}
           limit={limit}
           selected={selected}
@@ -174,6 +176,7 @@ function Toast({ toast, onClose }: { toast: ToastMessage; onClose: () => void })
 }
 
 function TradesTab({
+  accountLabels,
   symbol,
   timeframe,
   limit,
@@ -183,6 +186,7 @@ function TradesTab({
   setStartIndex,
   focusTrade,
 }: {
+  accountLabels: string[];
   symbol: string;
   timeframe: ChartPayload["timeframe"];
   limit: number;
@@ -193,6 +197,8 @@ function TradesTab({
   focusTrade: (trade: TradeOrder) => void;
 }) {
   const storedFilters = useMemo(() => readTradeHistoryFilters(), []);
+  const accountLabel = useChartStore((state) => state.tradeAccountLabel);
+  const setAccountLabel = useChartStore((state) => state.setTradeAccountLabel);
   const [status, setStatus] = useState(storedFilters.status);
   const [side, setSide] = useState(storedFilters.side);
   const [outcome, setOutcome] = useState(storedFilters.outcome);
@@ -205,7 +211,7 @@ function TradesTab({
   const offset = page * pageSize;
   const trimmedTradeId = tradeId.trim();
   const query = useQuery({
-    queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, status, side, outcome, zoneType, reaction, trimmedTradeId, sort, offset],
+    queryKey: ["trade-history", symbol, timeframe, selectedPlaybooks, accountLabel, status, side, outcome, zoneType, reaction, trimmedTradeId, sort, offset],
     queryFn: () =>
       fetchTradeHistory({
         symbol,
@@ -219,6 +225,7 @@ function TradesTab({
         zoneType: zoneType || undefined,
         reaction: reaction || undefined,
         tradeId: trimmedTradeId || undefined,
+        accountLabel: accountLabel || undefined,
         backtest: null,
         sort,
       }),
@@ -239,7 +246,7 @@ function TradesTab({
 
   useEffect(() => {
     setPage((current) => (current === 0 ? current : 0));
-  }, [outcome, reaction, side, sort, status, selectedPlaybooks, trimmedTradeId, zoneType]);
+  }, [accountLabel, outcome, reaction, side, sort, status, selectedPlaybooks, trimmedTradeId, zoneType]);
 
   const selectTrade = (trade: TradeOrder) => {
     setSelected({ kind: "trade", entity: trade });
@@ -259,6 +266,16 @@ function TradesTab({
           <span className="ml-auto normal-case tracking-normal text-slate-600">{total}</span>
         </div>
         <div className="grid grid-cols-2 gap-2">
+          <TradeSelect
+            className="col-span-2 border-cyan-400/30 bg-cyan-400/5 font-semibold text-cyan-100"
+            value={accountLabel ?? ""}
+            onChange={(value) => setAccountLabel(value || null)}
+            options={[
+              ["", "All accounts"],
+              ...(accountLabel && !accountLabels.includes(accountLabel) ? [[accountLabel, accountLabel] as [string, string]] : []),
+              ...accountLabels.map((label) => [label, label] as [string, string]),
+            ]}
+          />
           <input
             className="col-span-2 h-9 rounded-md border border-ink-700 bg-ink-850 px-3 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400"
             placeholder="Search trade ID, e.g. 00060"
@@ -342,6 +359,7 @@ function TradesTab({
                     {trade.status}
                   </span>
                 </div>
+                <div className="mt-1 truncate text-[11px] font-medium text-cyan-200/70">{trade.account_label || "Default"}</div>
                 <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
                   <span>Entry {price(trade.entry_price)}</span>
                   <span>SL {price(trade.stop_loss)}</span>
@@ -380,17 +398,19 @@ function TradesTab({
 }
 
 function TradeSelect({
+  className = "",
   value,
   onChange,
   options,
 }: {
+  className?: string;
   value: string;
   onChange: (value: string) => void;
   options: Array<[string, string]>;
 }) {
   return (
     <select
-      className="h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+      className={`h-9 rounded-md border border-ink-700 bg-ink-850 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400 ${className}`}
       value={value}
       onChange={(event) => {
         onChange(event.target.value);

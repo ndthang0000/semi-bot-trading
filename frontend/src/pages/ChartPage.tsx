@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchChartPayload, fetchReplayTimeline, fetchSpreadSummary } from "../api/chart";
+import { fetchAccountLabels } from "../api/accounts";
 import { fetchChartDrawings } from "../api/chartDrawings";
 import { ContextStrip } from "../components/ContextStrip";
 import { Inspector } from "../components/Inspector";
@@ -56,6 +57,13 @@ export function ChartPage({ newsData }: ChartPageProps) {
     refetchOnWindowFocus: autoRefreshActive,
     staleTime: 10_000,
     enabled: !isReplayRoute || (replayStart !== null && replayAt !== null),
+  });
+
+  const accountsQuery = useQuery({
+    queryKey: ["account-labels"],
+    queryFn: fetchAccountLabels,
+    refetchInterval: isReplayRoute ? false : 30_000,
+    staleTime: 15_000,
   });
 
   const drawingsQuery = useQuery({
@@ -160,10 +168,18 @@ export function ChartPage({ newsData }: ChartPageProps) {
   const priceChangePercent = firstCandle && lastCandle && firstCandle.open !== 0
     ? ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100
     : null;
+  const accountLabels = useMemo(
+    () => Array.from(new Set([
+      ...(accountsQuery.data ?? []),
+      ...(chartQuery.data?.layers.trades.map((trade) => trade.account_label).filter(Boolean) ?? []),
+    ])).sort((left, right) => left.localeCompare(right)),
+    [accountsQuery.data, chartQuery.data?.layers.trades],
+  );
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-950 pb-[calc(3.75rem+env(safe-area-inset-bottom))] text-slate-100 lg:pb-0">
       <TopBar
+        accountLabels={accountLabels}
         currentPrice={lastCandle?.close ?? null}
         mode={mode}
         isFetching={chartQuery.isFetching || timelineQuery.isFetching}
@@ -205,7 +221,7 @@ export function ChartPage({ newsData }: ChartPageProps) {
           )}
         </section>
         <div className="hidden min-h-0 lg:block">
-          <Inspector payload={chartQuery.data} onZoneUpdated={refreshChart} />
+          <Inspector accountLabels={accountLabels} payload={chartQuery.data} onZoneUpdated={refreshChart} />
         </div>
       </main>
       <MobileBottomSheet
@@ -216,7 +232,7 @@ export function ChartPage({ newsData }: ChartPageProps) {
         title={selected ? `Inspector · ${selected.kind}` : "Inspector"}
       >
         <div className="h-full min-h-[20rem]">
-          <Inspector payload={chartQuery.data} onZoneUpdated={refreshChart} />
+          <Inspector accountLabels={accountLabels} payload={chartQuery.data} onZoneUpdated={refreshChart} />
         </div>
       </MobileBottomSheet>
     </div>

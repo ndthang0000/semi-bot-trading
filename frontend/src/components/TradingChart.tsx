@@ -74,6 +74,7 @@ import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdat
 import {
   clampNumber,
   compactTradeGroupSummary,
+  filterTradesByAccount,
   groupTradeBoxesByCandidate,
   interpolateChartX,
   readObject,
@@ -165,6 +166,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
   const h1ImpulseEligibleOnly = useChartStore((state) => state.h1ImpulseEligibleOnly);
   const tradeVisibilityMode = useChartStore((state) => state.tradeVisibilityMode);
+  const tradeAccountLabel = useChartStore((state) => state.tradeAccountLabel);
   const importantZonesOnly = useChartStore((state) => state.importantZonesOnly);
   const maxVisibleZones = useChartStore((state) => state.maxVisibleZones);
   const addEntityKind = useChartStore((state) => state.addEntityKind);
@@ -229,6 +231,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedSetupIdRef = useRef(selectedSetupId);
   const h1ImpulsePreviewsRef = useRef(h1ImpulsePreviews);
   const tradeVisibilityModeRef = useRef(tradeVisibilityMode);
+  const tradeAccountLabelRef = useRef(tradeAccountLabel);
   const importantZonesOnlyRef = useRef(importantZonesOnly);
   const maxVisibleZonesRef = useRef(maxVisibleZones);
   const addEntityKindRef = useRef(addEntityKind);
@@ -284,6 +287,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   selectedSetupIdRef.current = selectedSetupId;
   h1ImpulsePreviewsRef.current = h1ImpulsePreviews;
   tradeVisibilityModeRef.current = tradeVisibilityMode;
+  tradeAccountLabelRef.current = tradeAccountLabel;
   importantZonesOnlyRef.current = importantZonesOnly;
   maxVisibleZonesRef.current = maxVisibleZones;
   addEntityKindRef.current = addEntityKind;
@@ -401,7 +405,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     const chartTrades =
       tradeVisibilityModeRef.current === "off"
         ? []
-        : currentPayload.layers.trades.filter(
+        : filterTradesByAccount(currentPayload.layers.trades, tradeAccountLabelRef.current).filter(
             (trade) =>
               tradeVisibilityModeRef.current === "all"
               || (tradeVisibilityModeRef.current === "hidden" ? trade.hidden_on_chart : !trade.hidden_on_chart),
@@ -1415,6 +1419,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     showStructure,
     showZones,
     tradeVisibilityMode,
+    tradeAccountLabel,
     zoneTypeVisibility,
   ]);
 

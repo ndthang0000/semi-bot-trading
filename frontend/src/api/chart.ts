@@ -87,6 +87,7 @@ export type TradeHistoryQuery = {
   zoneType?: string;
   reaction?: string;
   tradeId?: string;
+  accountLabel?: string;
   backtest?: boolean | null;
   sort: string;
 };
@@ -106,6 +107,7 @@ export async function fetchTradeHistory(query: TradeHistoryQuery): Promise<Trade
   if (query.zoneType) params.set("zone_type", query.zoneType);
   if (query.reaction) params.set("reaction", query.reaction);
   if (query.tradeId) params.set("trade_id", query.tradeId);
+  if (query.accountLabel) params.set("account_label", query.accountLabel);
   if (query.backtest !== null && query.backtest !== undefined) params.set("backtest", String(query.backtest));
 
   const response = await authFetch(`/api/trades?${params.toString()}`);

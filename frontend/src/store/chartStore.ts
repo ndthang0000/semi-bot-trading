@@ -55,6 +55,7 @@ type ChartState = {
   showH1ImpulseCandidates: boolean;
   h1ImpulseEligibleOnly: boolean;
   tradeVisibilityMode: TradeVisibilityMode;
+  tradeAccountLabel: string | null;
   importantZonesOnly: boolean;
   maxVisibleZones: number;
   autoRefreshEnabled: boolean;
@@ -82,6 +83,7 @@ type ChartState = {
   setShowH1ImpulseCandidates: (show: boolean) => void;
   setH1ImpulseEligibleOnly: (eligibleOnly: boolean) => void;
   setTradeVisibilityMode: (mode: TradeVisibilityMode) => void;
+  setTradeAccountLabel: (accountLabel: string | null) => void;
   setImportantZonesOnly: (importantZonesOnly: boolean) => void;
   setMaxVisibleZones: (maxVisibleZones: number) => void;
   setAutoRefreshEnabled: (autoRefreshEnabled: boolean) => void;
@@ -116,6 +118,7 @@ export const useChartStore = create<ChartState>()(
       showH1ImpulseCandidates: true,
       h1ImpulseEligibleOnly: false,
       tradeVisibilityMode: "visible",
+      tradeAccountLabel: null,
       importantZonesOnly: true,
       maxVisibleZones: 8,
       autoRefreshEnabled: true,
@@ -199,6 +202,21 @@ export const useChartStore = create<ChartState>()(
       setShowH1ImpulseCandidates: (showH1ImpulseCandidates) => set({ showH1ImpulseCandidates }),
       setH1ImpulseEligibleOnly: (h1ImpulseEligibleOnly) => set({ h1ImpulseEligibleOnly }),
       setTradeVisibilityMode: (tradeVisibilityMode) => set({ tradeVisibilityMode }),
+      setTradeAccountLabel: (tradeAccountLabel) =>
+        set((state) => {
+          const normalized = tradeAccountLabel?.trim() || null;
+          const selectedBelongsToAccount =
+            state.selected?.kind !== "trade"
+            || normalized === null
+            || state.selected.entity.account_label === normalized;
+          return {
+            tradeAccountLabel: normalized,
+            ...(selectedBelongsToAccount ? {} : { selected: null }),
+            ...(normalized !== null && state.tradeFocusRequest?.trade.account_label !== normalized
+              ? { tradeFocusRequest: null }
+              : {}),
+          };
+        }),
       setImportantZonesOnly: (importantZonesOnly) => set({ importantZonesOnly }),
       setMaxVisibleZones: (maxVisibleZones) => set({ maxVisibleZones: Math.min(Math.max(maxVisibleZones, 1), 40) }),
       setAutoRefreshEnabled: (autoRefreshEnabled) => set({ autoRefreshEnabled }),
@@ -300,6 +318,7 @@ export const useChartStore = create<ChartState>()(
         showH1ImpulseCandidates: state.showH1ImpulseCandidates,
         h1ImpulseEligibleOnly: state.h1ImpulseEligibleOnly,
         tradeVisibilityMode: state.tradeVisibilityMode,
+        tradeAccountLabel: state.tradeAccountLabel,
         importantZonesOnly: state.importantZonesOnly,
         maxVisibleZones: state.maxVisibleZones,
         autoRefreshEnabled: state.autoRefreshEnabled,
@@ -320,6 +339,7 @@ export const useChartStore = create<ChartState>()(
           },
           maxVisibleZones: Math.min(Math.max(Number(layerSettings?.maxVisibleZones ?? current.maxVisibleZones), 1), 40),
           tradeVisibilityMode: normalizeTradeVisibilityMode(layerSettings?.tradeVisibilityMode),
+          tradeAccountLabel: normalizeTradeAccountLabel(layerSettings?.tradeAccountLabel),
           startIndex:
             layerSettings?.startIndex === null || layerSettings?.startIndex === undefined
               ? null
@@ -401,6 +421,10 @@ function defaultsStructureOnForPlaybooks(playbooks: PlaybookKey[]): boolean {
 
 function normalizeTradeVisibilityMode(value: unknown): TradeVisibilityMode {
   return value === "hidden" || value === "all" || value === "off" ? value : "visible";
+}
+
+function normalizeTradeAccountLabel(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export function setupSelectionState(

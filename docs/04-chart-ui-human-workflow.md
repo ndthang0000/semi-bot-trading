@@ -295,6 +295,9 @@ Filter:
 - Hidden trades: chỉ vẽ các trade đã hidden để review và bấm `Show on chart`.
 - All trades: vẽ cả trade đã hidden để có thể chọn và khôi phục.
 - Off: ẩn toàn bộ trade overlay.
+- Account selector: `All accounts` hoặc một `account_label`. Lựa chọn này được
+  dùng chung giữa chart overlay và tab Trade History, được lưu qua lần reload,
+  và tự bỏ trade đang inspect nếu trade đó thuộc account khác.
 - Backtest only.
 - Live only.
 - Winning/losing trades.

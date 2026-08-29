@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TradeOrder } from "../../types";
-import { groupTradeBoxesByCandidate, tradeAccountCount, type TradeBox } from "./tradeOverlay";
+import { filterTradesByAccount, groupTradeBoxesByCandidate, tradeAccountCount, type TradeBox } from "./tradeOverlay";
 
 function trade(id: string, accountLabel: string, candidateId: string): TradeOrder {
   return {
@@ -44,6 +44,14 @@ function box(item: TradeOrder, x: number): TradeBox {
 }
 
 describe("H1 multi-account trade grouping", () => {
+  it("keeps only trades belonging to the selected account", () => {
+    const exness = trade("exness-order", "Exness Personal", "exness-plan-id");
+    const ftmo = trade("ftmo-order", "FTMO 100K 2-Step", "ftmo-plan-id");
+
+    expect(filterTradesByAccount([exness, ftmo], "Exness Personal")).toEqual([exness]);
+    expect(filterTradesByAccount([exness, ftmo], null)).toEqual([exness, ftmo]);
+  });
+
   it("groups account-specific plan ids by their shared execution client id", () => {
     const exness = trade("exness-order", "Exness Personal", "exness-plan-id");
     const ftmo = trade("ftmo-order", "FTMO 100K 2-Step", "ftmo-plan-id");

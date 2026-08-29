@@ -11,6 +11,7 @@ import { ManualAiModal } from "./ManualAiModal";
 import { NewsPill } from "./NewsWidget";
 
 type TopBarProps = {
+  accountLabels?: string[];
   isFetching: boolean;
   mode: "dashboard" | "replay";
   currentPrice?: number | null;
@@ -22,7 +23,7 @@ type TopBarProps = {
 
 type MobilePanel = "layers" | "draw" | "more" | null;
 
-export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefresh, priceChangePercent, newsData }: TopBarProps) {
+export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onOpenInspector, onRefresh, priceChangePercent, newsData }: TopBarProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
   const startIndex = useChartStore((state) => state.startIndex);
@@ -167,6 +168,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
           <option value="M15">M15</option>
           <option value="M5">M5</option>
         </select>
+        <TradeAccountSelect accountLabels={accountLabels} />
         <input
           className="h-9 w-24 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none"
           min={50}
@@ -222,7 +224,7 @@ export function TopBar({ currentPrice, isFetching, mode, onOpenInspector, onRefr
     </nav>
 
     <MobileBottomSheet open={mobilePanel === "layers"} onClose={() => setMobilePanel(null)} title="Chart layers">
-      <MobileLayersPanel />
+      <MobileLayersPanel accountLabels={accountLabels} />
     </MobileBottomSheet>
     <MobileBottomSheet open={mobilePanel === "draw"} onClose={() => setMobilePanel(null)} title="Draw on H1 chart">
       <MobileDrawPanel
@@ -282,7 +284,7 @@ function MobileDockButton({
   );
 }
 
-function MobileLayersPanel() {
+function MobileLayersPanel({ accountLabels }: { accountLabels: string[] }) {
   const timeframe = useChartStore((state) => state.timeframe);
   const activeZonesOnly = useChartStore((state) => state.activeZonesOnly);
   const showZones = useChartStore((state) => state.showZones);
@@ -315,6 +317,10 @@ function MobileLayersPanel() {
 
   return (
     <div className="grid gap-2 p-4">
+      <label className="flex min-h-12 items-center gap-3 rounded-xl border border-cyan-400/30 bg-cyan-400/5 px-3 text-sm text-cyan-100">
+        <span className="flex-1 font-semibold">Trade account</span>
+        <TradeAccountSelect accountLabels={accountLabels} mobile />
+      </label>
       <MobileToggleRow checked={importantZonesOnly} label="Important zones only" onChange={setImportantZonesOnly} />
       <label className="flex min-h-12 items-center gap-3 rounded-xl border border-ink-700 bg-ink-850 px-3 text-sm text-slate-200">
         <span className="flex-1">Maximum visible zones</span>
@@ -389,6 +395,29 @@ function MobileLayersPanel() {
         Layers required by an active playbook stay enabled automatically.
       </p>
     </div>
+  );
+}
+
+function TradeAccountSelect({ accountLabels, mobile = false }: { accountLabels: string[]; mobile?: boolean }) {
+  const selectedAccount = useChartStore((state) => state.tradeAccountLabel);
+  const setSelectedAccount = useChartStore((state) => state.setTradeAccountLabel);
+  const options = selectedAccount && !accountLabels.includes(selectedAccount)
+    ? [selectedAccount, ...accountLabels]
+    : accountLabels;
+
+  return (
+    <select
+      aria-label="Trade account"
+      className={mobile
+        ? "h-10 min-w-0 max-w-[12rem] rounded-lg border border-ink-600 bg-ink-950 px-2 text-sm text-slate-100 outline-none"
+        : "h-9 max-w-[160px] rounded-md border border-cyan-400/30 bg-cyan-400/5 px-2 text-sm font-medium text-cyan-100 outline-none hover:border-cyan-400/60"}
+      title="Filter chart trades and Trade History by account"
+      value={selectedAccount ?? ""}
+      onChange={(event) => setSelectedAccount(event.target.value || null)}
+    >
+      <option value="">All accounts</option>
+      {options.map((label) => <option key={label} value={label}>{label}</option>)}
+    </select>
   );
 }
 

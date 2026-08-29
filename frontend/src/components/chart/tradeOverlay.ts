@@ -41,6 +41,11 @@ export type SetupBox = {
   takeProfitY: number;
 };
 
+export function filterTradesByAccount(trades: TradeOrder[], accountLabel: string | null): TradeOrder[] {
+  if (!accountLabel) return trades;
+  return trades.filter((trade) => trade.account_label === accountLabel);
+}
+
 export function setupToBox(
   candidate: SetupCandidate,
   rangeStart: string,
