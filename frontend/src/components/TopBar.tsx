@@ -1,8 +1,9 @@
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, MoreHorizontal, PanelBottomOpen, Pause, Play, Plus, RefreshCw, Rows3, Target, X } from "lucide-react";
+import { Activity, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, Layers, LogOut, MoreHorizontal, PanelBottomOpen, Pause, Play, Plus, RefreshCw, Rows3, Target, UserRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/auth";
 import type { NewsResponse } from "../api/chart";
 import { allowedAddEntityKinds, type AddEntityMenuKind } from "../lib/playbookEntities";
+import { accountBadgeClass } from "../lib/accountPresentation";
 import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
@@ -168,7 +169,6 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
           <option value="M15">M15</option>
           <option value="M5">M5</option>
         </select>
-        <TradeAccountSelect accountLabels={accountLabels} />
         <input
           className="h-9 w-24 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none"
           min={50}
@@ -188,6 +188,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
         />
         <PlaybookMenu />
         <LayerMenu />
+        <TradeAccountSelect accountLabels={accountLabels} />
         <button
           className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition ${
             autoRefreshActive
@@ -401,16 +402,71 @@ function MobileLayersPanel({ accountLabels }: { accountLabels: string[] }) {
 function TradeAccountSelect({ accountLabels, mobile = false }: { accountLabels: string[]; mobile?: boolean }) {
   const selectedAccount = useChartStore((state) => state.tradeAccountLabel);
   const setSelectedAccount = useChartStore((state) => state.setTradeAccountLabel);
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const options = selectedAccount && !accountLabels.includes(selectedAccount)
     ? [selectedAccount, ...accountLabels]
     : accountLabels;
 
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  if (!mobile) {
+    const selectedTone = selectedAccount
+      ? accountBadgeClass(selectedAccount)
+      : "border-ink-700 bg-ink-800 text-slate-300";
+    return (
+      <div ref={menuRef} className="relative">
+        <button
+          aria-expanded={open}
+          aria-label={`Trade account: ${selectedAccount ?? "All accounts"}`}
+          className={`inline-flex h-9 items-center gap-1.5 rounded-md border px-2 text-sm font-semibold transition hover:brightness-125 ${selectedTone}`}
+          title={`Trade account · ${selectedAccount ?? "All accounts"}`}
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <UserRound size={14} />
+          <span>Acc</span>
+          <ChevronDown className={open ? "rotate-180 transition" : "transition"} size={13} />
+        </button>
+        {open ? (
+          <div className="absolute right-0 top-11 z-50 grid w-60 gap-1 rounded-md border border-ink-700 bg-ink-900 p-2 shadow-2xl shadow-black/40">
+            <button
+              className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-xs transition ${selectedAccount === null ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-100" : "border-transparent text-slate-400 hover:bg-ink-800 hover:text-slate-100"}`}
+              type="button"
+              onClick={() => { setSelectedAccount(null); setOpen(false); }}
+            >
+              <span className="flex-1">All accounts</span>
+              {selectedAccount === null ? <Check size={13} /> : null}
+            </button>
+            {options.map((label) => (
+              <button
+                className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-xs font-semibold transition hover:brightness-125 ${accountBadgeClass(label)}`}
+                key={label}
+                title={label}
+                type="button"
+                onClick={() => { setSelectedAccount(label); setOpen(false); }}
+              >
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {selectedAccount === label ? <Check size={13} /> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <select
       aria-label="Trade account"
-      className={mobile
-        ? "h-10 min-w-0 max-w-[12rem] rounded-lg border border-ink-600 bg-ink-950 px-2 text-sm text-slate-100 outline-none"
-        : "h-9 max-w-[160px] rounded-md border border-cyan-400/30 bg-cyan-400/5 px-2 text-sm font-medium text-cyan-100 outline-none hover:border-cyan-400/60"}
+      className={`h-10 min-w-0 max-w-[12rem] rounded-lg border px-2 text-sm outline-none ${selectedAccount ? accountBadgeClass(selectedAccount) : "border-ink-600 bg-ink-950 text-slate-100"}`}
       title="Filter chart trades and Trade History by account"
       value={selectedAccount ?? ""}
       onChange={(event) => setSelectedAccount(event.target.value || null)}

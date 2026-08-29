@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
 import { cancelManualAiPlan, rejectManualAiPlan, updateManualAiPlanLevels } from "../api/manualAi";
 import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tradeHistoryFilters";
+import { accountBadgeClass } from "../lib/accountPresentation";
 import { compactTime, localDateTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
 import type { ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, TradeOrder, ZoneTypeVisibility } from "../types";
@@ -267,7 +268,7 @@ function TradesTab({
         </div>
         <div className="grid grid-cols-2 gap-2">
           <TradeSelect
-            className="col-span-2 border-cyan-400/30 bg-cyan-400/5 font-semibold text-cyan-100"
+            className={`col-span-2 font-semibold ${accountLabel ? accountBadgeClass(accountLabel) : "border-cyan-400/30 bg-cyan-400/5 text-cyan-100"}`}
             value={accountLabel ?? ""}
             onChange={(value) => setAccountLabel(value || null)}
             options={[
@@ -359,7 +360,11 @@ function TradesTab({
                     {trade.status}
                   </span>
                 </div>
-                <div className="mt-1 truncate text-[11px] font-medium text-cyan-200/70">{trade.account_label || "Default"}</div>
+                <div className="mt-1">
+                  <span className={`inline-block max-w-full truncate rounded border px-1.5 py-0.5 align-middle text-[10px] font-semibold ${accountBadgeClass(trade.account_label || "Default")}`}>
+                    {trade.account_label || "Default"}
+                  </span>
+                </div>
                 <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
                   <span>Entry {price(trade.entry_price)}</span>
                   <span>SL {price(trade.stop_loss)}</span>
