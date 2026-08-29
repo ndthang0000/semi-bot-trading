@@ -1734,9 +1734,17 @@ class TestLiveCandidateAlreadyExecuted(unittest.TestCase):
         self._insert_er("cand-2", "sent")
         self.assertTrue(live_candidate_already_executed(self._conn, "cand-2"))
 
+    def test_filled_stays_consumed_after_position_lifecycle(self):
+        self._insert_er("cand-filled", "filled")
+        self.assertTrue(live_candidate_already_executed(self._conn, "cand-filled"))
+
     def test_failed_returns_false_allows_retry(self):
         self._insert_er("cand-3", "failed")
         self.assertFalse(live_candidate_already_executed(self._conn, "cand-3"))
+
+    def test_cancelled_before_execution_allows_retry(self):
+        self._insert_er("cand-cancelled", "cancelled")
+        self.assertFalse(live_candidate_already_executed(self._conn, "cand-cancelled"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2022,6 +2030,31 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
                 self._conn, self._config, _make_env(), client2, [candidate], "XAUUSDm"
             )
         client2.place_market_order.assert_not_called()
+
+    def test_filled_candidate_is_not_retraded_after_position_closes(self):
+        candidate = _make_candidate()
+        self._run([candidate])
+        idea_id = self._conn.execute("SELECT id FROM trade_ideas").fetchone()["id"]
+        self._conn.execute(
+            "UPDATE execution_requests SET status = 'filled' WHERE trade_idea_id = ?",
+            (idea_id,),
+        )
+        self._conn.execute(
+            "UPDATE trade_orders SET status = 'closed', closed_at = ? WHERE trade_idea_id = ?",
+            (datetime.now(UTC).isoformat(), idea_id),
+        )
+        self._conn.commit()
+        client = _fake_client()
+        risk_manager = _fake_risk_manager()
+
+        with patch("semi_bot_trading.live_worker.build_risk_manager", return_value=risk_manager):
+            maybe_execute_candidates(
+                self._conn, self._config, _make_env(), client, [candidate], "XAUUSDm"
+            )
+
+        client.place_market_order.assert_not_called()
+        request_count = self._conn.execute("SELECT COUNT(*) AS count FROM execution_requests").fetchone()["count"]
+        self.assertEqual(1, request_count)
 
     # ── score selection ───────────────────────────────────────────────────────
     def test_highest_score_candidate_selected(self):

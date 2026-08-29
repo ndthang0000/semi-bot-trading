@@ -383,6 +383,10 @@ worker, risk manager hoặc execution:
   lan ve mac dinh.
 - Lifecycle khong duoc suy ra tu `pnl_r`: `pending_fill` la `Pending limit`,
   `filled` chua dong la `Open position`, order da dong la `Closed`.
+- Live limit xuat hien trong Journal ngay khi broker chap nhan, du
+  `opened_at=NULL`; API dung `created_at` lam moc sap xep cho order chua fill.
+  Neu limit bi huy ma chua tung fill, no van duoc giu trong lich su voi lifecycle
+  `Cancelled` de audit day du.
 - Manual AI order co raw status `cancelled` nhung plan status `expired` phai hien
   `Expired`; cancel chu dong hoac invalidation van hien `Cancelled`. PnL chua co
   gia tri hien `--`, khong hien `open`.

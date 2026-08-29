@@ -832,6 +832,58 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(ftmo_payload["trades"][0]["id"], "order-ftmo")
         self.assertEqual(ftmo_payload["trades"][0]["account_label"], "FTMO Demo")
 
+    def test_trade_history_includes_live_pending_and_never_filled_limits(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            now = "2026-08-28T14:30:00+00:00"
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.execute(
+                    """
+                    INSERT INTO trade_ideas (
+                        id, symbol, direction, playbook, status, related_zone_ids_json,
+                        context_snapshot_json, suggested_stop_loss, suggested_take_profit_json,
+                        risk_reward, created_at
+                    ) VALUES ('pending-idea', 'XAUUSD', 'long', 'zone_reaction_v2',
+                              'approved', '[]', '{}', 4525, '[4605]', 2, ?)
+                    """,
+                    (now,),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO trade_orders (
+                        id, trade_idea_id, account_label, symbol, side, order_type,
+                        status, entry_price, stop_loss, take_profit_json, quantity,
+                        opened_at, source, metadata_json, created_at, updated_at
+                    ) VALUES ('pending-order', 'pending-idea', 'Exness Personal',
+                              'XAUUSD', 'buy', 'limit', 'pending_fill', 4551, 4525,
+                              '[4605]', 0.4, NULL, 'live', '{}', ?, ?)
+                    """,
+                    (now, now),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+            pending = client.get("/api/trades?symbol=XAUUSD&backtest=false&sort=opened_at_desc")
+            with connect(db_path) as conn:
+                conn.execute(
+                    "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE id = 'pending-order'",
+                    ("2026-08-28T15:00:00+00:00", "2026-08-28T15:00:00+00:00"),
+                )
+                conn.commit()
+            cancelled = client.get("/api/trades?symbol=XAUUSD&backtest=false&sort=opened_at_desc")
+            backtest = client.get("/api/trades?symbol=XAUUSD&backtest=true")
+
+        self.assertEqual(200, pending.status_code)
+        self.assertEqual(1, pending.json()["total"])
+        self.assertEqual("pending_fill", pending.json()["trades"][0]["status"])
+        self.assertIsNone(pending.json()["trades"][0]["opened_at"])
+        self.assertIsNone(pending.json()["trades"][0]["chart_index"])
+        self.assertEqual("cancelled", cancelled.json()["trades"][0]["status"])
+        self.assertEqual(0, backtest.json()["total"])
+
     def test_chart_replay_recomputes_from_replay_start(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

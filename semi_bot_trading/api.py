@@ -1163,7 +1163,13 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         resolved_symbol = symbol or config.symbol
         resolved_timeframe = timeframe.upper()
         allowed_playbooks = parse_playbooks(playbooks)
-        where = ["trade_orders.symbol = ?", "trade_orders.opened_at IS NOT NULL"]
+        # A broker-accepted live limit exists before it has an opened_at. Keep
+        # those pending/cancelled orders in Trade History so Journal reflects
+        # the full order lifecycle, not only positions that eventually filled.
+        where = [
+            "trade_orders.symbol = ?",
+            "(trade_orders.opened_at IS NOT NULL OR trade_orders.source = 'live')",
+        ]
         params: list[Any] = [resolved_symbol]
         if allowed_playbooks is not None:
             if not allowed_playbooks:
@@ -1231,12 +1237,12 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             where.append("trade_orders.source = 'live'")
 
         order_by = {
-            "opened_at_desc": "trade_orders.opened_at DESC",
-            "opened_at_asc": "trade_orders.opened_at ASC",
-            "pnl_r_desc": "trade_orders.pnl_r DESC, trade_orders.opened_at DESC",
-            "pnl_r_asc": "trade_orders.pnl_r ASC, trade_orders.opened_at DESC",
-            "sl_size_desc": "CASE WHEN trade_orders.entry_price IS NULL OR trade_orders.stop_loss IS NULL THEN 1 ELSE 0 END, ABS(trade_orders.entry_price - trade_orders.stop_loss) DESC, trade_orders.opened_at DESC",
-            "sl_size_asc": "CASE WHEN trade_orders.entry_price IS NULL OR trade_orders.stop_loss IS NULL THEN 1 ELSE 0 END, ABS(trade_orders.entry_price - trade_orders.stop_loss) ASC, trade_orders.opened_at DESC",
+            "opened_at_desc": "COALESCE(trade_orders.opened_at, trade_orders.created_at) DESC",
+            "opened_at_asc": "COALESCE(trade_orders.opened_at, trade_orders.created_at) ASC",
+            "pnl_r_desc": "trade_orders.pnl_r DESC, COALESCE(trade_orders.opened_at, trade_orders.created_at) DESC",
+            "pnl_r_asc": "trade_orders.pnl_r ASC, COALESCE(trade_orders.opened_at, trade_orders.created_at) DESC",
+            "sl_size_desc": "CASE WHEN trade_orders.entry_price IS NULL OR trade_orders.stop_loss IS NULL THEN 1 ELSE 0 END, ABS(trade_orders.entry_price - trade_orders.stop_loss) DESC, COALESCE(trade_orders.opened_at, trade_orders.created_at) DESC",
+            "sl_size_asc": "CASE WHEN trade_orders.entry_price IS NULL OR trade_orders.stop_loss IS NULL THEN 1 ELSE 0 END, ABS(trade_orders.entry_price - trade_orders.stop_loss) ASC, COALESCE(trade_orders.opened_at, trade_orders.created_at) DESC",
         }.get(sort)
         if order_by is None:
             raise HTTPException(

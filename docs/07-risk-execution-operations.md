@@ -309,6 +309,12 @@ MT5 neu co, sau do queue mot `execution_event` Telegram. Dedupe key dung
 nhin thay fill cung khong gui trung message. Worker kiem tra ca position dang mo
 va order history de khong mat event neu lenh fill roi dong giua hai lan poll.
 
+Candidate live duoc dedupe theo `candidate_id + account_label`. Mot execution
+request da `filled` hoac `closed` tieu thu vinh vien candidate do, ke ca sau khi
+position duoc human dong va candidate detector van con tra ve `eligible`.
+`pending`/`sent` chan request trung trong luc order dang xu ly; chi request
+`failed` hoac `cancelled` truoc khi co execution thanh cong moi duoc retry.
+
 Chart inspector cho phep doi Partial TP theo tung account: bat/tat va chon moc
 tu `0.5R` den `2.0R`. Thay doi duoc worker ap dung cho tat ca lenh live dang
 `armed` (chua partial) va cac lenh tao sau do; lich su lenh da partial/da dong

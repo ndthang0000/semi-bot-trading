@@ -3791,13 +3791,15 @@ def new_zone_rows(conn: Connection, symbol: str, before_ids: set[str]) -> list[A
 
 
 def live_candidate_already_executed(conn: Connection, candidate_id: str, *, account_label: str = "Default") -> bool:
-    """Return True when a non-failed execution request exists for this candidate.
+    """Return True when an in-flight or successful request exists for this candidate.
 
     'pending'  — intent committed to DB before MT5 call; process may have crashed
                  mid-flight. Treat as already-in-progress to prevent duplicate orders.
-    'sent'     — MT5 accepted the order. Definitive in-flight or filled trade.
-    'failed'   — MT5 rejected or an exception occurred; allow a retry on the same
-                 candidate (the setup may still be eligible).
+    'sent'     — MT5 accepted the order; it may still be pending at the broker.
+    'filled'   — the candidate has already produced a real position. Keep it
+                 permanently consumed even after that position closes.
+    'failed'/'cancelled' — no active/successful execution remains, so the same
+                 candidate may retry while it is still eligible.
     """
     row = conn.execute(
         """
@@ -3806,7 +3808,7 @@ def live_candidate_already_executed(conn: Connection, candidate_id: str, *, acco
         JOIN execution_requests er ON er.trade_idea_id = ti.id
         WHERE ti.id = ?
           AND er.account_label = ?
-          AND er.status IN ('pending', 'sent')
+          AND er.status IN ('pending', 'sent', 'filled', 'closed')
         """,
         (live_trade_idea_id(candidate_id, account_label=account_label), account_label),
     ).fetchone()
