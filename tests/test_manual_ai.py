@@ -85,6 +85,32 @@ def prepare_h1_payload(payload: dict, db_path: Path) -> None:
 
 
 class ManualAiApiTest(unittest.TestCase):
+    def test_h1_partial_trigger_must_be_below_final_target(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            client = authenticated_test_client(root, config_path)
+            payload = copy.deepcopy(envelope(rr=1.0, client_id="h1-partial-validation", expires_in_minutes=360))
+            prepare_h1_payload(payload, db_path)
+            payload["candidates"][0]["partial_take_profit"] = {
+                "enabled": True,
+                "trigger_r": 1.25,
+                "close_fraction": 0.5,
+                "move_stop_to": "breakeven",
+                "breakeven_buffer": 0,
+            }
+
+            rejected = client.post("/api/manual-ai/plans", json=payload)
+            payload["candidates"][0]["partial_take_profit"]["enabled"] = False
+            accepted = client.post("/api/manual-ai/plans", json=payload)
+
+            self.assertEqual(422, rejected.status_code, rejected.text)
+            self.assertIn("partial TP trigger", rejected.text)
+            self.assertEqual(200, accepted.status_code, accepted.text)
+
     def test_partial_take_profit_defaults_to_1_25r_half_and_breakeven(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

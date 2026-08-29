@@ -12,6 +12,8 @@ type Props = {
 };
 
 export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props) {
+  const initialPartial = isRecord(candidate.metadata.partial_take_profit) ? candidate.metadata.partial_take_profit : {};
+  const finalRiskReward = candidate.risk_reward ?? 0;
   const [workers, setWorkers] = useState<ManualAiWorker[]>([]);
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [calm, setCalm] = useState(false);
@@ -30,11 +32,24 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
   const [expiryHours, setExpiryHours] = useState(() => clampHours(suggestedExpiryHours, configuredMinTtl, configuredMaxTtl));
   const [revalidation, setRevalidation] = useState<H1ImpulseRevalidation | null>(null);
   const [revalidating, setRevalidating] = useState(true);
+  const [partialEnabled, setPartialEnabled] = useState(
+    typeof initialPartial.enabled === "boolean" ? initialPartial.enabled : finalRiskReward >= 1.5,
+  );
+  const [partialTriggerR, setPartialTriggerR] = useState(
+    typeof initialPartial.trigger_r === "number" ? initialPartial.trigger_r : 1.25,
+  );
+  const [partialCloseFraction, setPartialCloseFraction] = useState(
+    typeof initialPartial.close_fraction === "number" ? initialPartial.close_fraction : 0.5,
+  );
+  const [partialMoveStopTo, setPartialMoveStopTo] = useState<"breakeven" | "unchanged">(
+    initialPartial.move_stop_to === "unchanged" ? "unchanged" : "breakeven",
+  );
+  const [partialBreakevenBuffer, setPartialBreakevenBuffer] = useState(
+    String(typeof initialPartial.breakeven_buffer === "number" ? initialPartial.breakeven_buffer : 0),
+  );
   const signalTime = String(candidate.metadata.signal_candle_time ?? "");
   const entrySource = String(candidate.metadata.entry_source ?? "strategy_calculated");
   const targetMode = String(candidate.metadata.target_mode ?? "custom");
-  const finalRiskReward = candidate.risk_reward ?? 0;
-  const partialTakeProfitEnabled = finalRiskReward >= 1.5;
   const executionReview = useMemo(() => reviewH1Execution(candidate), [candidate]);
   const requiresOverride = executionReview.softBlockedReasons.length > 0;
   const renewedFromPlanId = candidate.metadata.execution_plan === true
@@ -132,7 +147,13 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             take_profit: candidate.take_profit[0],
             risk_pct: 1,
             expires_in_minutes: expiryHours * 60,
-            partial_take_profit: { enabled: partialTakeProfitEnabled, trigger_r: 1.25, close_fraction: 0.5, move_stop_to: "breakeven", breakeven_buffer: 0 },
+            partial_take_profit: {
+              enabled: partialEnabled,
+              trigger_r: partialTriggerR,
+              close_fraction: partialCloseFraction,
+              move_stop_to: partialMoveStopTo,
+              breakeven_buffer: Number(partialBreakevenBuffer) || 0,
+            },
             cancel_conditions: [
               { type: candidate.direction === "long" ? "m5_close_below" : "m5_close_above", price: candidate.stop_loss },
               { type: "price_reached_target_without_fill" },
@@ -150,7 +171,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
             renewal_count: Number(candidate.metadata.renewal_count ?? 0) + (renewedFromPlanId ? 1 : 0),
             entry_reason: `H1 impulse entry from ${entrySource}`,
             stop_reason: "H1 wick invalidation plus ATR buffer; human-confirmed levels",
-            target_reason: `${targetMode} target · ${candidate.risk_reward?.toFixed(2) ?? "--"}R${partialTakeProfitEnabled ? " · partial at 1.25R" : " · full exit, partial disabled"}`,
+            target_reason: `${targetMode} target · ${candidate.risk_reward?.toFixed(2) ?? "--"}R${partialEnabled ? ` · partial ${Math.round(partialCloseFraction * 100)}% at ${partialTriggerR.toFixed(2)}R` : " · full exit"}`,
             confidence: candidate.status === "eligible" ? 0.8 : 0.4,
           }],
         }, "manual");
@@ -188,6 +209,13 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
     && overrideReason.trim().length >= 20
   );
   const revalidationHardBlocks = revalidation?.hard_blocked_reasons ?? [];
+  const partialBuffer = Number(partialBreakevenBuffer);
+  const partialValid = !partialEnabled || (
+    partialTriggerR < finalRiskReward
+    && Number.isFinite(partialBuffer)
+    && partialBuffer >= 0
+    && partialBuffer <= 10
+  );
   const ready = !revalidating
     && revalidation !== null
     && executionReview.hardBlockedReasons.length === 0
@@ -196,6 +224,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
     && acceptRisk
     && dynamicLot
     && !competingExposure
+    && partialValid
     && selectedWorkers.length > 0;
   return (
     <div className="fixed inset-0 z-[110] grid place-items-center bg-black/75 p-3 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}>
@@ -210,8 +239,39 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
         </div>
         <div className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2 text-xs text-cyan-100">Entry source: <strong>{entrySource.replace(/_/g, " ")}</strong></div>
         <div className="mt-2 rounded-lg border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2 text-xs text-violet-100">
-          TP source: <strong>{targetMode.replace(/_/g, " ")}</strong> · {finalRiskReward.toFixed(2)}R · {partialTakeProfitEnabled ? "partial 50% at 1.25R, then BE" : "full exit at Wave TP"}
+          TP source: <strong>{targetMode.replace(/_/g, " ")}</strong> · {finalRiskReward.toFixed(2)}R
         </div>
+        <section className="mt-3 rounded-xl border border-violet-400/25 bg-violet-400/[0.05] p-3">
+          <label className="flex items-center justify-between gap-3 text-sm font-semibold text-violet-100">
+            <span><span className="block">Partial TP</span><span className="mt-0.5 block text-[11px] font-normal text-slate-400">Tuỳ chỉnh trước khi arm lệnh.</span></span>
+            <input checked={partialEnabled} className="h-4 w-4 accent-violet-400" type="checkbox" onChange={(event) => setPartialEnabled(event.target.checked)} />
+          </label>
+          <div className={`mt-3 grid gap-3 sm:grid-cols-3 ${partialEnabled ? "" : "pointer-events-none opacity-40"}`}>
+            <PartialOptionGroup
+              label="Kích hoạt tại"
+              options={[0.75, 1, 1.25, 1.5].map((value) => ({ label: `${value.toFixed(2)}R`, value, disabled: value >= finalRiskReward }))}
+              selected={partialTriggerR}
+              onSelect={setPartialTriggerR}
+            />
+            <PartialOptionGroup
+              label="Khối lượng chốt"
+              options={[0.25, 0.33, 0.5].map((value) => ({ label: `${Math.round(value * 100)}%`, value }))}
+              selected={partialCloseFraction}
+              onSelect={setPartialCloseFraction}
+            />
+            <div className="grid content-start gap-1.5">
+              <span className="text-[11px] text-slate-400">SL sau partial</span>
+              <div className="flex flex-wrap gap-1">
+                <PartialChoice active={partialMoveStopTo === "breakeven"} label="Dời về BE" onClick={() => setPartialMoveStopTo("breakeven")} />
+                <PartialChoice active={partialMoveStopTo === "unchanged"} label="Giữ nguyên" onClick={() => setPartialMoveStopTo("unchanged")} />
+              </div>
+            </div>
+          </div>
+          {partialEnabled && partialMoveStopTo === "breakeven" ? (
+            <label className="mt-3 grid max-w-52 gap-1 text-xs text-slate-400">BE buffer (giá)<input className="h-9 rounded-lg border border-ink-600 bg-ink-950 px-3 font-mono text-sm text-slate-100 outline-none focus:border-violet-400" min={0} max={10} step={0.1} type="number" value={partialBreakevenBuffer} onChange={(event) => setPartialBreakevenBuffer(event.target.value)} /></label>
+          ) : null}
+          {partialEnabled && !partialValid ? <p className="mt-2 text-[10px] text-amber-200">Partial trigger phải thấp hơn final TP {finalRiskReward.toFixed(2)}R; BE buffer cho phép 0–10 giá.</p> : null}
+        </section>
         <div className="mt-3 rounded-lg border border-ink-700 bg-ink-900/60 p-3">
           <div className="flex items-center justify-between gap-3 text-xs"><span className="font-bold uppercase tracking-wide text-slate-400">Order TTL</span><span className="font-mono font-bold text-cyan-200">{expiryHours}h</span></div>
           <div className="mt-2 flex flex-wrap gap-1.5">{[6, 12, 18, 24, 48].filter((hours) => hours >= configuredMinTtl && hours <= configuredMaxTtl).map((hours) => <button key={hours} className={`rounded border px-2 py-1 text-xs ${expiryHours === hours ? "border-cyan-300 bg-cyan-300/15 text-cyan-100" : "border-ink-600 text-slate-400"}`} type="button" onClick={() => setExpiryHours(hours)}>{hours}h</button>)}</div>
@@ -270,6 +330,14 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
 
 function Level({ label, value }: { label: string; value: number | string | null | undefined }) { return <div className="rounded border border-ink-700 bg-ink-900 p-2"><div className="text-[9px] text-slate-500">{label}</div><div className="mt-1 font-bold text-slate-100">{typeof value === "number" ? value.toFixed(2) : value ?? "--"}</div></div>; }
 function Check({ checked, label, onChange, danger = false }: { checked: boolean; label: string; onChange: (value: boolean) => void; danger?: boolean }) { return <label className={danger ? "text-rose-200" : "text-slate-200"}><input checked={checked} className="mr-2 accent-cyan-400" type="checkbox" onChange={(event) => onChange(event.target.checked)} />{label}</label>; }
+
+function PartialOptionGroup({ label, onSelect, options, selected }: { label: string; onSelect: (value: number) => void; options: Array<{ label: string; value: number; disabled?: boolean }>; selected: number }) {
+  return <div className="grid content-start gap-1.5"><span className="text-[11px] text-slate-400">{label}</span><div className="flex flex-wrap gap-1">{options.map((option) => <PartialChoice key={option.value} active={selected === option.value} disabled={option.disabled} label={option.label} onClick={() => onSelect(option.value)} />)}</div></div>;
+}
+
+function PartialChoice({ active, disabled = false, label, onClick }: { active: boolean; disabled?: boolean; label: string; onClick: () => void }) {
+  return <button className={`rounded border px-2 py-1 text-[10px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-30 ${active ? "border-violet-300 bg-violet-400/20 text-violet-100" : "border-ink-600 bg-ink-900 text-slate-400 hover:border-violet-400/60"}`} disabled={disabled} type="button" onClick={onClick}>{label}</button>;
+}
 
 function ReviewReasons({ icon, reasons, title, tone }: { icon: string; reasons: string[]; title: string; tone: "amber" | "rose" }) {
   const className = tone === "amber"

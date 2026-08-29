@@ -348,6 +348,17 @@ def validate_manual_ai_envelope(
                 ),
             )
         if request.playbook == "h1_impulse_retest_v1":
+            if (
+                candidate.partial_take_profit.enabled
+                and candidate.partial_take_profit.trigger_r >= risk_reward
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"candidates[{index}] partial TP trigger must be below final target RR; "
+                        f"trigger={candidate.partial_take_profit.trigger_r:.2f}R, final={risk_reward:.2f}R"
+                    ),
+                )
             ttl_hours = candidate.expires_in_minutes / 60
             min_ttl_hours = float(getattr(h1_preview_config, "min_order_ttl_hours", 1))
             max_ttl_hours = float(getattr(h1_preview_config, "max_order_ttl_hours", 48))

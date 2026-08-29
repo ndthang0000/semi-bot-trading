@@ -222,11 +222,13 @@ Khi pending order đã tồn tại, chỉnh levels tạo `replace_requested`; wo
 pending cũ rồi đặt lại levels mới. Entry source được lưu cùng payload để Setup UI
 và audit trail luôn giải thích Entry đến từ đâu.
 
-H1 plan có final target từ `1.5R` trở lên khóa Partial TP tại `+1.25R`: đóng
-`50%` volume, sau đó dời SL phần còn lại về Entry với BE buffer `0`. Nếu Wave TP
-nằm dưới `1.5R`, plan dùng full exit tại final TP và tự tắt Partial TP để tránh
-partial gần như trùng với target cuối. Snapshot đã khóa không bị account-level
-setting thay đổi giữa vòng đời trade.
+Trader cấu hình Partial TP ngay trong màn hình approve/re-order H1 limit: có thể
+bật/tắt, chọn trigger `0.75/1.0/1.25/1.5R`, tỷ lệ đóng `25/33/50%`, dời SL về
+breakeven hoặc giữ nguyên và nhập BE buffer `0–10` giá. Trigger phải thấp hơn
+final TP RR. Giá trị mặc định ban đầu vẫn là `1.25R / 50% / BE` khi final target
+từ `1.5R` trở lên; Wave TP thấp hơn mặc định tắt Partial, nhưng trader có thể bật
+và chọn trigger hợp lệ. Cấu hình được khóa theo plan khi arm và không bị
+account-level setting thay đổi giữa vòng đời trade.
 
 ### Blocked setup review
 
