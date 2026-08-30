@@ -38,6 +38,9 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
   const setAutoRefreshEnabled = useChartStore((state) => state.setAutoRefreshEnabled);
   const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
   const autoRefreshActive = mode === "dashboard" && autoRefreshEnabled && startIndex === null;
+  const autoRefreshLabel = autoRefreshEnabled
+    ? startIndex === null ? "Auto" : "Paused"
+    : "Manual";
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>(null);
   const [manualAiOpen, setManualAiOpen] = useState(false);
   // H1 is the only zone/context timeframe; manual zones on M15 are rejected by
@@ -170,7 +173,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
           <option value="M5">M5</option>
         </select>
         <input
-          className="h-9 w-24 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none"
+          className="h-9 w-20 rounded-md border border-ink-700 bg-ink-850 px-3 text-sm text-slate-100 outline-none"
           min={50}
           max={15000}
           step={50}
@@ -190,7 +193,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
         <LayerMenu />
         <TradeAccountSelect accountLabels={accountLabels} />
         <button
-          className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition ${
+          className={`inline-flex h-9 w-[92px] shrink-0 items-center justify-center gap-2 rounded-md border px-2 text-sm transition ${
             autoRefreshActive
               ? "border-cyan-500/60 bg-cyan-400/10 text-cyan-100"
               : "border-ink-700 bg-ink-800 text-slate-300 hover:border-cyan-500"
@@ -200,16 +203,16 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
           onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
         >
           {autoRefreshEnabled ? <Pause size={15} /> : <Play size={15} />}
-          <span>{autoRefreshEnabled ? "Auto 60s" : "Manual"}</span>
-          {autoRefreshEnabled && startIndex !== null ? <span className="text-[11px] text-slate-500">paused</span> : null}
+          <span>{autoRefreshLabel}</span>
         </button>
         <button
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-ink-700 bg-ink-800 px-3 text-sm text-slate-100 hover:border-cyan-500"
+          aria-label="Reload chart"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-ink-700 bg-ink-800 text-slate-100 hover:border-cyan-500"
+          title="Reload chart"
           type="button"
           onClick={onRefresh}
         >
           <RefreshCw className={isFetching ? "animate-spin" : ""} size={15} />
-          Reload
         </button>
         {newsData && <NewsPill data={newsData} />}
         <LogoutButton />
