@@ -17,6 +17,7 @@ import type {
   WeeklyJournal,
   WeeklyJournalsResponse,
 } from "../types";
+import { createRandomUuid } from "../lib/randomUuid";
 import { authFetch } from "./auth";
 
 type ChartQuery = {
@@ -147,7 +148,7 @@ export async function executeTradeManagementAction(
   tradeOrderId: string,
   action: TradeManagementAction,
 ): Promise<TradeManagementCommand> {
-  const idempotencyKey = `trade-action:${tradeOrderId}:${action}:${crypto.randomUUID()}`;
+  const idempotencyKey = `trade-action:${tradeOrderId}:${action}:${createRandomUuid()}`;
   const response = await authFetch(`/api/trades/${encodeURIComponent(tradeOrderId)}/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
