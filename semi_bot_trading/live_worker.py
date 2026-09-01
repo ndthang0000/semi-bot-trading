@@ -1693,6 +1693,8 @@ def queue_m15_recovery_alert(conn: Connection, config: AppConfig, env: RuntimeEn
                 "directions": directions,
                 "close": round(float(trigger["close"]), 5),
                 "event_time": str(trigger["close_time"]),
+                "bullish_size": round(bullish.size, 5) if bullish.passed else None,
+                "bearish_size": round(bearish.size, 5) if bearish.passed else None,
                 "bullish_ratio": round(bullish.ratio, 4) if bullish.passed else None,
                 "bearish_ratio": round(bearish.ratio, 4) if bearish.passed else None,
                 "minimum_ratio": threshold,

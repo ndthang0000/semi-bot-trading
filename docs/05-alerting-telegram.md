@@ -76,6 +76,8 @@ một alert Telegram:
 
 - Bullish recovery dùng `(close - low) / average_body`.
 - Bearish recovery dùng `(high - close) / average_body`.
+- Dòng `Close` hiển thị thêm recovery size tuyệt đối theo giá cho từng hướng đạt
+  ngưỡng; tỷ lệ chuẩn hóa vẫn nằm riêng ở dòng `Recovery / avg`.
 - `average_body` dùng đúng số nến liền trước cấu hình bởi
   `reject_avg_body_period`; không đưa nến trigger vào baseline.
 - Nếu cùng một nến đạt cả hai hướng, gộp hai hướng trong một message.

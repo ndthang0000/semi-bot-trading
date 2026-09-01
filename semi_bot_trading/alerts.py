@@ -432,7 +432,13 @@ def _fmt_recovery(alert: AlertEvent) -> str:
     labels = {"bullish": "Bullish", "bearish": "Bearish"}
     direction_text = " + ".join(labels.get(str(item), str(item).title()) for item in directions)
     lines = [f"[{alert.symbol} {alert.timeframe}] [RECOVERY] {direction_text}"]
-    lines.append(f"Close: {recovery.get('close', '?')}  At: {event_time}")
+    sizes = []
+    if recovery.get("bullish_size") is not None:
+        sizes.append(f"Bullish {float(recovery['bullish_size']):g}")
+    if recovery.get("bearish_size") is not None:
+        sizes.append(f"Bearish {float(recovery['bearish_size']):g}")
+    size_text = f"  Recovery: {' | '.join(sizes)}" if sizes else ""
+    lines.append(f"Close: {recovery.get('close', '?')}{size_text}  At: {event_time}")
     ratios = []
     if recovery.get("bullish_ratio") is not None:
         ratios.append(f"Bullish {float(recovery['bullish_ratio']):.2f}x")

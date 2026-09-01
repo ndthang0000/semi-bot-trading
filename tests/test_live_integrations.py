@@ -249,6 +249,7 @@ class LiveIntegrationTest(unittest.TestCase):
 
         self.assertEqual(1, len(alerts))
         self.assertIn("[RECOVERY] Bullish + Bearish", message)
+        self.assertIn("Close: 100.0  Recovery: Bullish 3 | Bearish 3  At:", message)
         self.assertIn("Bullish 3.00x | Bearish 3.00x", message)
 
     def test_manual_ai_setup_alert_is_suppressed(self) -> None:
