@@ -82,6 +82,33 @@ class H1ImpulseRetestV1Test(unittest.TestCase):
         self.assertEqual(2.5, result["risk_reward"])
         self.assertIn("0.50R", result["target_plan"]["fallback_reason"])
 
+    def test_wave_targets_allow_risk_reward_above_four(self) -> None:
+        preview = {
+            "direction": "short",
+            "entry": 4412.046,
+            "stop_loss": 4421.98508,
+            "take_profit": 4387.1983,
+            "risk_reward": 2.5,
+            "signal_candle_close_time": "2026-09-01T09:00:00+00:00",
+        }
+        metrics = {
+            "strength": {
+                "down_median_price": 64.547,
+                "down_samples": 4,
+                "market_state": "rotational",
+                "control": "balanced",
+                "latest": {"direction": "up", "price_move": 45.983, "bars": 10},
+            }
+        }
+
+        safe = apply_h1_impulse_target_mode(preview.copy(), metrics, requested_mode="wave_safe")
+        base = apply_h1_impulse_target_mode(preview.copy(), metrics, requested_mode="wave_base")
+
+        self.assertEqual("wave_safe", safe["target_mode"])
+        self.assertAlmostEqual(4.05891, safe["risk_reward"], places=5)
+        self.assertEqual("wave_base", base["target_mode"])
+        self.assertAlmostEqual(6.49426, base["risk_reward"], places=5)
+
     def test_marker_layer_separates_body_candidate_from_fully_eligible_signal(self) -> None:
         candles = [
             candle("2026-08-20T09:00:00+00:00", 100, 105, 95, 100),

@@ -182,6 +182,7 @@ export async function revalidateH1Impulse(payload: {
   entry: number;
   stopLoss: number;
   takeProfit: number;
+  targetMode?: H1ImpulseTargetMode;
 }): Promise<H1ImpulseRevalidation> {
   const response = await authFetch("/api/playbooks/h1-impulse-retest/revalidate", {
     method: "POST",
@@ -193,6 +194,7 @@ export async function revalidateH1Impulse(payload: {
       entry: payload.entry,
       stop_loss: payload.stopLoss,
       take_profit: payload.takeProfit,
+      target_mode: payload.targetMode ?? "fixed_rr",
     }),
   });
   if (!response.ok) {

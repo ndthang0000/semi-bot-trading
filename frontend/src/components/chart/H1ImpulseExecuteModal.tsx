@@ -1,7 +1,7 @@
 import { Loader2, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { approveManualAiPlan, fetchManualAiWorkers, importManualAiPlans, type ManualAiWorker } from "../../api/manualAi";
-import { revalidateH1Impulse, type H1ImpulseRevalidation } from "../../api/h1Impulse";
+import { revalidateH1Impulse, type H1ImpulseRevalidation, type H1ImpulseTargetMode } from "../../api/h1Impulse";
 import type { SetupCandidate } from "../../types";
 import { reviewH1Execution } from "./h1ExecutionReview";
 
@@ -49,7 +49,10 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
   );
   const signalTime = String(candidate.metadata.signal_candle_time ?? "");
   const entrySource = String(candidate.metadata.entry_source ?? "strategy_calculated");
-  const targetMode = String(candidate.metadata.target_mode ?? "custom");
+  const rawTargetMode = candidate.metadata.target_mode;
+  const targetMode: H1ImpulseTargetMode = rawTargetMode === "wave_safe" || rawTargetMode === "wave_base"
+    ? rawTargetMode
+    : "fixed_rr";
   const executionReview = useMemo(() => reviewH1Execution(candidate), [candidate]);
   const requiresOverride = executionReview.softBlockedReasons.length > 0;
   const renewedFromPlanId = candidate.metadata.execution_plan === true
@@ -86,6 +89,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
       entry: candidate.entry,
       stopLoss: candidate.stop_loss,
       takeProfit: candidate.take_profit[0],
+      targetMode,
     }).then((result) => {
       if (!active) return;
       setRevalidation(result);
@@ -96,7 +100,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
       if (active) setRevalidating(false);
     });
     return () => { active = false; };
-  }, [candidate.direction, candidate.entry, candidate.stop_loss, candidate.symbol, candidate.take_profit, signalTime]);
+  }, [candidate.direction, candidate.entry, candidate.stop_loss, candidate.symbol, candidate.take_profit, signalTime, targetMode]);
 
   const submit = async () => {
     if (candidate.entry === null || candidate.stop_loss === null || typeof candidate.take_profit[0] !== "number") return;
@@ -110,6 +114,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
         entry: candidate.entry,
         stopLoss: candidate.stop_loss,
         takeProfit: candidate.take_profit[0],
+        targetMode,
       });
       setRevalidation(latestRevalidation);
       let planId = draftPlanId;

@@ -57,4 +57,20 @@ describe("H1 execution review", () => {
 
     expect(review.hardBlockedReasons).not.toContain("Signal has expired.");
   });
+
+  it("allows wave targets above four R", () => {
+    const review = reviewH1Execution(candidate({
+      entry: 100,
+      stop_loss: 90,
+      take_profit: [150],
+      risk_reward: 5,
+      metadata: {
+        ...candidate().metadata,
+        target_mode: "wave_base",
+      },
+    }));
+
+    expect(review.hardBlockedReasons).not.toContain("Risk:reward 5.00 must be between 1.00 and 4.00.");
+    expect(review.hardBlockedReasons).toEqual([]);
+  });
 });

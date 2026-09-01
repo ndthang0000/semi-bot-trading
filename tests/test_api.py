@@ -8,6 +8,7 @@ from pathlib import Path
 from tests.helpers import TemporaryDirectory
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from semi_bot_trading.api import create_app, validate_manual_ai_levels
@@ -47,6 +48,27 @@ class ApiTest(unittest.TestCase):
         )
 
         self.assertAlmostEqual(1.29884, rr, places=5)
+
+    def test_h1_wave_target_accepts_rr_above_fixed_rr_ceiling(self) -> None:
+        rr = validate_manual_ai_levels(
+            "sell",
+            entry_price=4412.046,
+            stop_loss=4421.98508,
+            take_profit=4347.499,
+            playbook="h1_impulse_retest_v1",
+            target_mode="wave_base",
+        )
+
+        self.assertAlmostEqual(6.49426, rr, places=5)
+        with self.assertRaises(HTTPException):
+            validate_manual_ai_levels(
+                "sell",
+                entry_price=4412.046,
+                stop_loss=4421.98508,
+                take_profit=4347.499,
+                playbook="h1_impulse_retest_v1",
+                target_mode="fixed_rr",
+            )
 
     def test_h1_impulse_preview_is_read_only_and_uses_historical_atr(self) -> None:
         with TemporaryDirectory() as temp_dir:

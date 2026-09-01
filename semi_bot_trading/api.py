@@ -225,8 +225,10 @@ def manual_ai_entry_source(raw_payload: dict[str, Any], client_id: str) -> str:
     return "human_custom"
 
 
-def playbook_risk_reward_limits(playbook: str) -> tuple[float, float]:
+def playbook_risk_reward_limits(playbook: str, target_mode: str | None = None) -> tuple[float, float | None]:
     if playbook == "h1_impulse_retest_v1":
+        if target_mode in {"wave_safe", "wave_base"}:
+            return (1.0, None)
         return (1.0, 4.0)
     return (1.5, 4.0)
 
@@ -237,6 +239,7 @@ def validate_manual_ai_levels(
     stop_loss: float,
     take_profit: float,
     playbook: str = "manual_ai_v1",
+    target_mode: str | None = None,
 ) -> float:
     valid_geometry = (
         stop_loss < entry_price < take_profit
@@ -247,12 +250,13 @@ def validate_manual_ai_levels(
         raise HTTPException(status_code=422, detail=f"Invalid {side} price geometry")
     risk = abs(entry_price - stop_loss)
     risk_reward = abs(take_profit - entry_price) / risk
-    minimum_rr, maximum_rr = playbook_risk_reward_limits(playbook)
-    if not minimum_rr <= risk_reward <= maximum_rr:
+    minimum_rr, maximum_rr = playbook_risk_reward_limits(playbook, target_mode)
+    if risk_reward < minimum_rr or (maximum_rr is not None and risk_reward > maximum_rr):
+        range_text = f"at least {minimum_rr:.1f}" if maximum_rr is None else f"between {minimum_rr:.1f} and {maximum_rr:.1f}"
         raise HTTPException(
             status_code=422,
             detail=(
-                f"{playbook} risk/reward must be between {minimum_rr:.1f} and {maximum_rr:.1f}; "
+                f"{playbook} risk/reward must be {range_text}; "
                 f"calculated={risk_reward:.3f}"
             ),
         )
@@ -339,13 +343,15 @@ def validate_manual_ai_envelope(
         risk = abs(candidate.entry_price - candidate.stop_loss)
         reward = abs(candidate.take_profit - candidate.entry_price)
         risk_reward = reward / risk
-        minimum_rr, maximum_rr = playbook_risk_reward_limits(request.playbook)
-        if not minimum_rr <= risk_reward <= maximum_rr:
+        target_mode = str(request.market_context.get("target_mode") or "fixed_rr")
+        minimum_rr, maximum_rr = playbook_risk_reward_limits(request.playbook, target_mode)
+        if risk_reward < minimum_rr or (maximum_rr is not None and risk_reward > maximum_rr):
+            range_text = f"at least {minimum_rr:.1f}" if maximum_rr is None else f"between {minimum_rr:.1f} and {maximum_rr:.1f}"
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"candidates[{index}] {request.playbook} risk/reward must be between "
-                    f"{minimum_rr:.1f} and {maximum_rr:.1f}; calculated={risk_reward:.3f}"
+                    f"candidates[{index}] {request.playbook} risk/reward must be {range_text}; "
+                    f"calculated={risk_reward:.3f}"
                 ),
             )
         if request.playbook == "h1_impulse_retest_v1":
@@ -797,6 +803,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             body.stop_loss,
             body.take_profit,
             "h1_impulse_retest_v1",
+            body.target_mode,
         )
         preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
         with connect(config.database) as conn:
@@ -2511,15 +2518,18 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
             raw_payload = json_loads(row["raw_payload_json"], {})
             plan_playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
+            market_context = raw_payload.get("market_context") if isinstance(raw_payload, dict) else None
+            current_target_mode = str(market_context.get("target_mode") or "fixed_rr") if isinstance(market_context, dict) else "fixed_rr"
+            effective_target_mode = request.target_mode or current_target_mode
             risk_reward = validate_manual_ai_levels(
                 str(row["side"]),
                 request.entry_price,
                 request.stop_loss,
                 request.take_profit,
                 plan_playbook,
+                effective_target_mode,
             )
             if plan_playbook == "h1_impulse_retest_v1":
-                market_context = raw_payload.get("market_context") if isinstance(raw_payload, dict) else None
                 try:
                     atr = float(market_context.get("atr") or 0) if isinstance(market_context, dict) else 0
                 except (TypeError, ValueError):

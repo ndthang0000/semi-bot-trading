@@ -765,8 +765,11 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
       return;
     }
     const effectiveRr = rewardDistance / risk;
-    if (effectiveRr < 1 || effectiveRr > 4) {
-      showToast("error", `${option.label} tạo ${effectiveRr.toFixed(2)}R; H1 Impulse chỉ cho phép 1.00R–4.00R.`);
+    const waveTarget = option.mode === "wave_safe" || option.mode === "wave_base";
+    if (effectiveRr < 1 || (!waveTarget && effectiveRr > 4)) {
+      showToast("error", waveTarget
+        ? `${option.label} tạo ${effectiveRr.toFixed(2)}R; Wave target yêu cầu tối thiểu 1.00R.`
+        : `${option.label} tạo ${effectiveRr.toFixed(2)}R; Fixed RR chỉ cho phép 1.00R–4.00R.`);
       return;
     }
     const takeProfit = roundSetupPrice(candidate.direction === "long"

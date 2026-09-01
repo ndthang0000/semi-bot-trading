@@ -769,9 +769,14 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     }
     const isH1Impulse = edit.candidate.playbook === "h1_impulse_retest_v1";
     const rrMin = isH1Impulse ? 1.0 : 1.5;
-    const rrMax = 4;
-    if (rr < rrMin || rr > rrMax) {
-      setManualAiLevelEdit({ ...edit, error: `R:R mới là ${rr.toFixed(2)}R; playbook chỉ cho phép ${rrMin.toFixed(1)}R–${rrMax.toFixed(1)}R.` });
+    const targetMode = typeof edit.candidate.metadata.target_mode === "string" ? edit.candidate.metadata.target_mode : "fixed_rr";
+    const waveTarget = isH1Impulse && (targetMode === "wave_safe" || targetMode === "wave_base");
+    const rrMax = waveTarget ? null : 4;
+    if (rr < rrMin || (rrMax !== null && rr > rrMax)) {
+      setManualAiLevelEdit({
+        ...edit,
+        error: `R:R mới là ${rr.toFixed(2)}R; playbook chỉ cho phép ${rrMax === null ? `từ ${rrMin.toFixed(1)}R trở lên` : `${rrMin.toFixed(1)}R–${rrMax.toFixed(1)}R`}.`,
+      });
       return;
     }
     setManualAiLevelEdit({ ...edit, saving: true, error: null });
@@ -2493,8 +2498,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           saving={manualAiLevelEdit.saving}
           entrySource={manualAiLevelEdit.entrySource}
           entryOptions={readEntryOptions(manualAiLevelEdit.candidate.metadata.entry_options)}
-          rrMin={1.5}
-          rrMax={4}
+          rrMin={manualAiLevelEdit.candidate.playbook === "h1_impulse_retest_v1" ? 1 : 1.5}
+          rrMax={manualAiLevelEdit.candidate.playbook === "h1_impulse_retest_v1" && ["wave_safe", "wave_base"].includes(String(manualAiLevelEdit.candidate.metadata.target_mode)) ? null : 4}
           onEntrySourceSelect={selectSetupEntrySource}
           onLevelsChange={updateManualAiEditLevels}
           onApply={() => { void applyManualAiLevelEdit(); }}

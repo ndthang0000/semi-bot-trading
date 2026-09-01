@@ -162,6 +162,7 @@ class H1ImpulseRevalidateRequest(BaseModel):
     entry: float = Field(gt=0)
     stop_loss: float = Field(gt=0)
     take_profit: float = Field(gt=0)
+    target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"
 
 
 class ZoneOverrideRequest(BaseModel):

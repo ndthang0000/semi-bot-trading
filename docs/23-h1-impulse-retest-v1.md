@@ -108,9 +108,11 @@ RR = abs(TP - Entry) / abs(Entry - SL)
 
 Calculator chỉ dùng structure point có `confirmed_at <= signal close`, yêu cầu
 ít nhất ba completed legs cùng hướng và lưu snapshot baseline/sample/market state
-vào `target_plan`. Nếu thiếu mẫu, wave state chưa xác định, trend wave chạy ngược
-hướng setup, hoặc geometry wave nằm ngoài `1.0–4.0R`, requested wave mode fallback
-rõ ràng về `fixed_rr`; calculator không kéo Wave TP ra xa chỉ để đạt RR tối thiểu.
+vào `target_plan`. Wave Safe/Base yêu cầu tối thiểu `1.0R` nhưng không có trần
+R:R; target trên `4.0R` vẫn được hiển thị, chọn và gửi xuyên suốt execution flow.
+Nếu thiếu mẫu, wave state chưa xác định, trend wave chạy ngược hướng setup hoặc
+geometry wave dưới `1.0R`, requested wave mode fallback rõ ràng về `fixed_rr`;
+calculator không kéo Wave TP ra xa chỉ để đạt RR tối thiểu.
 
 Fixed RR vẫn dùng công thức:
 

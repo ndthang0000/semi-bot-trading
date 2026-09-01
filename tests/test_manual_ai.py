@@ -216,16 +216,23 @@ class ManualAiApiTest(unittest.TestCase):
 
             accepted_rr = client.patch(
                 f"/api/manual-ai/plans/{plan['id']}/levels",
-                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2041, "entry_source": "human_custom"},
+                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2041, "entry_source": "human_custom", "target_mode": "fixed_rr"},
             )
             self.assertEqual(200, accepted_rr.status_code, accepted_rr.text)
             self.assertTrue(accepted_rr.json()["plans"][0]["partial_take_profit"]["enabled"])
 
             rejected_rr = client.patch(
                 f"/api/manual-ai/plans/{plan['id']}/levels",
-                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2042, "entry_source": "human_custom"},
+                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2042, "entry_source": "human_custom", "target_mode": "fixed_rr"},
             )
             self.assertEqual(422, rejected_rr.status_code)
+
+            wave_above_four = client.patch(
+                f"/api/manual-ai/plans/{plan['id']}/levels",
+                json={"entry_price": 2001, "stop_loss": 1991, "take_profit": 2061, "entry_source": "previous_h1_high", "target_mode": "wave_base"},
+            )
+            self.assertEqual(200, wave_above_four.status_code, wave_above_four.text)
+            self.assertEqual(6.0, wave_above_four.json()["plans"][0]["risk_reward"])
 
     def test_h1_armed_expiry_edit_requests_safe_broker_replace(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -17,7 +17,7 @@ type Props = {
   entrySource?: string;
   entryOptions?: Array<{ source: string; label: string; price: number }>;
   rrMin?: number;
-  rrMax?: number;
+  rrMax?: number | null;
   onEntrySourceSelect?: (source: string, price: number) => void;
   onLevelsChange: (levels: ManualAiEditableLevels) => void;
   onApply: () => void;
@@ -31,7 +31,7 @@ export function ManualAiLevelEditDialog({ playbook = "manual_ai_v1", side, statu
   const validGeometry = side === "buy"
     ? levels.stopLoss < levels.entry && levels.entry < levels.takeProfit
     : levels.takeProfit < levels.entry && levels.entry < levels.stopLoss;
-  const levelsValid = validGeometry && rr >= rrMin && rr <= rrMax;
+  const levelsValid = validGeometry && rr >= rrMin && (rrMax === null || rr <= rrMax);
   const brokerReplace = status === "armed" || status === "replace_requested";
   const h1Impulse = playbook === "h1_impulse_retest_v1";
   return (
@@ -45,7 +45,7 @@ export function ManualAiLevelEditDialog({ playbook = "manual_ai_v1", side, statu
           </p></div>
           <div className={`shrink-0 rounded border px-2 py-1 text-xs font-black ${levelsValid ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "border-rose-400/30 bg-rose-400/10 text-rose-200"}`}>{rr.toFixed(2)}R</div>
         </div>
-        {!levelsValid ? <div className="mt-2 text-[10px] font-medium text-rose-300">Kiểm tra lại thứ tự giá và giữ R:R trong khoảng {rrMin.toFixed(1)}R–{rrMax.toFixed(1)}R.</div> : null}
+        {!levelsValid ? <div className="mt-2 text-[10px] font-medium text-rose-300">Kiểm tra lại thứ tự giá và giữ R:R {rrMax === null ? `từ ${rrMin.toFixed(1)}R trở lên` : `trong khoảng ${rrMin.toFixed(1)}R–${rrMax.toFixed(1)}R`}.</div> : null}
         {entryOptions.length > 0 && onEntrySourceSelect ? (
           <div className="mt-2">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-cyan-200">Entry source</div>

@@ -32,7 +32,6 @@ class H1ImpulsePreviewConfig:
 DEFAULT_H1_IMPULSE_PREVIEW_CONFIG = H1ImpulsePreviewConfig()
 H1_IMPULSE_TARGET_MODES = {"fixed_rr", "wave_safe", "wave_base"}
 H1_IMPULSE_MIN_TARGET_RR = 1.0
-H1_IMPULSE_MAX_TARGET_RR = 4.0
 H1_IMPULSE_MIN_WAVE_SAMPLES = 3
 
 
@@ -106,6 +105,7 @@ def apply_h1_impulse_target_mode(
             baseline_move=baseline_move,
             multiplier=1.0,
             sample_count=sample_count,
+            maximum_rr=None,
         )
     )
 
@@ -124,6 +124,7 @@ def apply_h1_impulse_target_mode(
             baseline_move=baseline_move,
             multiplier=multiplier,
             sample_count=sample_count,
+            maximum_rr=None,
         )
     )
 
@@ -175,14 +176,17 @@ def _target_option(
     baseline_move: float | None = None,
     multiplier: float | None = None,
     sample_count: int | None = None,
+    maximum_rr: float | None = 4.0,
 ) -> dict[str, Any]:
     rr = reward_distance / stop_distance if reward_distance is not None and stop_distance > 0 else None
-    if available and (rr is None or rr < H1_IMPULSE_MIN_TARGET_RR or rr > H1_IMPULSE_MAX_TARGET_RR):
+    if available and (rr is None or rr < H1_IMPULSE_MIN_TARGET_RR or (maximum_rr is not None and rr > maximum_rr)):
         available = False
-        reason = (
-            f"Wave geometry produces {rr:.2f}R; allowed execution range is "
-            f"{H1_IMPULSE_MIN_TARGET_RR:.1f}R–{H1_IMPULSE_MAX_TARGET_RR:.1f}R."
+        allowed_range = (
+            f"{H1_IMPULSE_MIN_TARGET_RR:.1f}R or higher"
+            if maximum_rr is None
+            else f"{H1_IMPULSE_MIN_TARGET_RR:.1f}R–{maximum_rr:.1f}R"
         )
+        reason = f"Wave geometry produces {rr:.2f}R; allowed execution range is {allowed_range}."
     price = _target_price(direction, entry, reward_distance) if reward_distance is not None else None
     return {
         "mode": mode,
