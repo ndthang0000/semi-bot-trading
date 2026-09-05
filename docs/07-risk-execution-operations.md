@@ -266,7 +266,7 @@ Tier 1/2 van hoat dong doc lap va co the rong hon danh sach FTMO.
 
 Live worker quan ly lenh dang mo bang rule mac dinh:
 
-- Khi trade dat `+1.25R`, dong `50%` volume.
+- Khi trade dat `+1.0R`, dong `40%` volume.
 - Sau khi partial close thanh cong, doi SL cua position con lai ve entry, cong/tru buffer neu co.
 - Phan con lai giu TP cuoi cua setup; `zone_reaction_v2` hien tai dung `2.0R`.
 - Metadata `trade_orders.metadata_json.partial_take_profit` ghi `armed/done`, trigger price, closed volume va BE SL de UI/debug.
@@ -275,8 +275,8 @@ Config `.env`:
 
 ```text
 PARTIAL_TAKE_PROFIT_ENABLED=true
-PARTIAL_TAKE_PROFIT_R=1.25
-PARTIAL_TAKE_PROFIT_FRACTION=0.5
+PARTIAL_TAKE_PROFIT_R=1.0
+PARTIAL_TAKE_PROFIT_FRACTION=0.4
 PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 ```
 
@@ -315,8 +315,8 @@ position duoc human dong va candidate detector van con tra ve `eligible`.
 `pending`/`sent` chan request trung trong luc order dang xu ly; chi request
 `failed` hoac `cancelled` truoc khi co execution thanh cong moi duoc retry.
 
-Chart inspector cho phep doi Partial TP theo tung account: bat/tat va chon moc
-tu `0.5R` den `2.0R`. Thay doi duoc worker ap dung cho tat ca lenh live dang
+Chart inspector cho phep doi Partial TP theo tung account: bat/tat, chon moc
+tu `0.5R` den `2.0R` va ty le dong tu `25%` den `50%`. Thay doi duoc worker ap dung chi cho lenh live Zone Reaction V2 dang
 `armed` (chua partial) va cac lenh tao sau do; lich su lenh da partial/da dong
 khong bi viet lai. `.env` la gia tri khoi tao khi account chua co UI override.
 

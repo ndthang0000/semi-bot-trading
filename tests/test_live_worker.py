@@ -1095,6 +1095,41 @@ class TestPartialTakeProfit(unittest.TestCase):
         row = self._conn.execute("SELECT metadata_json FROM trade_orders WHERE id = 'order-partial'").fetchone()
         return json.loads(row["metadata_json"])
 
+    def test_other_playbooks_do_not_inherit_account_partial(self):
+        self._insert_open_order()
+        for playbook in ("manual_ai_v1", "h1_impulse_retest_v1", "sr_breakout_v1"):
+            with self.subTest(playbook=playbook):
+                self._conn.execute("UPDATE trade_ideas SET playbook = ?", (playbook,))
+                before = self._metadata()
+                client = _fake_client(current_price=3030.0, open_tickets={"11111"})
+                client.get_open_positions.return_value = [
+                    {"ticket": "11111", "volume": 0.02, "sl": 2980.0}
+                ]
+                manage_open_trade_partial_take_profit(
+                    self._conn, self._config, self._env, client, "XAUUSDm"
+                )
+                client.close_partial_position.assert_not_called()
+                self.assertEqual(before, self._metadata())
+
+    def test_other_playbook_locked_partial_keeps_own_settings(self):
+        self._insert_open_order()
+        self._conn.execute("UPDATE trade_ideas SET playbook = 'h1_impulse_retest_v1'")
+        metadata = self._metadata()
+        metadata["partial_take_profit"]["locked"] = True
+        self._conn.execute(
+            "UPDATE trade_orders SET metadata_json = ?", (json.dumps(metadata),)
+        )
+        client = _fake_client(current_price=3030.0, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "volume": 0.02, "sl": 2980.0}
+        ]
+        manage_open_trade_partial_take_profit(
+            self._conn, self._config, replace(self._env, partial_take_profit_enabled=False),
+            client, "XAUUSDm"
+        )
+        client.close_partial_position.assert_called_once()
+        self.assertEqual(1.25, self._metadata()["partial_take_profit"]["trigger_r"])
+
     def test_partial_take_profit_waits_until_trigger_price(self):
         self._insert_open_order()
         client = _fake_client(current_price=3024.0, open_tickets={"11111"})

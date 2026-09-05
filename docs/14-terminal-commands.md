@@ -690,8 +690,8 @@ LIVE_EVALUATE_INTRABAR=false
 LIVE_SYNC_CANDLES=true
 LIVE_RUN_DETECTORS=true
 PARTIAL_TAKE_PROFIT_ENABLED=true
-PARTIAL_TAKE_PROFIT_R=1.25
-PARTIAL_TAKE_PROFIT_FRACTION=0.5
+PARTIAL_TAKE_PROFIT_R=1.0
+PARTIAL_TAKE_PROFIT_FRACTION=0.4
 PARTIAL_TAKE_PROFIT_BE_BUFFER=0.0
 ```
 
@@ -753,7 +753,7 @@ candidates on every poll using MT5's still-forming live candle. This helps catch
 wick touches/rejections before the candle closes, while detectors still update
 only on closed candles.
 
-Partial TP/BE defaults close 50% at `+1.25R`, then move the remaining position's
+Partial TP/BE defaults close 40% at `+1.0R`, then move the remaining position's
 SL to entry. Keep `PARTIAL_TAKE_PROFIT_ENABLED=true` for the current operating
 plan.
 

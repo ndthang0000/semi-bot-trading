@@ -394,7 +394,7 @@ def _build_candidate(
             "max_sweep_atr": config.liquidity_sweep_reclaim_v1_max_sweep_atr,
             "partial_take_profit": {
                 "enabled": True,
-                "close_fraction": 0.5,
+                "close_fraction": 0.4,
                 "move_stop_to": "breakeven",
                 "breakeven_buffer": 0.0,
             },

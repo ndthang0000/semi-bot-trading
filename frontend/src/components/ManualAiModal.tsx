@@ -26,7 +26,7 @@ const QUICK_EXPIRY_OPTIONS = [
   { label: "48H", minutes: 2_880 },
 ] as const;
 const PARTIAL_TRIGGER_OPTIONS = [0.75, 1, 1.25, 1.5] as const;
-const PARTIAL_CLOSE_OPTIONS = [0.25, 0.33, 0.5] as const;
+const PARTIAL_CLOSE_OPTIONS = [0.25, 0.33, 0.4, 0.5] as const;
 
 const inputClass = "h-10 rounded-lg border border-ink-600 bg-ink-950 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400";
 
@@ -42,8 +42,8 @@ export function ManualAiModal({ currentPrice, open, onChanged, onClose }: Props)
   const [expiresInMinutes, setExpiresInMinutes] = useState("");
   const [reason, setReason] = useState("");
   const [partialEnabled, setPartialEnabled] = useState(true);
-  const [partialTriggerR, setPartialTriggerR] = useState(1.25);
-  const [partialCloseFraction, setPartialCloseFraction] = useState(0.5);
+  const [partialTriggerR, setPartialTriggerR] = useState(1);
+  const [partialCloseFraction, setPartialCloseFraction] = useState(0.4);
   const [partialMoveStopTo, setPartialMoveStopTo] = useState<"breakeven" | "unchanged">("breakeven");
   const [partialBreakevenBuffer, setPartialBreakevenBuffer] = useState("0");
   const [plans, setPlans] = useState<ManualAiPlan[]>([]);

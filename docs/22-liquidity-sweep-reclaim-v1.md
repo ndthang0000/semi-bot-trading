@@ -70,7 +70,7 @@ to the M15 ATR snapshot taken at the first touch:
 | `> 3.0` | no trade; state becomes `invalidated_risk` |
 
 Every Liquidity Sweep setup locks partial management on: the account's current
-partial trigger milestone is used, 50% of the position is closed there, and the
+partial trigger milestone is used, 40% of the position is closed there, and the
 remaining stop is moved to the exact entry price. Other playbooks keep their own
 partial settings.
 

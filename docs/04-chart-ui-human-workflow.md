@@ -313,9 +313,10 @@ Khi click trực tiếp một trade overlay trên chart, Inspector mở tab Zone
 review lệnh trong context của zone. Nếu user chủ động chọn trade từ tab Trades,
 tab Trades vẫn được giữ nguyên để tiếp tục duyệt lịch sử.
 
-Voi live trade dang `filled` hoac `pending_fill`, trade inspector co control Partial TP theo `account_label`:
-bat/tat automation, nhap trigger tu `0.5R` den `2.0R`, va shortcut `1.00R` /
-`1.25R`. Setting ap dung cho moi live trade dang armed va cac lenh moi cua
+Voi live trade Zone Reaction V2 dang `filled` hoac `pending_fill`, trade inspector co control Partial TP theo `account_label`:
+bat/tat automation, nhap trigger tu `0.5R` den `2.0R`, chon ty le dong tu `25%`
+den `50%`, va shortcut `1.00R` / `1.25R`. Mac dinh dong `40%` tai `1.00R` roi
+dua phan con lai ve break-even. Setting chi ap dung cho live trade Zone Reaction V2 dang armed va cac lenh Zone Reaction V2 moi cua
 account; trade da partial hoac da dong chi hien thi snapshot lich su, khong bi
 viet lai. Neu ha trigger xuong duoi muc loi nhuan hien tai, worker co the partial
 ngay o vong poll ke tiep.
@@ -327,6 +328,13 @@ trade đã đóng, backtest hoặc chưa fill không hiển thị action. `Parti
 dùng volume position hiện tại, đánh dấu partial hoàn tất trước khi retry BE để
 không thể đóng lặp thêm 50%. Cả `Partial 50% + BE` và `Break even` đều dùng
 broker entry, giữ TP hiện tại và không kéo lùi một SL đã tốt hơn entry.
+
+Hiện tại ba action quản lý thủ công này được khóa bằng discipline guard ở UI để
+trader không can thiệp cảm tính vào lệnh đang chạy. Inspector vẫn hiển thị các
+nút ở trạng thái disabled và giải thích rằng lệnh tiếp tục theo SL/TP cùng
+Partial TP tự động. API/worker contract được giữ nguyên để có thể mở lại sau này
+khi trader chủ động bỏ discipline guard; weekend flatten và automation quản lý
+lệnh không bị ảnh hưởng.
 
 ## Context strip
 

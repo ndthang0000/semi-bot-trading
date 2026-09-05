@@ -11,6 +11,10 @@ import type { ChartPayload, TradeHistoryResponse, TradeOrder, TradeReview, Trade
 
 type ToastKind = "success" | "error";
 
+// Temporary discipline guard: keep the execution path intact so manual trade
+// management can be restored later without changing the worker/API contract.
+const MANUAL_TRADE_MANAGEMENT_ENABLED = false;
+
 type StateMachineStep = {
   key: string;
   label: string;
@@ -20,6 +24,7 @@ type StateMachineStep = {
 type AccountPartialTakeProfitSettings = {
   enabled: boolean;
   trigger_r: number;
+  fraction: number;
 };
 
 async function fetchAccountPartialTakeProfit(accountLabel: string): Promise<AccountPartialTakeProfitSettings> {
@@ -185,6 +190,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
           action={confirmAction}
           breakevenDone={breakevenApplied || stopAtBreakEven}
           busy={managementMutation.isPending}
+          disabled={!MANUAL_TRADE_MANAGEMENT_ENABLED}
           partialDone={partialDone}
           onCancel={() => setConfirmAction(null)}
           onConfirm={() => {
@@ -241,7 +247,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         </div>
       ) : null}
 
-      {trade.source === "live" && trade.account_label && ["filled", "pending_fill"].includes(trade.status) ? (
+      {trade.playbook === "zone_reaction_v2" && trade.source === "live" && trade.account_label && ["filled", "pending_fill"].includes(trade.status) ? (
         <PartialTakeProfitControls accountLabel={trade.account_label} showToast={showToast} />
       ) : null}
 
@@ -299,6 +305,7 @@ function TradeManagementActions({
   action,
   breakevenDone,
   busy,
+  disabled,
   partialDone,
   onCancel,
   onConfirm,
@@ -307,6 +314,7 @@ function TradeManagementActions({
   action: TradeManagementAction | null;
   breakevenDone: boolean;
   busy: boolean;
+  disabled: boolean;
   partialDone: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -317,13 +325,17 @@ function TradeManagementActions({
     <div className="grid gap-2 rounded-md border border-amber-300/25 bg-amber-300/[0.04] p-3">
       <div>
         <div className="text-xs font-semibold text-amber-100">Manage live position</div>
-        <div className="mt-0.5 text-[10px] text-slate-500">Actions are sent to the worker for this trade only.</div>
+        <div className="mt-0.5 text-[10px] text-slate-500">
+          {disabled
+            ? "Discipline lock is active. The position will follow its planned SL/TP and automated management."
+            : "Actions are sent to the worker for this trade only."}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <button
           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-amber-300/35 bg-amber-300/[0.08] px-2 text-xs font-semibold text-amber-100 hover:bg-amber-300/15 disabled:cursor-not-allowed disabled:opacity-35"
-          disabled={busy || partialDone}
-          title={partialDone ? "Partial profit has already been taken" : "Close 50% and move the remaining stop to entry"}
+          disabled={disabled || busy || partialDone}
+          title={disabled ? "Disabled by discipline lock" : partialDone ? "Partial profit has already been taken" : "Close 50% and move the remaining stop to entry"}
           type="button"
           onClick={() => onSelect("partial_50_be")}
         >
@@ -331,8 +343,8 @@ function TradeManagementActions({
         </button>
         <button
           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-cyan-300/35 bg-cyan-300/[0.08] px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-35"
-          disabled={busy || breakevenDone}
-          title={breakevenDone ? "Stop loss is already at entry or better" : "Move stop loss to the broker entry price"}
+          disabled={disabled || busy || breakevenDone}
+          title={disabled ? "Disabled by discipline lock" : breakevenDone ? "Stop loss is already at entry or better" : "Move stop loss to the broker entry price"}
           type="button"
           onClick={() => onSelect("break_even")}
         >
@@ -340,14 +352,15 @@ function TradeManagementActions({
         </button>
         <button
           className="col-span-2 inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-rose-400/45 bg-rose-500/[0.08] px-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-35"
-          disabled={busy}
+          disabled={disabled || busy}
+          title={disabled ? "Disabled by discipline lock" : "Close the remaining broker position at market"}
           type="button"
           onClick={() => onSelect("close_now")}
         >
           <XCircle size={14} /> Close now
         </button>
       </div>
-      {confirmation ? (
+      {!disabled && confirmation ? (
         <div className={`grid gap-2 rounded-md border p-2.5 text-xs ${action === "close_now" ? "border-rose-400/35 bg-rose-500/[0.08]" : "border-amber-300/30 bg-ink-950/70"}`}>
           <div className="font-semibold text-slate-100">{confirmation.title}</div>
           <p className="leading-relaxed text-slate-400">{confirmation.description}</p>
@@ -412,11 +425,15 @@ function PartialTakeProfitControls({
     queryFn: () => fetchAccountPartialTakeProfit(accountLabel),
     staleTime: 15_000,
   });
-  const [triggerDraft, setTriggerDraft] = useState("1.25");
+  const [triggerDraft, setTriggerDraft] = useState("1");
+  const [fractionDraft, setFractionDraft] = useState("0.4");
   const settings = settingsQuery.data;
 
   useEffect(() => {
-    if (settings) setTriggerDraft(settings.trigger_r.toString());
+    if (settings) {
+      setTriggerDraft(settings.trigger_r.toString());
+      setFractionDraft(settings.fraction.toString());
+    }
   }, [settings]);
 
   const mutation = useMutation({
@@ -424,7 +441,7 @@ function PartialTakeProfitControls({
     onSuccess: (saved) => {
       queryClient.setQueryData(["account-partial-take-profit", accountLabel], saved);
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      showToast("success", `Partial TP ${saved.enabled ? `ON at ${saved.trigger_r}R` : "OFF"} for ${accountLabel}.`);
+      showToast("success", `Partial TP ${saved.enabled ? `ON: ${Math.round(saved.fraction * 100)}% at ${saved.trigger_r}R + BE` : "OFF"} for ${accountLabel}.`);
     },
     onError: (error) => {
       showToast("error", error instanceof Error ? error.message : "Could not update Partial TP settings.");
@@ -432,20 +449,26 @@ function PartialTakeProfitControls({
   });
 
   const parsedTrigger = Number(triggerDraft);
+  const parsedFraction = Number(fractionDraft);
   const validTrigger = Number.isFinite(parsedTrigger) && parsedTrigger >= 0.5 && parsedTrigger <= 2;
+  const validFraction = Number.isFinite(parsedFraction) && parsedFraction >= 0.25 && parsedFraction <= 0.5;
   const save = (enabled: boolean) => {
     if (!validTrigger) {
       showToast("error", "Partial TP trigger must be between 0.5R and 2.0R.");
       return;
     }
-    mutation.mutate({ enabled, trigger_r: parsedTrigger });
+    if (!validFraction) {
+      showToast("error", "Partial TP fraction must be between 25% and 50%.");
+      return;
+    }
+    mutation.mutate({ enabled, trigger_r: parsedTrigger, fraction: parsedFraction });
   };
 
   return (
     <div className="grid gap-3 rounded-md border border-cyan-400/25 bg-cyan-400/[0.05] p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold text-cyan-100">Partial TP automation</div>
+          <div className="text-xs font-semibold text-cyan-100">Zone Reaction V2 · Partial TP</div>
           <div className="mt-0.5 text-[10px] text-slate-500">{accountLabel}</div>
         </div>
         <button
@@ -467,7 +490,7 @@ function PartialTakeProfitControls({
         </button>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
         <label className="grid gap-1 text-[11px] text-slate-500">
           Trigger R
           <input
@@ -480,9 +503,21 @@ function PartialTakeProfitControls({
             className="h-9 min-w-0 rounded-md border border-ink-700 bg-ink-950 px-2 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400"
           />
         </label>
+        <label className="grid gap-1 text-[11px] text-slate-500">
+          Close fraction
+          <select
+            value={fractionDraft}
+            onChange={(event) => setFractionDraft(event.target.value)}
+            className="h-9 min-w-0 rounded-md border border-ink-700 bg-ink-950 px-2 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400"
+          >
+            {[0.25, 0.33, 0.4, 0.5].map((value) => (
+              <option key={value} value={value}>{Math.round(value * 100)}%</option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
-          disabled={!settings || !validTrigger || mutation.isPending}
+          disabled={!settings || !validTrigger || !validFraction || mutation.isPending}
           onClick={() => save(settings?.enabled ?? true)}
           className="mt-[19px] h-9 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-3 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
         >

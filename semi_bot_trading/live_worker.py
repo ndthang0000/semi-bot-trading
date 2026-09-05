@@ -395,8 +395,9 @@ def refresh_account_execution_control(
         INSERT OR IGNORE INTO account_execution_controls (
             account_label, requested_enabled, effective_enabled, hard_enabled,
             worker_status, broker_symbol, partial_take_profit_enabled,
-            partial_take_profit_r, heartbeat_at, acknowledged_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?)
+            partial_take_profit_r, partial_take_profit_fraction,
+            heartbeat_at, acknowledged_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             env.account_label,
@@ -406,6 +407,7 @@ def refresh_account_execution_control(
             broker_symbol,
             int(env.partial_take_profit_enabled),
             float(env.partial_take_profit_r),
+            float(env.partial_take_profit_fraction),
             now,
             now,
             now,
@@ -423,6 +425,7 @@ def refresh_account_execution_control(
             open_bot_positions = ?, pending_bot_orders = ?, heartbeat_at = ?,
             partial_take_profit_enabled = COALESCE(partial_take_profit_enabled, ?),
             partial_take_profit_r = COALESCE(partial_take_profit_r, ?),
+            partial_take_profit_fraction = COALESCE(partial_take_profit_fraction, ?),
             acknowledged_at = ?, last_error = NULL, updated_at = ?
         WHERE account_label = ?
         """,
@@ -433,6 +436,7 @@ def refresh_account_execution_control(
             now,
             int(env.partial_take_profit_enabled),
             float(env.partial_take_profit_r),
+            float(env.partial_take_profit_fraction),
             now,
             now,
             env.account_label,
@@ -452,22 +456,29 @@ def account_execution_is_enabled(conn: Connection, env: RuntimeEnv) -> bool:
     return True if row is None else bool(row["requested_enabled"] and row["effective_enabled"])
 
 
-def account_partial_take_profit_settings(conn: Connection, env: RuntimeEnv) -> tuple[bool, float]:
+def account_partial_take_profit_settings(conn: Connection, env: RuntimeEnv) -> tuple[bool, float, float]:
     row = conn.execute(
         """
-        SELECT partial_take_profit_enabled, partial_take_profit_r
+        SELECT partial_take_profit_enabled, partial_take_profit_r,
+               partial_take_profit_fraction
         FROM account_execution_controls
         WHERE account_label = ?
         """,
         (env.account_label,),
     ).fetchone()
     if row is None:
-        return bool(env.partial_take_profit_enabled), float(env.partial_take_profit_r)
+        return (
+            bool(env.partial_take_profit_enabled),
+            float(env.partial_take_profit_r),
+            float(env.partial_take_profit_fraction),
+        )
     enabled_value = row["partial_take_profit_enabled"]
     trigger_value = row["partial_take_profit_r"]
+    fraction_value = row["partial_take_profit_fraction"]
     enabled = bool(env.partial_take_profit_enabled) if enabled_value is None else bool(enabled_value)
     trigger_r = float(env.partial_take_profit_r) if trigger_value is None else float(trigger_value)
-    return enabled, min(max(trigger_r, 0.5), 2.0)
+    fraction = float(env.partial_take_profit_fraction) if fraction_value is None else float(fraction_value)
+    return enabled, min(max(trigger_r, 0.5), 2.0), min(max(fraction, 0.25), 0.5)
 
 
 def run_manual_trade_guard_iteration(
@@ -2984,7 +2995,7 @@ def execute_candidate(
         trade_metadata["account_label"] = env.account_label
         trade_metadata["account_profile"] = env.account_profile
         trade_metadata["broker_symbol"] = broker_symbol
-        partial_enabled, partial_trigger_r = account_partial_take_profit_settings(conn, env)
+        partial_enabled, partial_trigger_r, partial_fraction = account_partial_take_profit_settings(conn, env)
         candidate_metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
         candidate_partial = candidate_metadata.get("partial_take_profit")
         locked_partial = candidate_partial if isinstance(candidate_partial, dict) else None
@@ -2996,9 +3007,9 @@ def execute_candidate(
                 stop_loss=exec_stop,
                 take_profit=exec_take_profit[0],
                 quantity=volume,
-                enabled=bool(locked_partial.get("enabled")) if locked_partial is not None else partial_enabled,
+                enabled=bool(locked_partial.get("enabled")) if locked_partial is not None else (partial_enabled and candidate.get("playbook") == "zone_reaction_v2"),
                 trigger_r=float(locked_partial.get("trigger_r", partial_trigger_r)) if locked_partial is not None else partial_trigger_r,
-                fraction=float(locked_partial.get("close_fraction", env.partial_take_profit_fraction)) if locked_partial is not None else None,
+                fraction=float(locked_partial.get("close_fraction", partial_fraction)) if locked_partial is not None else partial_fraction,
                 breakeven_buffer=float(locked_partial.get("breakeven_buffer", env.partial_take_profit_be_buffer)) if locked_partial is not None else None,
                 move_stop_to=str(locked_partial.get("move_stop_to", "breakeven")) if locked_partial is not None else "breakeven",
                 locked=locked_partial is not None,
@@ -3322,17 +3333,19 @@ def manage_open_trade_partial_take_profit(
     client: MT5BrokerClient,
     broker_symbol: str,
 ) -> None:
-    """Partial-close 50% at the configured R milestone and move the rest to BE."""
+    """Partial-close the configured fraction at its R milestone and move the rest to BE."""
     if not env.execution_enabled or not broker_symbol:
         return
-    account_enabled, account_trigger_r = account_partial_take_profit_settings(conn, env)
+    account_enabled, account_trigger_r, account_fraction = account_partial_take_profit_settings(conn, env)
     rows = conn.execute(
         """
-        SELECT id, side, entry_price, stop_loss, take_profit_json, quantity, metadata_json
-        FROM trade_orders
-        WHERE symbol = ?
+        SELECT o.id, o.side, o.entry_price, o.stop_loss, o.take_profit_json, o.quantity, o.metadata_json,
+               i.playbook
+        FROM trade_orders o
+        LEFT JOIN trade_ideas i ON i.id = o.trade_idea_id
+        WHERE o.symbol = ?
           AND account_label = ?
-          AND status IN ('filled', 'pending_fill')
+          AND o.status IN ('filled', 'pending_fill')
           AND source = 'live'
         """,
         (config.symbol, env.account_label),
@@ -3353,7 +3366,11 @@ def manage_open_trade_partial_take_profit(
         plan = metadata.get("partial_take_profit")
         if not isinstance(plan, dict):
             continue
-        if not plan.get("done") and not plan.get("locked"):
+        uses_account_partial = row["playbook"] == "zone_reaction_v2"
+        # Preserve explicit per-trade plans and completed partials awaiting BE.
+        if not uses_account_partial and not plan.get("locked") and not plan.get("done"):
+            continue
+        if uses_account_partial and not plan.get("done") and not plan.get("locked"):
             initial_stop = float(metadata.get("initial_stop_loss") or row["stop_loss"])
             entry = float(row["entry_price"])
             trigger_price = (
@@ -3364,10 +3381,12 @@ def manage_open_trade_partial_take_profit(
             if (
                 bool(plan.get("enabled")) != account_enabled
                 or abs(float(plan.get("trigger_r") or 0.0) - account_trigger_r) > 1e-9
+                or abs(float(plan.get("fraction") or 0.0) - account_fraction) > 1e-9
                 or abs(float(plan.get("trigger_price") or 0.0) - trigger_price) > 1e-5
             ):
                 plan["enabled"] = account_enabled
                 plan["trigger_r"] = account_trigger_r
+                plan["fraction"] = account_fraction
                 plan["trigger_price"] = round(trigger_price, 5)
                 metadata["partial_take_profit"] = plan
                 conn.execute(

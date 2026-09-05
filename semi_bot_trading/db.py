@@ -431,6 +431,7 @@ CREATE TABLE IF NOT EXISTS account_execution_controls (
     pending_bot_orders  INTEGER NOT NULL DEFAULT 0,
     partial_take_profit_enabled INTEGER,
     partial_take_profit_r REAL,
+    partial_take_profit_fraction REAL NOT NULL DEFAULT 0.4,
     manual_lock_requested_enabled INTEGER NOT NULL DEFAULT 0,
     manual_lock_effective_enabled INTEGER NOT NULL DEFAULT 0,
     manual_lock_baseline_positions_json TEXT NOT NULL DEFAULT '[]',
@@ -585,6 +586,18 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "account_execution_commands", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "account_execution_controls", "partial_take_profit_enabled", "INTEGER")
     ensure_column(conn, "account_execution_controls", "partial_take_profit_r", "REAL")
+    ensure_column(conn, "account_execution_controls", "partial_take_profit_fraction", "REAL")
+    # One-time policy migration for account rows created before fraction was
+    # persisted: enable 40% at 1R consistently across every worker account.
+    conn.execute(
+        """
+        UPDATE account_execution_controls
+        SET partial_take_profit_enabled = 1,
+            partial_take_profit_r = 1.0,
+            partial_take_profit_fraction = 0.4
+        WHERE partial_take_profit_fraction IS NULL
+        """
+    )
     ensure_column(conn, "account_execution_controls", "manual_lock_requested_enabled", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "account_execution_controls", "manual_lock_effective_enabled", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "account_execution_controls", "manual_lock_baseline_positions_json", "TEXT NOT NULL DEFAULT '[]'")

@@ -26,6 +26,7 @@ class AccountExecutionControlRequest(BaseModel):
 class AccountPartialTakeProfitRequest(BaseModel):
     enabled: bool
     trigger_r: float = Field(ge=0.5, le=2.0)
+    fraction: float = Field(default=0.4, ge=0.25, le=0.5)
 
 
 class AccountManualTradingLockRequest(BaseModel):
@@ -62,8 +63,8 @@ ManualAiCancelType = Literal[
 
 class ManualAiPartialTakeProfit(BaseModel):
     enabled: bool = True
-    trigger_r: float = Field(default=1.25, ge=0.75, le=1.5)
-    close_fraction: float = Field(default=0.5, ge=0.25, le=0.5)
+    trigger_r: float = Field(default=1.0, ge=0.75, le=1.5)
+    close_fraction: float = Field(default=0.4, ge=0.25, le=0.5)
     move_stop_to: Literal["breakeven", "unchanged"] = "breakeven"
     breakeven_buffer: float = Field(default=0, ge=0, le=10)
 

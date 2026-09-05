@@ -36,10 +36,10 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
     typeof initialPartial.enabled === "boolean" ? initialPartial.enabled : finalRiskReward >= 1.5,
   );
   const [partialTriggerR, setPartialTriggerR] = useState(
-    typeof initialPartial.trigger_r === "number" ? initialPartial.trigger_r : 1.25,
+    typeof initialPartial.trigger_r === "number" ? initialPartial.trigger_r : 1,
   );
   const [partialCloseFraction, setPartialCloseFraction] = useState(
-    typeof initialPartial.close_fraction === "number" ? initialPartial.close_fraction : 0.5,
+    typeof initialPartial.close_fraction === "number" ? initialPartial.close_fraction : 0.4,
   );
   const [partialMoveStopTo, setPartialMoveStopTo] = useState<"breakeven" | "unchanged">(
     initialPartial.move_stop_to === "unchanged" ? "unchanged" : "breakeven",

@@ -4,6 +4,12 @@ Zone Reaction V2 la playbook research-first tap trung vao phan ung M15 tai tung 
 
 ## Runtime Scope
 
+### Live Partial TP / BE
+
+Cau hinh Partial TP theo account (UI va PARTIAL_TAKE_PROFIT_* trong env) chi
+ap dung cho Zone Reaction V2. Manual AI, H1 Impulse va cac playbook co plan
+partial TP rieng giu nguyen plan per-trade; khong nhan override theo account.
+
 ### Live Risk
 
 Live executor khoa risk rieng cho `zone_reaction_v2` cung muc voi Manual AI va

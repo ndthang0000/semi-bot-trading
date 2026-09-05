@@ -899,6 +899,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        c.requested_enabled, c.effective_enabled, c.hard_enabled, c.worker_status,
                        c.open_bot_positions, c.pending_bot_orders, c.heartbeat_at,
                        c.partial_take_profit_enabled, c.partial_take_profit_r,
+                       c.partial_take_profit_fraction,
                        c.manual_lock_requested_enabled, c.manual_lock_effective_enabled,
                        c.manual_lock_baseline_positions_json, c.manual_lock_baseline_orders_json,
                        c.manual_lock_requested_at, c.manual_lock_acknowledged_at,
@@ -948,7 +949,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     },
                     "partial_take_profit": {
                         "enabled": True if row["partial_take_profit_enabled"] is None else bool(row["partial_take_profit_enabled"]),
-                        "trigger_r": float(row["partial_take_profit_r"] or 1.25),
+                        "trigger_r": float(row["partial_take_profit_r"] or 1.0),
+                        "fraction": float(row["partial_take_profit_fraction"] or 0.4),
                     },
                     "manual_trading_lock": {
                         "requested_enabled": bool(row["manual_lock_requested_enabled"]),
@@ -1056,10 +1058,19 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 """
                 UPDATE account_execution_controls
                 SET partial_take_profit_enabled = ?, partial_take_profit_r = ?,
+                    partial_take_profit_fraction = ?,
                     requested_by = ?, requested_at = ?, updated_at = ?
                 WHERE account_label = ?
                 """,
-                (int(request.enabled), float(request.trigger_r), username, now, now, account_label),
+                (
+                    int(request.enabled),
+                    float(request.trigger_r),
+                    float(request.fraction),
+                    username,
+                    now,
+                    now,
+                    account_label,
+                ),
             )
             conn.commit()
         return {
@@ -1067,6 +1078,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             "partial_take_profit": {
                 "enabled": request.enabled,
                 "trigger_r": request.trigger_r,
+                "fraction": request.fraction,
             },
             "status": "saved",
         }

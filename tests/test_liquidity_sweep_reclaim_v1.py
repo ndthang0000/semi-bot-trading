@@ -256,7 +256,7 @@ class LiquiditySweepPersistenceTests(unittest.TestCase):
         self.assertEqual(
             {
                 "enabled": True,
-                "close_fraction": 0.5,
+                "close_fraction": 0.4,
                 "move_stop_to": "breakeven",
                 "breakeven_buffer": 0.0,
             },

@@ -111,7 +111,7 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertIn("partial TP trigger", rejected.text)
             self.assertEqual(200, accepted.status_code, accepted.text)
 
-    def test_partial_take_profit_defaults_to_1_25r_half_and_breakeven(self) -> None:
+    def test_partial_take_profit_defaults_to_1r_40_percent_and_breakeven(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "test.sqlite3"
@@ -128,8 +128,8 @@ class ManualAiApiTest(unittest.TestCase):
             self.assertEqual(
                 {
                     "enabled": True,
-                    "trigger_r": 1.25,
-                    "close_fraction": 0.5,
+                    "trigger_r": 1.0,
+                    "close_fraction": 0.4,
                     "move_stop_to": "breakeven",
                     "breakeven_buffer": 0.0,
                 },
