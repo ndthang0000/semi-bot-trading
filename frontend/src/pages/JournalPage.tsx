@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Image as ImageIcon, Maximize2, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
+import { Camera, Image as ImageIcon, Maximize2, RotateCcw, SlidersHorizontal, Trash2, Upload, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toPng } from "html-to-image";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../api/chart";
 import { authFetch } from "../api/auth";
 import { accountBadgeClass } from "../lib/accountPresentation";
+import { groupAccountExecutions, groupTradesForReview } from "../lib/tradeReviewGroups";
 import { isTradeReviewComplete, type WeeklyReviewGateState } from "../lib/weeklyReview";
 import {
   firstTakeProfitPrice,
@@ -28,6 +29,7 @@ import type {
   TradeOrder,
   TradeReview,
   TradeReviewAttachment,
+  TradeReviewGroup,
 } from "../types";
 
 type JournalTab = "trades" | "queue" | "patterns";
@@ -148,8 +150,10 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-function DetailPanel({ trade, onClose, onSaved }: {
+function DetailPanel({ trade, group, reviewTargetId, onClose, onSaved }: {
   trade: TradeOrder;
+  group: TradeReviewGroup;
+  reviewTargetId: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -178,13 +182,13 @@ function DetailPanel({ trade, onClose, onSaved }: {
   }, [trade.id, trade.review]);
 
   const attachmentsQuery = useQuery({
-    queryKey: ["trade-attachments", trade.id],
-    queryFn: () => fetchTradeReviewAttachments(trade.id),
+    queryKey: ["trade-attachments", reviewTargetId],
+    queryFn: () => fetchTradeReviewAttachments(reviewTargetId),
     staleTime: 15_000,
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => updateTradeReview(trade.id, {
+    mutationFn: () => updateTradeReview(reviewTargetId, {
       grade: grade || null,
       verdict,
       mistake_tags: tags,
@@ -204,19 +208,19 @@ function DetailPanel({ trade, onClose, onSaved }: {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: (input: { imageData: string; caption: string }) => createTradeReviewAttachment(trade.id, {
+    mutationFn: (input: { imageData: string; caption: string }) => createTradeReviewAttachment(reviewTargetId, {
       kind: "review",
       image_data: input.imageData,
       caption: input.caption,
       chart_symbol: "XAUUSD",
       chart_timeframe: "H1",
     }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["trade-attachments", trade.id] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["trade-attachments", reviewTargetId] }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (attachmentId: string) => deleteTradeReviewAttachment(trade.id, attachmentId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["trade-attachments", trade.id] }),
+    mutationFn: (attachmentId: string) => deleteTradeReviewAttachment(reviewTargetId, attachmentId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["trade-attachments", reviewTargetId] }),
   });
 
   const firstTakeProfit = firstTakeProfitPrice(trade);
@@ -281,6 +285,8 @@ function DetailPanel({ trade, onClose, onSaved }: {
           ["Stop Source", metaVal(trade.metadata, "stop_source")],
           ["Session", metaVal(trade.metadata, "session")],
         ]} pnlR={trade.pnl_r} />
+
+        <AccountExecutions group={group} />
 
         <ScreenshotsSection
           attachments={attachmentsQuery.data ?? []}
@@ -360,6 +366,39 @@ function InfoSection({ title, rows, pnlR }: { title: string; rows: Array<[string
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function AccountExecutions({ group }: { group: TradeReviewGroup }) {
+  const executions = groupAccountExecutions(group);
+  if (executions.length <= 1) return null;
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <Users size={14} className="text-cyan-300" /> Account executions
+        <span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 text-[10px] text-cyan-200">{executions.length} accounts</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {executions.map((execution) => (
+          <div key={execution.id} className="rounded-md border border-ink-700 bg-ink-950/70 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className={`min-w-0 truncate rounded border px-1.5 py-0.5 text-[11px] font-semibold ${accountBadgeClass(execution.account_label || "Default")}`}>
+                {execution.account_label || "Default"}
+              </span>
+              <span className={`text-sm font-bold tabular-nums ${(execution.pnl_r ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                {execution.pnl_r !== null ? `${execution.pnl_r >= 0 ? "+" : ""}${execution.pnl_r.toFixed(2)}R` : "--"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+              <span className="text-slate-600">Volume</span><span className="text-right text-slate-300">{execution.quantity.toLocaleString("en", { maximumFractionDigits: 4 })} lot</span>
+              <span className="text-slate-600">Entry</span><span className="text-right text-slate-300">{execution.entry_price?.toFixed(2) ?? "-"}</span>
+              <span className="text-slate-600">Close</span><span className="text-right text-slate-300">{execution.close_price?.toFixed(2) ?? "-"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 text-[11px] leading-relaxed text-slate-600">One shared review applies to this setup; account execution results remain separate.</div>
     </div>
   );
 }
@@ -768,10 +807,16 @@ function FilterBar({
   );
 }
 
-function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: boolean; onClick: () => void }) {
-  const r = trade.pnl_r;
-  const reviewed = isTradeReviewComplete(trade.review);
+function TradeRow({ group, showGroupContext, selected, onClick }: {
+  group: TradeReviewGroup;
+  showGroupContext: boolean;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const trade = group.representative;
+  const reviewed = isTradeReviewComplete(group.review);
   const accountLabel = trade.account_label || "Default";
+  const accountExecutions = groupAccountExecutions(group);
   const lifecycleStatus = tradeLifecycleStatus(trade);
   const takeProfits = takeProfitPrices(trade);
   return (
@@ -787,6 +832,11 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
         >
           {accountLabel}
         </span>
+        {showGroupContext && accountExecutions.length > 1 ? (
+          <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-200" title={accountExecutions.map((item) => item.account_label).join(", ")}>
+            <Users size={10} /> {accountExecutions.length}
+          </span>
+        ) : null}
       </td>
       <td className="px-3 py-2 text-slate-300">{trade.playbook}</td>
       <td className={`px-3 py-2 font-medium ${trade.direction === "long" || trade.side === "buy" ? "text-green-400" : "text-red-400"}`}>
@@ -804,8 +854,17 @@ function TradeRow({ trade, selected, onClick }: { trade: TradeOrder; selected: b
       <td className="px-3 py-2 text-slate-400">{trade.stop_loss?.toFixed(2) ?? "-"}</td>
       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{takeProfits.map((price) => price.toFixed(2)).join(" / ") || "-"}</td>
       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{trade.close_price?.toFixed(2) ?? "-"}</td>
-      <td className={`px-3 py-2 text-right font-semibold ${r !== null ? r >= 0 ? "text-green-400" : "text-red-400" : "text-slate-500"}`}>
-        {r !== null ? `${r >= 0 ? "+" : ""}${r.toFixed(2)}R` : "--"}
+      <td className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+        {showGroupContext ? accountExecutions.map((execution) => (
+          <span key={execution.id} className={`ml-2 ${execution.pnl_r !== null ? execution.pnl_r >= 0 ? "text-green-400" : "text-red-400" : "text-slate-500"}`} title={execution.account_label}>
+            <span className="mr-0.5 text-[9px] text-slate-600">{execution.account_label.toLowerCase().includes("ftmo") ? "F" : execution.account_label.slice(0, 1).toUpperCase()}</span>
+            {execution.pnl_r !== null ? `${execution.pnl_r >= 0 ? "+" : ""}${execution.pnl_r.toFixed(2)}R` : "--"}
+          </span>
+        )) : (
+          <span className={trade.pnl_r !== null ? trade.pnl_r >= 0 ? "text-green-400" : "text-red-400" : "text-slate-500"}>
+            {trade.pnl_r !== null ? `${trade.pnl_r >= 0 ? "+" : ""}${trade.pnl_r.toFixed(2)}R` : "--"}
+          </span>
+        )}
       </td>
       <td className="px-3 py-2 text-center">
         {reviewed ? (
@@ -874,7 +933,7 @@ function PatternsTab() {
 export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyReviewGateState }) {
   const [tab, setTab] = useState<JournalTab>(weeklyReviewGate?.active ? "queue" : "trades");
   const [filters, setFilters] = useState<Filters>(readJournalFilters);
-  const [selected, setSelected] = useState<TradeOrder | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const qc = useQueryClient();
   const reviewGateActive = weeklyReviewGate?.active === true;
 
@@ -892,18 +951,20 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
     localStorage.setItem(JOURNAL_FILTERS_STORAGE_KEY, JSON.stringify(filters));
   }, [filters]);
 
-  const reviewGateIds = weeklyReviewGate?.dueTradeIds ?? null;
-  const baseTrades = useMemo(() => {
-    return (data?.trades ?? []).filter((trade) => {
-      const reviewed = isTradeReviewComplete(trade.review);
-      if ((reviewGateActive || tab === "queue") && reviewGateIds && !reviewGateIds.has(trade.id)) return false;
+  const allGroups = useMemo(() => groupTradesForReview(data?.trades ?? []), [data?.trades]);
+  const reviewGateGroupIds = weeklyReviewGate?.dueGroupIds ?? null;
+  const baseGroups = useMemo(() => {
+    return allGroups.filter((group) => {
+      const trade = group.representative;
+      const reviewed = isTradeReviewComplete(group.review);
+      if ((reviewGateActive || tab === "queue") && reviewGateGroupIds && !reviewGateGroupIds.has(group.id)) return false;
       if (tab === "queue" && (!trade.closed_at || trade.pnl_r === null)) return false;
       if (tab === "queue" && reviewed) return false;
       if (filters.reviewed === "yes" && !reviewed) return false;
       if (filters.reviewed === "no" && reviewed) return false;
       return true;
     });
-  }, [data?.trades, filters.reviewed, reviewGateActive, reviewGateIds, tab]);
+  }, [allGroups, filters.reviewed, reviewGateActive, reviewGateGroupIds, tab]);
   const accounts = useMemo(
     () => Array.from(new Set((data?.trades ?? []).map((trade) => trade.account_label || "Default"))).sort(),
     [data?.trades],
@@ -914,21 +975,23 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
   );
   const statusCounts = useMemo(() => {
     const counts: Record<TradeLifecycleStatus, number> = { pending: 0, open: 0, closed: 0, expired: 0, cancelled: 0, failed: 0 };
-    for (const trade of baseTrades) {
-      if (filters.account !== "all" && (trade.account_label || "Default") !== filters.account) continue;
+    for (const group of baseGroups) {
+      const trade = group.representative;
+      if (filters.account !== "all" && !group.trades.some((item) => (item.account_label || "Default") === filters.account)) continue;
       if (filters.playbook !== "all" && trade.playbook !== filters.playbook) continue;
       counts[tradeLifecycleStatus(trade)] += 1;
     }
     return counts;
-  }, [baseTrades, filters.account, filters.playbook]);
-  const trades = useMemo(() => baseTrades.filter((trade) => {
-    if (filters.account !== "all" && (trade.account_label || "Default") !== filters.account) return false;
+  }, [baseGroups, filters.account, filters.playbook]);
+  const groups = useMemo(() => baseGroups.filter((group) => {
+    const trade = group.representative;
+    if (filters.account !== "all" && !group.trades.some((item) => (item.account_label || "Default") === filters.account)) return false;
     if (filters.playbook !== "all" && trade.playbook !== filters.playbook) return false;
     if (filters.status !== "all" && tradeLifecycleStatus(trade) !== filters.status) return false;
     return true;
-  }), [baseTrades, filters.account, filters.playbook, filters.status]);
+  }), [baseGroups, filters.account, filters.playbook, filters.status]);
 
-  const selectedFresh = selected ? (trades.find((trade) => trade.id === selected.id) ?? selected) : null;
+  const selectedFresh = selectedGroupId ? (groups.find((group) => group.id === selectedGroupId) ?? null) : null;
   const title = reviewGateActive ? "Weekly Review Required" : "Trade Journal";
 
   return (
@@ -936,7 +999,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
       <div className={`flex min-w-0 flex-col ${selectedFresh ? "w-full xl:w-[54%]" : "w-full"} transition-all`}>
         <div className="border-b border-ink-700 bg-ink-900 px-4 py-3">
           <h1 className="text-sm font-semibold">{title}</h1>
-          <div className="text-xs text-slate-500">{reviewGateActive ? `${weeklyReviewGate?.dueCount ?? trades.length} closed trades need human review` : `${trades.length} trades`}</div>
+          <div className="text-xs text-slate-500">{reviewGateActive ? `${weeklyReviewGate?.dueCount ?? groups.length} trade setups need human review` : `${groups.length} trade setups`}</div>
         </div>
         {reviewGateActive ? (
           <div className="border-b border-cyan-400/25 bg-cyan-400/[0.08] px-4 py-3 text-xs leading-relaxed text-cyan-50">
@@ -967,14 +1030,14 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
             <div className="flex-1 overflow-auto">
               {isLoading ? (
                 <div className="flex h-32 items-center justify-center text-sm text-slate-500">Loading...</div>
-              ) : trades.length === 0 ? (
-                <div className="flex h-32 items-center justify-center text-sm text-slate-600">No trades found</div>
+              ) : groups.length === 0 ? (
+                <div className="flex h-32 items-center justify-center text-sm text-slate-600">No trade setups found</div>
               ) : (
                 <table className="w-full min-w-[1140px]">
                   <thead>
                     <tr className="border-b border-ink-700 bg-ink-900 text-xs text-slate-500">
                       <th className="px-3 py-2 text-left font-normal">Date (UTC)</th>
-                      <th className="px-3 py-2 text-left font-normal">Account</th>
+                      <th className="px-3 py-2 text-left font-normal">{tab === "queue" ? "Accounts" : "Account"}</th>
                       <th className="px-3 py-2 text-left font-normal">Playbook</th>
                       <th className="px-3 py-2 text-left font-normal">Dir</th>
                       <th className="px-3 py-2 text-left font-normal">Status</th>
@@ -983,17 +1046,18 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
                       <th className="px-3 py-2 text-left font-normal">SL</th>
                       <th className="px-3 py-2 text-left font-normal">TP</th>
                       <th className="px-3 py-2 text-left font-normal">Close</th>
-                      <th className="px-3 py-2 text-right font-normal">PnL</th>
+                      <th className="px-3 py-2 text-right font-normal">{tab === "queue" ? "PnL by account" : "PnL"}</th>
                       <th className="px-3 py-2 text-center font-normal">Review</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {trades.map((trade) => (
+                    {groups.map((group) => (
                       <TradeRow
-                        key={trade.id}
-                        trade={trade}
-                        selected={selectedFresh?.id === trade.id}
-                        onClick={() => setSelected(selectedFresh?.id === trade.id ? null : trade)}
+                        key={group.id}
+                        group={group}
+                        showGroupContext={tab === "queue"}
+                        selected={selectedFresh?.id === group.id}
+                        onClick={() => setSelectedGroupId(selectedFresh?.id === group.id ? null : group.id)}
                       />
                     ))}
                   </tbody>
@@ -1007,8 +1071,10 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
       {selectedFresh ? (
         <div className="fixed inset-0 z-50 w-full bg-ink-900 xl:static xl:z-auto xl:w-[46%] xl:min-w-[480px] xl:flex-shrink-0">
           <DetailPanel
-            trade={selectedFresh}
-            onClose={() => setSelected(null)}
+            trade={selectedFresh.representative}
+            group={selectedFresh}
+            reviewTargetId={selectedFresh.review?.trade_order_id ?? selectedFresh.representative.id}
+            onClose={() => setSelectedGroupId(null)}
             onSaved={() => qc.invalidateQueries({ queryKey: ["journal-trades"] })}
           />
         </div>

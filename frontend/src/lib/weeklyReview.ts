@@ -1,4 +1,5 @@
 import type { TradeOrder, TradeReview } from "../types";
+import { groupTradesForReview } from "./tradeReviewGroups";
 
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -8,6 +9,7 @@ export type WeeklyReviewGateState = {
   active: boolean;
   dueTrades: TradeOrder[];
   dueTradeIds: Set<string>;
+  dueGroupIds: Set<string>;
   dueCount: number;
   oldestClosedAt: string | null;
   currentWeekDue: boolean;
@@ -20,19 +22,25 @@ export function buildWeeklyReviewGate(trades: TradeOrder[], now: Date = new Date
   const currentWeekDue = nowWeekday > 5
     || (nowWeekday === 5 && hcmTimeOfDayMs(now) >= SATURDAY_REVIEW_START_MS);
 
-  const dueTrades = trades
-    .filter((trade) => trade.closed_at && trade.pnl_r !== null && !isTradeReviewComplete(trade.review ?? null))
-    .filter((trade) => {
+  const dueGroups = groupTradesForReview(trades)
+    .filter((group) => {
+      const trade = group.representative;
+      return trade.closed_at && trade.pnl_r !== null && !isTradeReviewComplete(group.review);
+    })
+    .filter((group) => {
+      const trade = group.representative;
       const closedDay = hcmDayNumber(new Date(trade.closed_at!));
       if (closedDay < nowWeekStart) return true;
       return currentWeekDue && closedDay >= nowWeekStart && closedDay <= nowDay;
     })
-    .sort((a, b) => String(a.closed_at).localeCompare(String(b.closed_at)));
+    .sort((a, b) => String(a.representative.closed_at).localeCompare(String(b.representative.closed_at)));
+  const dueTrades = dueGroups.map((group) => group.representative);
 
   return {
     active: dueTrades.length > 0,
     dueTrades,
-    dueTradeIds: new Set(dueTrades.map((trade) => trade.id)),
+    dueTradeIds: new Set(dueGroups.flatMap((group) => group.trades.map((trade) => trade.id))),
+    dueGroupIds: new Set(dueGroups.map((group) => group.id)),
     dueCount: dueTrades.length,
     oldestClosedAt: dueTrades[0]?.closed_at ?? null,
     currentWeekDue,

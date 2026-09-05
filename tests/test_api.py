@@ -658,6 +658,31 @@ class ApiTest(unittest.TestCase):
         trade = history_response.json()["trades"][0]
         self.assertEqual(trade["manual_ai_plan_status"], "expired")
         self.assertEqual(trade["manual_ai_expires_at"], "2026-01-01T00:45:00+00:00")
+        self.assertEqual(trade["metadata"]["execution_group_id"], "client-1")
+
+    def test_trade_history_uses_candidate_id_as_review_group_fallback(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            seed_trade(db_path)
+            with connect(db_path) as conn:
+                conn.execute(
+                    "UPDATE trade_orders SET metadata_json = ? WHERE id = 'order-1'",
+                    (json.dumps({"backtest": True, "candidate_id": "candidate-shared"}),),
+                )
+                conn.commit()
+
+            client = authenticated_test_client(root, config_path)
+            history_response = client.get("/api/trades?symbol=XAUUSD&timeframe=M15&limit=5&backtest=true")
+
+        self.assertEqual(history_response.status_code, 200)
+        self.assertEqual(
+            history_response.json()["trades"][0]["metadata"]["execution_group_id"],
+            "candidate-shared",
+        )
 
     def test_trade_visibility_can_be_hidden_and_restored(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -198,6 +198,13 @@ export type TradeOrder = {
   review?: TradeReview | null;
 };
 
+export type TradeReviewGroup = {
+  id: string;
+  representative: TradeOrder;
+  trades: TradeOrder[];
+  review: TradeReview | null;
+};
+
 export type TradeReview = {
   id: string | null;
   trade_order_id: string;

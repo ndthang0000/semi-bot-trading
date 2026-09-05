@@ -1219,6 +1219,10 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
         metadata = {}
     if row_has_key(row, "execution_group_id") and row["execution_group_id"]:
         metadata["execution_group_id"] = str(row["execution_group_id"])
+    elif metadata.get("candidate_id"):
+        # Live bot orders share the same candidate across account workers. Expose
+        # that stable identity so review UIs can treat the executions as one setup.
+        metadata["execution_group_id"] = str(metadata["candidate_id"])
     result = {
         "id": row["id"],
         "trade_idea_id": row["trade_idea_id"],

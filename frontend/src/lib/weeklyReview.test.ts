@@ -116,4 +116,33 @@ describe("buildWeeklyReviewGate", () => {
 
     expect(result.active).toBe(false);
   });
+
+  it("requires only one review for executions of the same setup", () => {
+    const ftmo = trade("ftmo", "2026-07-10T10:00:00+00:00", true);
+    ftmo.account_label = "FTMO 100K 2-Step";
+    ftmo.metadata.execution_group_id = "shared-setup";
+    const exness = trade("exness", "2026-07-10T10:00:05+00:00");
+    exness.account_label = "Exness Personal";
+    exness.metadata.execution_group_id = "shared-setup";
+
+    const result = buildWeeklyReviewGate([ftmo, exness], new Date("2026-07-11T06:00:00+00:00"));
+
+    expect(result.active).toBe(false);
+    expect(result.dueCount).toBe(0);
+  });
+
+  it("counts an unreviewed multi-account setup once", () => {
+    const ftmo = trade("ftmo", "2026-07-10T10:00:00+00:00");
+    ftmo.account_label = "FTMO 100K 2-Step";
+    ftmo.metadata.execution_group_id = "shared-setup";
+    const exness = trade("exness", "2026-07-10T10:00:05+00:00");
+    exness.account_label = "Exness Personal";
+    exness.metadata.execution_group_id = "shared-setup";
+
+    const result = buildWeeklyReviewGate([ftmo, exness], new Date("2026-07-11T06:00:00+00:00"));
+
+    expect(result.dueCount).toBe(1);
+    expect(result.dueTradeIds).toEqual(new Set(["ftmo", "exness"]));
+    expect(result.dueGroupIds.size).toBe(1);
+  });
 });

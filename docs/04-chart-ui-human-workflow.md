@@ -392,6 +392,18 @@ worker, risk manager hoặc execution:
   gia tri hien `--`, khong hien `open`.
 - API trade history tra them `manual_ai_plan_status` va
   `manual_ai_expires_at` de UI hien dung lifecycle va thoi gian het han.
+- Review duoc gom theo setup thay vi tung account execution. Manual AI va H1
+  multi-account dung `manual_ai_plans.client_id`; bot order dung `candidate_id`
+  da xac dinh. Order khong co group identity ro rang van review rieng, khong gom
+  suy doan theo timestamp.
+- Journal uu tien FTMO lam execution dai dien. Tab Review Queue hien badge so
+  account va PnL R rieng de ho tro review; tab Trades giu mot account/PnL dai
+  dien cho gon. Panel chi tiet van hien card Entry/Close/Volume/PnL R rieng cho
+  tung account. Grade, verdict, structured review, note va screenshot chi luu
+  mot lan tren review owner cua setup.
+- Weekly trade-review gate dem mot setup mot lan va duoc hoan tat neu bat ky
+  execution trong group da co review hop le. PnL/statistics theo account van doc
+  tung `trade_order`, khong bi gop.
 
 ## Weekly Journal
 

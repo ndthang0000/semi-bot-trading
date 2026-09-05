@@ -1281,6 +1281,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                        trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
                        trade_orders.hidden_on_chart, trade_orders.source, trade_orders.metadata_json,
                        trade_ideas.playbook, trade_ideas.direction,
+                       manual_ai_plans.client_id AS execution_group_id,
                        manual_ai_plans.status AS manual_ai_plan_status,
                        manual_ai_plans.expires_at AS manual_ai_expires_at,
                        trade_reviews.id AS review_id,
