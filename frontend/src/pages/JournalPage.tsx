@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
+import { Camera, Image as ImageIcon, Maximize2, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toPng } from "html-to-image";
 import {
@@ -282,6 +282,17 @@ function DetailPanel({ trade, onClose, onSaved }: {
           ["Session", metaVal(trade.metadata, "session")],
         ]} pnlR={trade.pnl_r} />
 
+        <ScreenshotsSection
+          attachments={attachmentsQuery.data ?? []}
+          canCapture={document.querySelector("[data-chart-capture-root='true']") instanceof HTMLElement}
+          loading={attachmentsQuery.isLoading}
+          uploading={uploadMutation.isPending}
+          deletingId={deleteMutation.variables ?? null}
+          onCapture={() => captureChart().catch(() => undefined)}
+          onUpload={uploadFile}
+          onDelete={(attachment) => deleteMutation.mutate(attachment.id)}
+        />
+
         <ReviewBasics
           grade={grade}
           verdict={verdict}
@@ -308,17 +319,6 @@ function DetailPanel({ trade, onClose, onSaved }: {
           onChange={updateOperator}
           selectedTags={operatorReview.operator_tags ?? []}
           onToggleTag={(tag) => updateOperator("operator_tags", toggleListValue(operatorReview.operator_tags, tag))}
-        />
-
-        <ScreenshotsSection
-          attachments={attachmentsQuery.data ?? []}
-          canCapture={document.querySelector("[data-chart-capture-root='true']") instanceof HTMLElement}
-          loading={attachmentsQuery.isLoading}
-          uploading={uploadMutation.isPending}
-          deletingId={deleteMutation.variables ?? null}
-          onCapture={() => captureChart().catch(() => undefined)}
-          onUpload={uploadFile}
-          onDelete={(attachment) => deleteMutation.mutate(attachment.id)}
         />
 
         <div>
@@ -524,10 +524,29 @@ function ScreenshotsSection(props: {
   onUpload: (file: File | null) => void;
   onDelete: (attachment: TradeReviewAttachment) => void;
 }) {
+  const [preview, setPreview] = useState<TradeReviewAttachment | null>(null);
+
+  useEffect(() => {
+    if (!preview) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [preview]);
+
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Screenshots</div>
+    <div className="rounded-lg border border-ink-700 bg-ink-950/55 p-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <ImageIcon size={14} className="text-cyan-300" /> Chart screenshots
+            {props.attachments.length > 0 ? (
+              <span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 text-[10px] text-cyan-200">{props.attachments.length}</span>
+            ) : null}
+          </div>
+          <div className="mt-1 text-[11px] text-slate-600">Click an image to inspect the setup at full size.</div>
+        </div>
         <div className="flex flex-wrap gap-1">
           <button
             onClick={props.onCapture}
@@ -550,17 +569,35 @@ function ScreenshotsSection(props: {
         </div>
       </div>
       {props.loading ? <div className="text-xs text-slate-600">Loading screenshots...</div> : null}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {!props.loading && props.attachments.length === 0 ? (
+        <div className="flex min-h-36 flex-col items-center justify-center rounded-md border border-dashed border-ink-700 bg-ink-900/40 px-4 text-center">
+          <ImageIcon size={22} className="mb-2 text-slate-700" />
+          <div className="text-xs font-medium text-slate-400">No chart screenshot yet</div>
+          <div className="mt-1 max-w-72 text-[11px] leading-relaxed text-slate-600">Capture the current chart or upload a PNG to keep the trade context with this review.</div>
+        </div>
+      ) : null}
+      <div className="grid grid-cols-1 gap-3">
         {props.attachments.map((attachment) => (
-          <div key={attachment.id} className="overflow-hidden rounded border border-ink-700 bg-ink-950">
-            <AuthenticatedImage attachment={attachment} />
-            <div className="flex items-center justify-between px-2 py-1">
-              <div className="truncate text-[11px] text-slate-500">{attachment.caption || attachment.kind}</div>
+          <div key={attachment.id} className="group overflow-hidden rounded-md border border-ink-700 bg-ink-950 transition hover:border-cyan-500/60">
+            <button
+              className="relative block w-full bg-black/30 text-left"
+              onClick={() => setPreview(attachment)}
+              type="button"
+              aria-label={`Open ${attachment.caption || "trade screenshot"} full size`}
+            >
+              <AuthenticatedImage attachment={attachment} className="aspect-video w-full object-contain" />
+              <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded bg-black/70 px-2 py-1 text-[10px] font-medium text-slate-200 opacity-0 backdrop-blur transition group-hover:opacity-100 group-focus-within:opacity-100">
+                <Maximize2 size={11} /> View full size
+              </span>
+            </button>
+            <div className="flex items-center justify-between gap-3 border-t border-ink-700 px-2.5 py-2">
+              <div className="min-w-0 truncate text-[11px] text-slate-400">{attachment.caption || attachment.kind}</div>
               <button
                 onClick={() => props.onDelete(attachment)}
                 disabled={props.deletingId === attachment.id}
-                className="text-slate-600 hover:text-red-300"
+                className="flex-shrink-0 rounded p-1 text-slate-600 transition hover:bg-red-500/10 hover:text-red-300 disabled:opacity-40"
                 type="button"
+                aria-label="Delete screenshot"
               >
                 <Trash2 size={13} />
               </button>
@@ -568,11 +605,42 @@ function ScreenshotsSection(props: {
           </div>
         ))}
       </div>
+      {preview ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-3 backdrop-blur-sm sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chart screenshot preview"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setPreview(null);
+          }}
+        >
+          <div className="flex max-h-full w-full max-w-[1600px] flex-col overflow-hidden rounded-lg border border-ink-700 bg-ink-950 shadow-2xl">
+            <div className="flex items-center justify-between gap-4 border-b border-ink-700 px-3 py-2.5 sm:px-4">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-200">{preview.caption || "Chart screenshot"}</div>
+                <div className="text-[11px] text-slate-600">Press Esc or click outside to close</div>
+              </div>
+              <button
+                className="rounded-md border border-ink-700 p-2 text-slate-400 transition hover:border-slate-500 hover:bg-white/5 hover:text-white"
+                onClick={() => setPreview(null)}
+                type="button"
+                aria-label="Close screenshot preview"
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-black/40 p-2 sm:p-4">
+              <AuthenticatedImage attachment={preview} className="max-h-[calc(100vh-8rem)] max-w-full object-contain" />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function AuthenticatedImage({ attachment }: { attachment: TradeReviewAttachment }) {
+function AuthenticatedImage({ attachment, className }: { attachment: TradeReviewAttachment; className?: string }) {
   const imageQuery = useQuery({
     queryKey: ["trade-attachment-image", attachment.id],
     queryFn: async () => {
@@ -582,8 +650,8 @@ function AuthenticatedImage({ attachment }: { attachment: TradeReviewAttachment 
     },
     staleTime: 60_000,
   });
-  if (!imageQuery.data) return <div className="h-28 bg-ink-800" />;
-  return <img src={imageQuery.data} alt={attachment.caption || "Trade screenshot"} className="h-28 w-full object-cover" />;
+  if (!imageQuery.data) return <div className={`${className ?? "h-40 w-full"} animate-pulse bg-ink-800`} />;
+  return <img src={imageQuery.data} alt={attachment.caption || "Trade screenshot"} className={className ?? "h-40 w-full object-contain"} />;
 }
 
 function FilterBar({
@@ -865,7 +933,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
 
   return (
     <div className="relative flex h-full overflow-hidden bg-ink-950 text-slate-100">
-      <div className={`flex min-w-0 flex-col ${selectedFresh ? "w-full lg:w-[60%]" : "w-full"} transition-all`}>
+      <div className={`flex min-w-0 flex-col ${selectedFresh ? "w-full xl:w-[54%]" : "w-full"} transition-all`}>
         <div className="border-b border-ink-700 bg-ink-900 px-4 py-3">
           <h1 className="text-sm font-semibold">{title}</h1>
           <div className="text-xs text-slate-500">{reviewGateActive ? `${weeklyReviewGate?.dueCount ?? trades.length} closed trades need human review` : `${trades.length} trades`}</div>
@@ -937,7 +1005,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
       </div>
 
       {selectedFresh ? (
-        <div className="fixed inset-0 z-50 w-full bg-ink-900 lg:static lg:z-auto lg:w-[40%] lg:min-w-[360px] lg:flex-shrink-0">
+        <div className="fixed inset-0 z-50 w-full bg-ink-900 xl:static xl:z-auto xl:w-[46%] xl:min-w-[480px] xl:flex-shrink-0">
           <DetailPanel
             trade={selectedFresh}
             onClose={() => setSelected(null)}
