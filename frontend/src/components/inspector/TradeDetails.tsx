@@ -173,6 +173,38 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         <Detail label="Backtest" value={metadata.backtest === true ? "true" : "--"} />
       </div>
 
+      {trade.source === "live" && trade.status === "filled" && !closeExecuted ? (
+        <div className="grid gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.05] p-3">
+          <div className="text-xs font-semibold text-cyan-100">Vé đã mua · Giữ đúng kế hoạch</div>
+          {trade.stop_loss !== null && Number.isFinite(trade.stop_loss) && trade.stop_loss > 0 ? (
+            <>
+              <p className="text-xs leading-relaxed text-slate-300">
+                Risk đã định trước là chi phí của tấm vé. Một cảnh kịch tính chưa phải lý do
+                rời rạp: hãy để lệnh đi theo SL, TP và quy tắc quản lý đã chọn.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <TradeMetric label="SL đang lưu" value={price(trade.stop_loss)} />
+                <TradeMetric label="TP kế hoạch" value={price(takeProfit)} />
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-400">
+                Muốn can thiệp? Rời tay khỏi chuột, thở chậm và đọc lại điều kiện thoát.
+                Chỉ thay đổi khi điều kiện đã định trước xảy ra hoặc có lỗi thực thi.
+                Không nới SL hay đổi partial TP chỉ để bớt lo.
+              </p>
+              <p className="text-[10px] leading-relaxed text-slate-500">
+                SL trên dashboard là dữ liệu đã lưu, không xác nhận bảo vệ hiện tại tại broker.
+                Tấm vé không đảm bảo thắng hay giới hạn tuyệt đối khoản lỗ khi có trượt giá.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs leading-relaxed text-amber-200">
+              Chưa có SL hợp lệ trong dữ liệu lệnh. Kiểm tra và xử lý bảo vệ tại broker;
+              lời nhắc “ngồi yên xem kịch” không áp dụng khi thiếu SL.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       {statusNote ? (
         <div className="rounded-md border border-yellow-300/25 bg-yellow-300/[0.06] p-2 text-xs leading-relaxed text-yellow-50">
           {statusNote}

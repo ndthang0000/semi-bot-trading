@@ -697,3 +697,11 @@ Trước khi nối data thật, nên có mock UI với candle fixture và entity
 - Toggle overlay.
 - Click alert focus entity.
 - Replay XAUUSD H1/M15 từ file historical.
+
+### Loi nhac giu ke hoach
+
+Trade inspector hien the “Ve da mua · Giu dung ke hoach” cho lenh live da fill
+va chua gui close thanh cong. The nhac tuan thu SL/TP va quy tac quan ly da chon,
+hien SL dang luu va TP ke hoach; khong coi day la xac nhan SL tai broker.
+Neu SL thieu/khong hop le, thay loi nhac giu lenh bang yeu cau kiem tra bao ve.
+Khong hien cho pending, backtest hay lenh da dong.
