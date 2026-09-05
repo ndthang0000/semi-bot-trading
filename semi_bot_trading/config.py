@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .trading_sessions import parse_sessions
+
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -228,6 +230,8 @@ class StrategyConfig:
     h1_impulse_retest_v1_min_order_ttl_hours: int = 1
     h1_impulse_retest_v1_max_order_ttl_hours: int = 48
     h1_impulse_retest_v1_max_signal_age_hours: int = 48
+    zone_reaction_v2_session_filter_enabled: bool = False
+    zone_reaction_v2_sessions: tuple[tuple[str, bool, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -423,6 +427,8 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             min_risk_reward=float(strategy.get("min_risk_reward", 2.0)),
             max_eligible=int(strategy.get("max_eligible", 3)),
             max_waiting=int(strategy.get("max_waiting", 5)),
+            zone_reaction_v2_session_filter_enabled=bool(zone_reaction_v2.get("session_filter_enabled", False)),
+            zone_reaction_v2_sessions=parse_sessions(zone_reaction_v2.get("sessions", {})),
             zone_reaction_v2_enabled=bool(zone_reaction_v2.get("enabled", True)),
             zone_reaction_v2_allowed_reactions=tuple(
                 str(item)

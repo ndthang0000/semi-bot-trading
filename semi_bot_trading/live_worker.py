@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from .trading_sessions import session_end
+
 import json
 import logging
 import re
 import time
 import uuid
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from sqlite3 import Connection
 from typing import Any
@@ -1086,6 +1088,8 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             sync_mt5_candles(conn, config, client, broker_symbol)
         if broker_symbol:
             sync_filled_pending_orders(conn, config, env, client, broker_symbol)
+            if ftmo_news_guard is None:
+                cancel_zone_reaction_session_orders(conn, config, env, client, broker_symbol)
             process_manual_ai_plans(conn, config, env, client, broker_symbol, now)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
@@ -2832,6 +2836,14 @@ def execute_candidate(
 ) -> dict[str, str] | None:
     if not account_execution_is_enabled(conn, env):
         return
+    if candidate.get("playbook") == "zone_reaction_v2" and config.strategy.zone_reaction_v2_session_filter_enabled:
+        end = session_end(config.strategy, utc_now_iso())
+        if end is None:
+            return
+        if pricing_plan is not None and pricing_plan.order_type == "limit":
+            expiry = pricing_plan.expires_at
+            capped = min(datetime.fromisoformat(expiry), end) if expiry else end
+            pricing_plan = replace(pricing_plan, expires_at=capped.isoformat())
     # lot_size from risk manager takes precedence; fall back to env fixed volume
     volume = lot_size if lot_size is not None else env.live_order_volume
 
@@ -3248,6 +3260,43 @@ def mark_pending_order_filled(
     )
     conn.commit()
     return True
+
+
+def cancel_zone_reaction_session_orders(conn, config, env, client, broker_symbol):
+    """Cancel only confirmed pending Zone Reaction orders outside entry hours."""
+    if not env.execution_enabled or not config.strategy.zone_reaction_v2_session_filter_enabled:
+        return
+    now = utc_now_iso()
+    if session_end(config.strategy, now) is not None:
+        return
+    rows = conn.execute(
+        """
+        SELECT o.id, o.metadata_json FROM trade_orders o
+        JOIN trade_ideas i ON i.id = o.trade_idea_id
+        WHERE o.account_label = ? AND o.symbol = ? AND o.source = 'live'
+          AND o.status = 'pending_fill' AND i.playbook = 'zone_reaction_v2'
+        """, (env.account_label, config.symbol),
+    ).fetchall()
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        ticket = str(metadata.get("broker_order_id") or "")
+        if not ticket:
+            continue
+        try:
+            state = client.get_pending_order_state(broker_symbol, order_ticket=ticket)
+            if state == "pending":
+                client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Zone session ended")
+            elif state not in {"cancelled", "expired"}:
+                continue
+        except Exception:
+            logger.exception("Zone session cancellation failed for %s", row["id"])
+            continue
+        metadata["session_cancelled_at"] = now
+        conn.execute(
+            "UPDATE trade_orders SET status = 'cancelled', closed_at = ?, updated_at = ?, metadata_json = ? WHERE id = ? AND status = 'pending_fill'",
+            (now, now, json.dumps(metadata), row["id"]),
+        )
+    conn.commit()
 
 
 def sync_filled_pending_orders(

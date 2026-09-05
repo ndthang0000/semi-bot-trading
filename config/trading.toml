@@ -131,6 +131,7 @@ max_eligible = 3
 max_waiting = 5
 
 [strategy.playbooks.zone_reaction_v2]
+session_filter_enabled = true
 enabled = true
 allowed_reactions = ["reject", "internal_reject"]
 fakeout_max_atr = 0.5
@@ -253,3 +254,30 @@ max_hold_candles = 96
 warmup_candles = 80
 zone_snapshot_candles = 600
 zone_loss_cooldown_candles = 12
+
+
+# Fixed UTC windows; Vietnam = UTC+7. End time is exclusive.
+[strategy.playbooks.zone_reaction_v2.sessions.asian]
+enabled = false
+start_utc = "00:00"
+end_utc = "07:00"
+
+[strategy.playbooks.zone_reaction_v2.sessions.london]
+enabled = false
+start_utc = "07:00"
+end_utc = "12:00"
+
+[strategy.playbooks.zone_reaction_v2.sessions.london_ny]
+enabled = true
+start_utc = "12:00"
+end_utc = "17:00"
+
+[strategy.playbooks.zone_reaction_v2.sessions.new_york]
+enabled = false
+start_utc = "17:00"
+end_utc = "21:00"
+
+[strategy.playbooks.zone_reaction_v2.sessions.off_hours]
+enabled = false
+start_utc = "21:00"
+end_utc = "24:00"

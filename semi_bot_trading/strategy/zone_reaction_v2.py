@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Any
 
 from ..config import StrategyConfig
+from ..trading_sessions import session_end
 from ..timeframes import timeframe_delta
 from .helpers import (
     average_body,
@@ -329,6 +330,8 @@ def evaluate_zone_reaction_v2(
 ) -> list[SetupCandidate]:
     if not config.zone_reaction_v2_enabled:
         return []
+    if config.zone_reaction_v2_session_filter_enabled and session_end(config, as_of) is None:
+        return []
     if str(zone.get("type")) not in PLAYBOOK_ZONE_TYPES["zone_reaction_v2"]:
         return []
 
@@ -573,6 +576,11 @@ def maybe_apply_impulse_retest_limit(
         return None
 
     expiry = impulse_limit_expiry(as_of, config.timeframe, expiry_bars)
+    if config.zone_reaction_v2_session_filter_enabled:
+        end = session_end(config, as_of)
+        if end is None:
+            return None
+        expiry = min(parse_utc_datetime(expiry), end).isoformat()
     metadata = {
         "impulse_limit": True,
         "impulse_limit_reason": "reject_extension",

@@ -804,6 +804,9 @@ class TestExecuteCandidate(unittest.TestCase):
         self._tmp = TemporaryDirectory()
         self._db_path, self._conn = _setup_db(self._tmp.name)
         self._config = replace(load_config(), database=self._db_path)
+        # Execution tests isolate broker behavior from the wall-clock schedule.
+        self._config = replace(self._config, strategy=replace(
+            self._config.strategy, zone_reaction_v2_session_filter_enabled=False))
         self._env = _make_env()
 
     def tearDown(self):
@@ -1893,6 +1896,9 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         self._tmp = TemporaryDirectory()
         self._db_path, self._conn = _setup_db(self._tmp.name)
         self._config = replace(load_config(), database=self._db_path)
+        # Execution tests isolate broker behavior from the wall-clock schedule.
+        self._config = replace(self._config, strategy=replace(
+            self._config.strategy, zone_reaction_v2_session_filter_enabled=False))
 
     def tearDown(self):
         self._conn.close()

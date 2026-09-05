@@ -421,3 +421,24 @@ python -m semi_bot_trading.cli research-report \
   --input var/research_zone_reaction_v2.csv \
   --html-output var/reports/research_zone_reaction_v2.html
 ```
+
+## Trading sessions
+
+Zone Reaction V2 chi nhan signal va gui lenh moi trong cac session duoc bat.
+Cau hinh tai `[strategy.playbooks.zone_reaction_v2]`:
+`session_filter_enabled = true`. Cac bang `sessions.<name>` co `enabled`,
+`start_utc`, `end_utc` (HH:MM). End exclusive; ho tro qua nua dem,
+end 24:00. Tat filter de giao dich ca ngay; filter bat nhung khong session nao
+enabled thi khong vao lenh.
+
+Mac dinh chi london_ny enabled, 12:00–17:00 UTC = 19:00–00:00 Viet Nam.
+Cac session Asian, London, New York, Off-hours duoc khai bao nhung disabled.
+Day la khung UTC co dinh, khong tu doi DST. Restart API/worker sau khi sua TOML.
+
+Gate ap dung ca human zones va bot zones, khong bi context bypass bo qua.
+Strategy/replay/backtest dung as_of; live executor kiem tra lai dong ho UTC
+truoc khi gui lenh. Limit moi bi cap expiration tai cuoi session (hoac TTL
+ngan hon). Lenh da fill van duoc quan ly SL/TP/partial/BE ngoai gio.
+Worker huy Zone Reaction pending ngoai session, ke ca lenh cu va broker GTC fallback;
+chi huy khi broker xac nhan pending. Lenh da fill/khong ro trang thai khong bi huy.
+Huy theo nhip poll nen co do tre; worker phai dang chay. News hard guard van uu tien.
