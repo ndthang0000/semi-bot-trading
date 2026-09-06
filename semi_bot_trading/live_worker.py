@@ -2577,6 +2577,18 @@ def maybe_weekend_flatten(
         return False
 
     action_date = _local_datetime(env, now).date().isoformat()
+    completed_key = f"weekend-flatten:{env.account_label}:{config.symbol}:{action_date}"
+    failed_key = f"weekend-flatten-failed:{env.account_label}:{config.symbol}:{action_date}"
+    prior_attempt = conn.execute(
+        """SELECT dedupe_key FROM alert_events
+        WHERE account_label=? AND dedupe_key IN (?,?) LIMIT 1""",
+        (env.account_label, completed_key, failed_key),
+    ).fetchone()
+    if prior_attempt is not None:
+        # A failed broker mutation must not be retried every worker poll. The
+        # critical alert leaves the remaining flatten work to the operator.
+        return False
+
     cancelled: list[dict[str, Any]] = []
     closed: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -2610,7 +2622,7 @@ def maybe_weekend_flatten(
                     *errors,
                 ],
             },
-            dedupe_key=f"weekend-flatten-failed:{env.account_label}:{config.symbol}:{action_date}",
+            dedupe_key=failed_key,
         )
 
     if cancelled:
@@ -2635,7 +2647,7 @@ def maybe_weekend_flatten(
                     f"Closed positions: {len(closed)}",
                 ],
             },
-            dedupe_key=f"weekend-flatten:{env.account_label}:{config.symbol}:{action_date}",
+            dedupe_key=completed_key,
         )
     if did_anything or errors:
         conn.commit()

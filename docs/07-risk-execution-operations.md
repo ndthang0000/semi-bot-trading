@@ -220,6 +220,13 @@ WEEKEND_NO_NEW_TRADES_TIME=12:00
 WEEKEND_FLATTEN_TIME=15:30
 ```
 
+Weekend flatten makes at most one broker mutation attempt per account, symbol,
+and New York action date. A failed cancellation or close queues the critical
+`Weekend flatten incomplete` alert and disables automatic retries for that date;
+the operator must inspect MT5 and handle any remaining exposure manually. This
+prevents a closed market or persistent broker rejection from generating an FTMO
+hyperactivity loop.
+
 Dung timezone New York de tu dong dung khi DST doi gio; tranh hard-code gio Viet Nam.
 
 ## News Time Normalization

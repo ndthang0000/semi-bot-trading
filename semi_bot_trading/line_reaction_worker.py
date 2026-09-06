@@ -39,6 +39,10 @@ def process_line_reactions(conn, config, env, client, broker_symbol, now):
             "SELECT * FROM trade_orders WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1",
             (idea_id,),
         ).fetchone()
+        # A hard-disabled worker may inspect persisted intents, but must never
+        # issue broker mutations such as pending-order cancellation.
+        if order is not None and not env.execution_enabled:
+            continue
         if _reconcile_trade_order(conn, line, order, client, broker_symbol, now):
             continue
 

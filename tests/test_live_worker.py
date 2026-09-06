@@ -2356,6 +2356,18 @@ class TestWeekendFlatten(unittest.TestCase):
         self.assertFalse(did_flatten)
         client.close_open_positions.assert_called_once_with("XAUUSDm", magic=None, comment="Friday flatten")
 
+        retried = maybe_weekend_flatten(
+            self._conn,
+            self._config,
+            env,
+            client,
+            "XAUUSDm",
+            datetime(2026, 6, 26, 19, 31, tzinfo=UTC),
+        )
+        self.assertFalse(retried)
+        client.cancel_pending_orders.assert_called_once()
+        client.close_open_positions.assert_called_once()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # sync_closed_positions
