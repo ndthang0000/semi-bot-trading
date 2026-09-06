@@ -1,4 +1,4 @@
-import { useEffect, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useMemo, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import type { ChartCandle } from "../../types";
 import { useLineReactionStore, type LinePlan } from "../../store/lineReactionStore";
@@ -17,13 +17,11 @@ export function LineReactionLayer({ chartRef, seriesRef, candles }: {
   const selectedId = useLineReactionStore(s => s.selectedId);
   const [preview, setPreview] = useState<ResizePreview | null>(null);
   const [resizeError, setResizeError] = useState("");
-  const [, render] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(() => render(n => n + 1), 150);
-    return () => clearInterval(timer);
-  }, []);
   const chart = chartRef.current, series = seriesRef.current;
-  const candleData = candles.map(candle => ({ ...candle, time: (Date.parse(candle.time) / 1000) as UTCTimestamp }));
+  const candleData = useMemo(
+    () => candles.map(candle => ({ ...candle, time: (Date.parse(candle.time) / 1000) as UTCTimestamp })),
+    [candles],
+  );
   const coordinate = (iso: string) => {
     if (!chart || candles.length < 2) return null;
     const seconds = Date.parse(iso) / 1000;

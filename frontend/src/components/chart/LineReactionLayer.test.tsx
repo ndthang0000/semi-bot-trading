@@ -43,6 +43,7 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   container?.remove();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   useLineReactionStore.setState({ plans: [], draft: null, selectedId: null });
 });
 
@@ -59,7 +60,9 @@ function renderLayer() {
 }
 
 it("renders Draft dashed and selects the line from the chart", async () => {
+  const interval = vi.spyOn(window, "setInterval");
   await renderLayer();
+  expect(interval).not.toHaveBeenCalled();
   const line = container.querySelector<HTMLElement>("[data-line-reaction='true']");
   expect(line?.className).toContain("border-dashed");
   await act(async () => line?.click());
