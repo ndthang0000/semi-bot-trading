@@ -321,6 +321,22 @@ class TestLineIntegration(unittest.TestCase):
         self.assertEqual("armed", row["status"])
         self.assertIsNone(row["signal_json"])
 
+    def test_line_transition_rejects_unexpected_source_status(self):
+        from semi_bot_trading.line_reaction_worker import transition_line
+        now = datetime.now(timezone.utc)
+        self.conn.execute(
+            """INSERT INTO line_reaction_plans
+            (id,symbol,account_label,direction,price,status,config_json,expires_at,created_at,updated_at)
+            VALUES ('guarded','XAUUSD','Test','long',3000,'draft',?,?,?,?)""",
+            (LineConfig().model_dump_json(), (now+timedelta(hours=1)).isoformat(), now.isoformat(), now.isoformat()),
+        )
+        self.conn.commit()
+        self.assertFalse(transition_line(self.conn, "guarded", {"armed"}, "executing", now))
+        self.assertEqual("draft", self.conn.execute(
+            "SELECT status FROM line_reaction_plans WHERE id='guarded'"
+        ).fetchone()[0])
+        self.assertTrue(transition_line(self.conn, "guarded", {"draft"}, "armed", now))
+
     def test_full_app_routes_precede_spa_and_api_misses_are_json(self):
         from tests.test_api import authenticated_test_client, write_test_config
         root = Path(self.tmp.name)

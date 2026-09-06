@@ -1,128 +1,251 @@
-"""Account-scoped line processing. A unique DB claim survives worker restarts."""
+"""Account-scoped Line Reaction processing with durable execution claims."""
+
 import json
 import sqlite3
-from datetime import timedelta
-from .line_reaction import PLAYBOOK, evaluate_line, price_line, dt
+from datetime import datetime, timedelta
+from typing import Any
+
+from .chart import build_wave_metrics, load_chart_candles, load_chart_structure
+from .line_reaction import PLAYBOOK, dt, evaluate_line, price_line
 from .line_reaction_api import row_api
-from .chart import load_chart_candles, load_chart_structure, build_wave_metrics
-from .zones import latest_atr
 from .strategy.helpers import chart_candles_to_slices
 from .trading_sessions import selected_session_end
+from .zones import latest_atr
+
+
+ACTIVE_STATUSES = frozenset({"armed", "executing", "pending", "open", "cancel_requested"})
 
 
 def process_line_reactions(conn, config, env, client, broker_symbol, now):
-    from .live_worker import maybe_execute_candidates, live_trade_idea_id, manual_ai_risk_pct
+    """Advance every active Line Reaction plan for one worker account."""
+    from .live_worker import live_trade_idea_id, manual_ai_risk_pct, maybe_execute_candidates
+
     if not env.execution_enabled:
         return
-    rows = conn.execute("""SELECT * FROM line_reaction_plans
+    rows = conn.execute(
+        """SELECT * FROM line_reaction_plans
         WHERE account_label=? AND symbol=? AND status IN ('armed','executing','pending','open','cancel_requested')
-        ORDER BY created_at,id""", (env.account_label,config.symbol)).fetchall()
+        ORDER BY created_at,id""",
+        (env.account_label, config.symbol),
+    ).fetchall()
     for raw in rows:
         line = row_api(raw)
-        idea = live_trade_idea_id(line["id"], account_label=env.account_label)
-        order = conn.execute("SELECT * FROM trade_orders WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1", (idea,)).fetchone()
-        if order is not None:
-            if order["status"] == "filled":
-                _status(conn,line,"open",now)
-                continue
-            if order["status"] not in {"pending_fill"}:
-                _status(conn,line,"closed" if order["status"] == "closed" else "cancelled",now)
-                continue
-            expiry = dt(line["expires_at"])
-            if line["signal"]:
-                expiry = min(expiry, dt(line["signal"]["signal_close_time"])+timedelta(minutes=line["config"]["limit_ttl_minutes"]))
-            outside_session = selected_session_end(line["config"]["trade_sessions"], now.isoformat()) is None
-            if now >= expiry or line["status"] == "cancel_requested" or outside_session:
-                metadata = json.loads(order["metadata_json"])
-                ticket = str(metadata.get("broker_order_id") or "")
-                try:
-                    state = client.get_pending_order_state(broker_symbol, order_ticket=ticket)
-                    if state == "pending":
-                        client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Line session ended" if outside_session else "Line expired")
-                    elif state not in {"cancelled", "expired"}:
-                        continue
-                except Exception as exc:
-                    conn.execute("UPDATE line_reaction_plans SET last_error=? WHERE id=?", (str(exc),line["id"]))
-                    conn.commit()
-                    continue
-                conn.execute("UPDATE trade_orders SET status='cancelled',closed_at=?,updated_at=? WHERE id=? AND status='pending_fill'",
-                             (now.isoformat(),now.isoformat(),order["id"]))
-                _status(conn,line,"cancelled" if line["status"]=="cancel_requested" or outside_session else "expired",now)
-            else:
-                _status(conn,line,"pending",now)
+        idea_id = live_trade_idea_id(line["id"], account_label=env.account_label)
+        order = conn.execute(
+            "SELECT * FROM trade_orders WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id,),
+        ).fetchone()
+        if _reconcile_trade_order(conn, line, order, client, broker_symbol, now):
             continue
-        request = conn.execute("SELECT status FROM execution_requests WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1", (idea,)).fetchone()
-        if request:
-            # Unknown/sent intents without an order remain reserved for reconciliation.
-            if request["status"] in {"failed", "cancelled"}:
-                _status(conn,line,"failed",now)
+
+        request = conn.execute(
+            "SELECT status FROM execution_requests WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id,),
+        ).fetchone()
+        if _reconcile_execution_request(conn, line, request, now):
             continue
-        if now >= dt(line["expires_at"]) or line["status"] == "cancel_requested":
-            _status(conn,line,"cancelled" if line["status"]=="cancel_requested" else "expired",now)
+        if _stop_expired_or_cancelled_line(conn, line, now):
             continue
         if not config.strategy.line_reaction_v1_enabled:
             continue
+
         session_close = selected_session_end(line["config"]["trade_sessions"], now.isoformat())
         if session_close is None:
-            if line["signal"] is not None and line["status"] == "executing":
-                conn.execute("""UPDATE line_reaction_plans SET status='armed',signal_json=NULL,
-                    last_error='Signal cleared because its selected trading session ended',updated_at=? WHERE id=?""",
-                    (now.isoformat(), line["id"]))
-                conn.commit()
+            _clear_unsubmitted_signal_after_session(conn, line, now)
             continue
+
         signal = line["signal"]
         if signal is None:
-            candles = load_chart_candles(conn,config.symbol,"M15",line["config"]["body_period"]+15,end=now.isoformat())
-            candles = [c for c in candles if dt(c["time"])+timedelta(minutes=15)<=now]
-            h1 = load_chart_candles(conn,config.symbol,"H1",500,end=now.isoformat())
-            h1 = [c for c in h1 if dt(c["time"])+timedelta(hours=1)<=now]
-            atr = latest_atr(chart_candles_to_slices(candles),14)
-            h1_atr = latest_atr(chart_candles_to_slices(h1),14)
-            if atr is None or h1_atr is None:
-                continue
-            signal = evaluate_line(line,candles,atr,h1_atr,now)
-            if signal is None:
-                continue
-            wave = build_wave_metrics(
-                load_chart_structure(conn,config.symbol,"H1",h1[0]["time"],signal["signal_close_time"]),
-                h1,as_of=signal["signal_close_time"])
-            signal["wave_metrics"] = wave
-            try:
-                conn.commit()
-                conn.execute("BEGIN IMMEDIATE")
-                changed = conn.execute("""UPDATE line_reaction_plans SET status='executing',signal_json=?,updated_at=?
-                    WHERE id=? AND status='armed'""", (json.dumps(signal),now.isoformat(),line["id"])).rowcount
-                conn.commit()
-            except sqlite3.IntegrityError:
-                conn.rollback()
-                continue
-            if not changed:
+            signal = _detect_line_signal(conn, config, line, now)
+            if signal is None or not _claim_line_signal(conn, line["id"], signal, now):
                 continue
             line["signal"] = signal
-        if now >= dt(signal["signal_close_time"])+timedelta(minutes=15):
-            _status(conn,line,"expired",now)
+            line["status"] = "executing"
+
+        if now >= dt(signal["signal_close_time"]) + timedelta(minutes=15):
+            transition_line(conn, line["id"], {"executing"}, "expired", now)
             continue
-        try:
-            broker_price = client.current_price_for_side(broker_symbol,"buy" if line["direction"]=="long" else "sell")
-            levels = price_line(line,signal,broker_price,signal.get("wave_metrics"))
-            levels["expires_at"] = min(dt(levels["expires_at"]), session_close).isoformat()
-            candidate = {"id":line["id"],"symbol":config.symbol,"timeframe":"M15","playbook":PLAYBOOK,
-                "direction":line["direction"],"status":"eligible","score":1,
-                "reason":["Closed M15 single-ended recovery touched armed line"],
-                "related_zone_ids":[],"primary_zone_id":None,**levels}
-            maybe_execute_candidates(conn,config,env,client,[candidate],broker_symbol,
-                                     risk_pct_override=manual_ai_risk_pct(env.account_profile))
-            execution = conn.execute("SELECT status FROM execution_requests WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1", (idea,)).fetchone()
-            conn.execute("UPDATE line_reaction_plans SET last_error=? WHERE id=?",
-                         (None if execution and execution["status"] == "sent" else
-                          "Entry deferred/rejected: check spread, account, news and risk execution events.",line["id"]))
-            conn.commit()
-        except Exception as exc:
-            conn.execute("UPDATE line_reaction_plans SET last_error=?,updated_at=? WHERE id=?",
-                         (str(exc),now.isoformat(),line["id"]))
-            conn.commit()
+
+        _submit_line_candidate(
+            conn, config, env, client, broker_symbol, line, signal, session_close,
+            idea_id, now, maybe_execute_candidates, manual_ai_risk_pct(env.account_profile),
+        )
 
 
-def _status(conn,line,status,now):
-    conn.execute("UPDATE line_reaction_plans SET status=?,updated_at=? WHERE id=?", (status,now.isoformat(),line["id"]))
+def _reconcile_trade_order(conn, line, order, client, broker_symbol, now: datetime) -> bool:
+    """Synchronize a Line that already has a durable trade order."""
+    if order is None:
+        return False
+    if order["status"] == "filled":
+        transition_line(conn, line["id"], ACTIVE_STATUSES, "open", now)
+        return True
+    if order["status"] != "pending_fill":
+        next_status = "closed" if order["status"] == "closed" else "cancelled"
+        transition_line(conn, line["id"], ACTIVE_STATUSES, next_status, now)
+        return True
+
+    expiry = dt(line["expires_at"])
+    if line["signal"]:
+        signal_expiry = dt(line["signal"]["signal_close_time"]) + timedelta(
+            minutes=line["config"]["limit_ttl_minutes"]
+        )
+        expiry = min(expiry, signal_expiry)
+    outside_session = selected_session_end(line["config"]["trade_sessions"], now.isoformat()) is None
+    must_cancel = now >= expiry or line["status"] == "cancel_requested" or outside_session
+    if not must_cancel:
+        transition_line(conn, line["id"], ACTIVE_STATUSES, "pending", now)
+        return True
+
+    metadata = json.loads(order["metadata_json"] or "{}")
+    ticket = str(metadata.get("broker_order_id") or "")
+    try:
+        broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket)
+        if broker_state == "pending":
+            reason = "Line session ended" if outside_session else "Line expired"
+            client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment=reason)
+        elif broker_state not in {"cancelled", "expired"}:
+            return True
+    except Exception as exc:
+        _record_line_error(conn, line["id"], str(exc), now)
+        return True
+
+    conn.execute(
+        "UPDATE trade_orders SET status='cancelled',closed_at=?,updated_at=? WHERE id=? AND status='pending_fill'",
+        (now.isoformat(), now.isoformat(), order["id"]),
+    )
+    next_status = "cancelled" if line["status"] == "cancel_requested" or outside_session else "expired"
+    transition_line(conn, line["id"], ACTIVE_STATUSES, next_status, now)
+    return True
+
+
+def _reconcile_execution_request(conn, line, request, now: datetime) -> bool:
+    """Keep persisted intents reserved and project terminal failures onto the Line."""
+    if request is None:
+        return False
+    if request["status"] in {"failed", "cancelled"}:
+        transition_line(conn, line["id"], ACTIVE_STATUSES, "failed", now)
+    return True
+
+
+def _stop_expired_or_cancelled_line(conn, line, now: datetime) -> bool:
+    if now < dt(line["expires_at"]) and line["status"] != "cancel_requested":
+        return False
+    next_status = "cancelled" if line["status"] == "cancel_requested" else "expired"
+    transition_line(conn, line["id"], ACTIVE_STATUSES, next_status, now)
+    return True
+
+
+def _clear_unsubmitted_signal_after_session(conn, line, now: datetime) -> None:
+    if line["signal"] is None or line["status"] != "executing":
+        return
+    conn.execute(
+        """UPDATE line_reaction_plans
+        SET status='armed',signal_json=NULL,
+            last_error='Signal cleared because its selected trading session ended',updated_at=?
+        WHERE id=? AND status='executing'""",
+        (now.isoformat(), line["id"]),
+    )
+    conn.commit()
+
+
+def _detect_line_signal(conn, config, line, now: datetime) -> dict[str, Any] | None:
+    """Build one closed-candle signal and freeze its ATR/wave evidence."""
+    candles = load_chart_candles(
+        conn, config.symbol, "M15", line["config"]["body_period"] + 15, end=now.isoformat(),
+    )
+    candles = [candle for candle in candles if dt(candle["time"]) + timedelta(minutes=15) <= now]
+    h1_candles = load_chart_candles(conn, config.symbol, "H1", 500, end=now.isoformat())
+    h1_candles = [candle for candle in h1_candles if dt(candle["time"]) + timedelta(hours=1) <= now]
+    atr = latest_atr(chart_candles_to_slices(candles), 14)
+    h1_atr = latest_atr(chart_candles_to_slices(h1_candles), 14)
+    if atr is None or h1_atr is None:
+        return None
+    signal = evaluate_line(line, candles, atr, h1_atr, now)
+    if signal is None:
+        return None
+    signal["wave_metrics"] = build_wave_metrics(
+        load_chart_structure(
+            conn, config.symbol, "H1", h1_candles[0]["time"], signal["signal_close_time"],
+        ),
+        h1_candles,
+        as_of=signal["signal_close_time"],
+    )
+    return signal
+
+
+def _claim_line_signal(conn, line_id: str, signal: dict[str, Any], now: datetime) -> bool:
+    """Atomically reserve the account slot before any execution work begins."""
+    try:
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        changed = conn.execute(
+            """UPDATE line_reaction_plans SET status='executing',signal_json=?,updated_at=?
+            WHERE id=? AND status='armed' AND removed_at IS NULL""",
+            (json.dumps(signal), now.isoformat(), line_id),
+        ).rowcount
+        conn.commit()
+        return bool(changed)
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return False
+
+
+def _submit_line_candidate(
+    conn, config, env, client, broker_symbol, line, signal, session_close,
+    idea_id, now, execute_candidates, risk_pct,
+) -> None:
+    """Price and hand one reserved Line to the shared live execution engine."""
+    try:
+        side = "buy" if line["direction"] == "long" else "sell"
+        broker_price = client.current_price_for_side(broker_symbol, side)
+        levels = price_line(line, signal, broker_price, signal.get("wave_metrics"))
+        levels["expires_at"] = min(dt(levels["expires_at"]), session_close).isoformat()
+        candidate = {
+            "id": line["id"], "symbol": config.symbol, "timeframe": "M15", "playbook": PLAYBOOK,
+            "direction": line["direction"], "status": "eligible", "score": 1,
+            "reason": ["Closed M15 single-ended recovery touched armed line"],
+            "related_zone_ids": [], "primary_zone_id": None, **levels,
+        }
+        execute_candidates(
+            conn, config, env, client, [candidate], broker_symbol, risk_pct_override=risk_pct,
+        )
+        execution = conn.execute(
+            "SELECT status FROM execution_requests WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id,),
+        ).fetchone()
+        error = None if execution and execution["status"] == "sent" else (
+            "Entry deferred/rejected: check spread, account, news and risk execution events."
+        )
+        _record_line_error(conn, line["id"], error, now)
+    except Exception as exc:
+        _record_line_error(conn, line["id"], str(exc), now)
+
+
+def transition_line(
+    conn,
+    line_id: str,
+    from_statuses: set[str] | frozenset[str],
+    to_status: str,
+    now: datetime,
+) -> bool:
+    """Commit one guarded lifecycle transition and report whether it applied."""
+    allowed = sorted(from_statuses)
+    if not allowed:
+        return False
+    parameters: list[Any] = [to_status, now.isoformat()]
+    placeholders = ",".join("?" for _ in allowed)
+    parameters.extend((line_id, *allowed))
+    changed = conn.execute(
+        f"UPDATE line_reaction_plans SET status=?,updated_at=? WHERE id=? AND status IN ({placeholders})",
+        parameters,
+    ).rowcount
+    conn.commit()
+    return bool(changed)
+
+
+def _record_line_error(conn, line_id: str, error: str | None, now: datetime) -> None:
+    conn.execute(
+        "UPDATE line_reaction_plans SET last_error=?,updated_at=? WHERE id=?",
+        (error, now.isoformat(), line_id),
+    )
     conn.commit()
