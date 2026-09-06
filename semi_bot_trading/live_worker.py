@@ -2630,7 +2630,7 @@ def maybe_weekend_flatten(
     if closed:
         sync_closed_positions(conn, config, env, client, broker_symbol)
 
-    if did_anything and not errors:
+    if not errors:
         queue_alert(
             conn,
             account_label=env.account_label,
@@ -2649,8 +2649,10 @@ def maybe_weekend_flatten(
             },
             dedupe_key=completed_key,
         )
-    if did_anything or errors:
-        conn.commit()
+    # Persist a completion marker even when the account already has no
+    # exposure. Otherwise the worker repeats both account-wide MT5 scans every
+    # poll for the entire weekend window.
+    conn.commit()
     return did_anything and not errors
 
 

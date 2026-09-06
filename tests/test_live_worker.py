@@ -2368,6 +2368,38 @@ class TestWeekendFlatten(unittest.TestCase):
         client.cancel_pending_orders.assert_called_once()
         client.close_open_positions.assert_called_once()
 
+    def test_weekend_flatten_does_not_repeat_when_account_has_no_exposure(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        client = _fake_client()
+        client.cancel_pending_orders.return_value = []
+        client.close_open_positions.return_value = []
+        first = datetime(2026, 6, 26, 19, 30, tzinfo=UTC)
+
+        did_flatten = maybe_weekend_flatten(
+            self._conn, self._config, env, client, "XAUUSDm", first
+        )
+        retried = maybe_weekend_flatten(
+            self._conn,
+            self._config,
+            env,
+            client,
+            "XAUUSDm",
+            first + timedelta(minutes=1),
+        )
+
+        self.assertFalse(did_flatten)
+        self.assertFalse(retried)
+        client.cancel_pending_orders.assert_called_once()
+        client.close_open_positions.assert_called_once()
+        marker = self._conn.execute(
+            "SELECT dedupe_key FROM alert_events WHERE account_label = ?",
+            (env.account_label,),
+        ).fetchone()
+        self.assertEqual(
+            "weekend-flatten:Test:XAUUSD:2026-06-26",
+            marker["dedupe_key"],
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # sync_closed_positions
