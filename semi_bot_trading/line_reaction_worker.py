@@ -6,25 +6,29 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .chart import build_wave_metrics, load_chart_candles, load_chart_structure
-from .line_reaction import PLAYBOOK, dt, evaluate_line, price_line
+from .line_reaction import PLAYBOOK, SESSION_ENDED_BEFORE_EXECUTION, dt, evaluate_line, price_line
 from .line_reaction_api import row_api
 from .strategy.helpers import chart_candles_to_slices
 from .trading_sessions import selected_session_end
 from .zones import latest_atr
 
 
-ACTIVE_STATUSES = frozenset({"armed", "executing", "pending", "open", "cancel_requested"})
+ACTIVE_STATUSES = frozenset(
+    {"armed", "executing", "pending", "open", "cancel_requested", "reconciliation_required"}
+)
+UNKNOWN_INTENT_ERROR = (
+    "Execution state is uncertain after worker interruption. Check MT5 before resolving this Line."
+)
 
 
 def process_line_reactions(conn, config, env, client, broker_symbol, now):
     """Advance every active Line Reaction plan for one worker account."""
     from .live_worker import live_trade_idea_id, manual_ai_risk_pct, maybe_execute_candidates
 
-    if not env.execution_enabled:
-        return
     rows = conn.execute(
         """SELECT * FROM line_reaction_plans
-        WHERE account_label=? AND symbol=? AND status IN ('armed','executing','pending','open','cancel_requested')
+        WHERE account_label=? AND symbol=?
+          AND status IN ('armed','executing','pending','open','cancel_requested','reconciliation_required')
         ORDER BY created_at,id""",
         (env.account_label, config.symbol),
     ).fetchall()
@@ -39,12 +43,18 @@ def process_line_reactions(conn, config, env, client, broker_symbol, now):
             continue
 
         request = conn.execute(
-            "SELECT status FROM execution_requests WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1",
+            """SELECT id,status,failure_reason,created_at,updated_at
+            FROM execution_requests WHERE trade_idea_id=? ORDER BY created_at DESC LIMIT 1""",
             (idea_id,),
         ).fetchone()
-        if _reconcile_execution_request(conn, line, request, now):
+        if _reconcile_execution_request(
+            conn, line, request, client, broker_symbol, env.mt5_magic,
+            config.strategy.line_reaction_v1_pending_intent_grace_minutes, now,
+        ):
             continue
         if _stop_expired_or_cancelled_line(conn, line, now):
+            continue
+        if not env.execution_enabled:
             continue
         if not config.strategy.line_reaction_v1_enabled:
             continue
@@ -118,12 +128,58 @@ def _reconcile_trade_order(conn, line, order, client, broker_symbol, now: dateti
     return True
 
 
-def _reconcile_execution_request(conn, line, request, now: datetime) -> bool:
+def _reconcile_execution_request(
+    conn, line, request, client, broker_symbol: str, magic: int,
+    grace_minutes: int, now: datetime,
+) -> bool:
     """Keep persisted intents reserved and project terminal failures onto the Line."""
     if request is None:
         return False
-    if request["status"] in {"failed", "cancelled"}:
+    status = request["status"]
+    if status == "cancelled" and request["failure_reason"] == SESSION_ENDED_BEFORE_EXECUTION:
+        return False
+    if status in {"failed", "cancelled"}:
         transition_line(conn, line["id"], ACTIVE_STATUSES, "failed", now)
+    elif status in {"pending", "reconciliation_required"}:
+        if status == "pending" and now < dt(request["created_at"]) + timedelta(minutes=grace_minutes):
+            return True
+        try:
+            open_positions, pending_orders = client.bot_order_counts(broker_symbol, magic=magic)
+        except Exception:
+            open_positions, pending_orders = -1, -1
+        if open_positions == 0 and pending_orders == 0:
+            cleared_error = (
+                "Stale execution intent stopped after MT5 confirmed no active bot "
+                "position or pending order for this symbol."
+            )
+            conn.execute(
+                """UPDATE execution_requests
+                SET status='failed',failure_reason=?,updated_at=?
+                WHERE id=? AND status IN ('pending','reconciliation_required')""",
+                (cleared_error, now.isoformat(), request["id"]),
+            )
+            conn.execute(
+                """UPDATE line_reaction_plans
+                SET status='failed',last_error=?,updated_at=?
+                WHERE id=? AND status IN ('executing','pending','reconciliation_required')""",
+                (cleared_error, now.isoformat(), line["id"]),
+            )
+            conn.commit()
+            return True
+        if status == "pending":
+            conn.execute(
+                """UPDATE execution_requests
+                SET status='reconciliation_required',failure_reason=?,updated_at=?
+                WHERE id=? AND status='pending'""",
+                (UNKNOWN_INTENT_ERROR, now.isoformat(), request["id"]),
+            )
+            conn.execute(
+                """UPDATE line_reaction_plans
+                SET status='reconciliation_required',last_error=?,updated_at=?
+                WHERE id=? AND status IN ('executing','pending')""",
+                (UNKNOWN_INTENT_ERROR, now.isoformat(), line["id"]),
+            )
+            conn.commit()
     return True
 
 

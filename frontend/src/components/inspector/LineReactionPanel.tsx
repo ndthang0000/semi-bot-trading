@@ -27,6 +27,7 @@ const statusBadgeClass = (status: string) => {
   if (status === "draft") return "border-amber-400/30 bg-amber-400/10 text-amber-200";
   if (status === "armed") return "border-emerald-400/30 bg-emerald-400/10 text-emerald-200";
   if (["executing", "pending", "cancel_requested"].includes(status)) return "border-cyan-400/30 bg-cyan-400/10 text-cyan-200";
+  if (status === "reconciliation_required") return "border-rose-400/40 bg-rose-400/10 text-rose-200";
   return "border-ink-700 bg-ink-950 text-slate-400";
 };
 export function LineReactionPanel({ symbol }: { symbol: string }) {

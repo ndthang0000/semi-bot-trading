@@ -231,6 +231,7 @@ class StrategyConfig:
     h1_impulse_retest_v1_max_order_ttl_hours: int = 48
     h1_impulse_retest_v1_max_signal_age_hours: int = 48
     line_reaction_v1_enabled: bool = True
+    line_reaction_v1_pending_intent_grace_minutes: int = 5
     zone_reaction_v2_session_filter_enabled: bool = False
     zone_reaction_v2_sessions: tuple[tuple[str, bool, str, str], ...] = ()
 
@@ -429,6 +430,10 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             max_eligible=int(strategy.get("max_eligible", 3)),
             max_waiting=int(strategy.get("max_waiting", 5)),
             line_reaction_v1_enabled=bool(strategy_playbooks.get("line_reaction_v1", {}).get("enabled", True)),
+            line_reaction_v1_pending_intent_grace_minutes=max(
+                1,
+                int(strategy_playbooks.get("line_reaction_v1", {}).get("pending_intent_grace_minutes", 5)),
+            ),
             zone_reaction_v2_session_filter_enabled=bool(zone_reaction_v2.get("session_filter_enabled", False)),
             zone_reaction_v2_sessions=parse_sessions(zone_reaction_v2.get("sessions", {})),
             zone_reaction_v2_enabled=bool(zone_reaction_v2.get("enabled", True)),

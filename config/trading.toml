@@ -285,3 +285,4 @@ end_utc = "24:00"
 # Per-line configuration is stored by the dashboard; Draft is inert.
 [strategy.playbooks.line_reaction_v1]
 enabled = true
+pending_intent_grace_minutes = 5

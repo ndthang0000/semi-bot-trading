@@ -22,7 +22,7 @@ def _group_rows(rows):
         row = row_api(raw)
         group_id = row.get("client_group_id") or row["id"]
         groups.setdefault(group_id, []).append(row)
-    status_order = ("open", "executing", "pending", "cancel_requested", "armed", "draft", "failed", "expired", "cancelled", "closed")
+    status_order = ("open", "executing", "pending", "reconciliation_required", "cancel_requested", "armed", "draft", "failed", "expired", "cancelled", "closed")
     priority = {name: index for index, name in enumerate(status_order)}
     plans = []
     for group_id, members in groups.items():
@@ -77,7 +77,26 @@ def register_line_routes(app, config, require_auth):
     @app.get("/api/line-reactions")
     def list_lines(_: str = Depends(require_auth)):
         with closing(connect(config.database)) as conn:
-            rows = conn.execute("SELECT * FROM line_reaction_plans WHERE removed_at IS NULL ORDER BY created_at DESC").fetchall()
+            rows = conn.execute(
+                """WITH latest_groups AS (
+                    SELECT COALESCE(client_group_id,id) AS group_id,
+                           MAX(created_at) AS latest_created_at,
+                           MAX(CASE WHEN status NOT IN ('failed','expired','cancelled','closed')
+                               THEN 1 ELSE 0 END) AS is_active
+                    FROM line_reaction_plans
+                    WHERE removed_at IS NULL
+                    GROUP BY COALESCE(client_group_id,id)
+                    ORDER BY is_active DESC,latest_created_at DESC
+                    LIMIT 20
+                )
+                SELECT plans.*
+                FROM latest_groups
+                JOIN line_reaction_plans AS plans
+                  ON COALESCE(plans.client_group_id,plans.id)=latest_groups.group_id
+                WHERE plans.removed_at IS NULL
+                ORDER BY latest_groups.is_active DESC,latest_groups.latest_created_at DESC,
+                         plans.created_at,plans.id"""
+            ).fetchall()
             return {"plans": _group_rows(rows), "sessions": session_catalog_api()}
 
     @app.post("/api/line-reactions")

@@ -87,9 +87,17 @@ account partial settings never overwrite it.
 
 Draft -> Armed -> Executing (reserved) -> Pending/Open -> Closed.
 Cancelled/Expired/Failed are terminal. One execution attempt per line.
-Unknown broker intents remain reserved for reconciliation, never blindly retried.
-SQLite unique partial index on account_label for executing/pending/open/cancel_requested
-serializes Line Reaction exposure per account across symbols/worker processes.
+After `pending_intent_grace_minutes` (default five), an interrupted `pending`
+intent is checked against active MT5
+bot exposure for the symbol. If MT5 confirms there is no bot position or pending
+order, the attempt becomes Failed and releases the account slot without retrying.
+If exposure exists or MT5 cannot confirm state, it becomes
+`reconciliation_required`, retains the reservation, and shows an explicit error.
+The worker keeps checking and releases the slot only after active bot exposure is
+gone. Unknown broker intents are never blindly retried.
+SQLite unique partial index on account_label for executing/pending/open/cancel_requested/
+reconciliation_required serializes Line Reaction exposure per account across
+symbols/worker processes.
 Intent existence is rechecked inside BEGIN IMMEDIATE before persistence.
 Multiple armed lines may wait; only one can reserve. Accounts are independent.
 
@@ -105,7 +113,10 @@ Create requests carry a client-generated idempotency key so a successful POST is
 not duplicated when the following refresh fails. Removing an account from a Draft
 or Armed group marks its member row cancelled and removed while retaining the row
 for audit.
-GET/POST /api/line-reactions; POST /api/line-reactions/{id}/arm or /cancel.
+GET /api/line-reactions returns at most 20 logical Line groups with all account
+members for each group, prioritizing non-terminal Lines before recent history. POST
+/api/line-reactions; POST
+/api/line-reactions/{id}/arm or /cancel.
 PATCH /api/line-reactions/{id} updates Draft or Armed groups. Once any member is
 Executing/Pending/Open, geometry and config are locked to avoid changing a plan
 during broker submission.

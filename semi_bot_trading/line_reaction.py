@@ -9,6 +9,7 @@ from .strategy.h1_impulse_retest_v1 import apply_h1_impulse_target_mode
 from .trading_sessions import SESSION_NAMES
 
 PLAYBOOK = "line_reaction_v1"
+SESSION_ENDED_BEFORE_EXECUTION = "Selected Line trading session ended before broker execution"
 
 
 class LineConfig(BaseModel):

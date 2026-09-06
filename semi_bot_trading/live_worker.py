@@ -20,6 +20,7 @@ from .chart import build_chart_payload
 from .config import AppConfig
 from .context import MarketContext, detect_and_store_bias, detect_and_store_macro_trend, detect_and_store_regime
 from .db import connect, init_db
+from .line_reaction import SESSION_ENDED_BEFORE_EXECUTION
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
 from .news_calendar import active_ftmo_news_window, active_news_blackout, news_calendar_is_fresh, should_notify_news
 from .price_action import detect_and_store_price_action_patterns
@@ -3014,7 +3015,7 @@ def execute_candidate(
             if selected_session_end(candidate["metadata"]["line_config"]["trade_sessions"], utc_now_iso()) is None:
                 conn.execute(
                     "UPDATE execution_requests SET status='cancelled',failure_reason=?,updated_at=? WHERE id=?",
-                    ("Selected Line trading session ended before broker execution", utc_now_iso(), request_id),
+                    (SESSION_ENDED_BEFORE_EXECUTION, utc_now_iso(), request_id),
                 )
                 conn.execute(
                     "UPDATE line_reaction_plans SET status='armed',signal_json=NULL,last_error=?,updated_at=? WHERE id=? AND status='executing'",
@@ -3926,6 +3927,8 @@ def live_candidate_already_executed(conn: Connection, candidate_id: str, *, acco
 
     'pending'  — intent committed to DB before MT5 call; process may have crashed
                  mid-flight. Treat as already-in-progress to prevent duplicate orders.
+    'reconciliation_required' — broker exposure is still present or could not be
+                 verified after an interrupted request. Keep the candidate reserved.
     'sent'     — MT5 accepted the order; it may still be pending at the broker.
     'filled'   — the candidate has already produced a real position. Keep it
                  permanently consumed even after that position closes.
@@ -3939,7 +3942,7 @@ def live_candidate_already_executed(conn: Connection, candidate_id: str, *, acco
         JOIN execution_requests er ON er.trade_idea_id = ti.id
         WHERE ti.id = ?
           AND er.account_label = ?
-          AND er.status IN ('pending', 'sent', 'filled', 'closed')
+          AND er.status IN ('pending', 'reconciliation_required', 'sent', 'filled', 'closed')
         """,
         (live_trade_idea_id(candidate_id, account_label=account_label), account_label),
     ).fetchone()

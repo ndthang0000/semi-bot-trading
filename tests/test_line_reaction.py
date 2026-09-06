@@ -204,6 +204,63 @@ class TestLineIntegration(unittest.TestCase):
             self.conn.execute("SELECT status FROM line_reaction_plans WHERE account_label='Second'").fetchone()[0],
         )
 
+    def test_list_returns_twenty_newest_groups_without_truncating_accounts(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from semi_bot_trading.line_reaction_api import register_line_routes
+
+        now = datetime.now(timezone.utc)
+        config_json = LineConfig().model_dump_json()
+        for index in range(21):
+            group_id = f"group-{index:02d}"
+            created_at = (now + timedelta(minutes=index)).isoformat()
+            accounts = ("Test", "Second") if index == 20 else ("Test",)
+            for account in accounts:
+                self.conn.execute(
+                    """INSERT INTO line_reaction_plans
+                    (id,client_group_id,symbol,account_label,direction,price,status,config_json,
+                     expires_at,created_at,updated_at)
+                    VALUES (?,?,'XAUUSD',?,'long',?,'draft',?,?,?,?)""",
+                    (f"{group_id}-{account}", group_id, account, 3000 + index, config_json,
+                     (now + timedelta(days=2)).isoformat(), created_at, created_at),
+                )
+        self.conn.commit()
+        app = FastAPI(); register_line_routes(app, self.config, lambda: "test")
+
+        plans = TestClient(app).get("/api/line-reactions").json()["plans"]
+
+        self.assertEqual(20, len(plans))
+        self.assertEqual("group-20", plans[0]["id"])
+        self.assertEqual(["Second", "Test"], plans[0]["account_labels"])
+        self.assertNotIn("group-00", {plan["id"] for plan in plans})
+
+    def test_list_keeps_non_terminal_group_ahead_of_newer_history(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from semi_bot_trading.line_reaction_api import register_line_routes
+
+        now = datetime.now(timezone.utc)
+        for index in range(21):
+            status = "armed" if index == 0 else "closed"
+            created_at = (now + timedelta(minutes=index)).isoformat()
+            self.conn.execute(
+                """INSERT INTO line_reaction_plans
+                (id,client_group_id,symbol,account_label,direction,price,status,config_json,
+                 expires_at,created_at,updated_at)
+                VALUES (?,?, 'XAUUSD','Test','long',?,?,?, ?,?,?)""",
+                (f"priority-{index:02d}", f"priority-{index:02d}", 3000 + index, status,
+                 LineConfig().model_dump_json(), (now + timedelta(days=2)).isoformat(),
+                 created_at, created_at),
+            )
+        self.conn.commit()
+        app = FastAPI(); register_line_routes(app, self.config, lambda: "test")
+
+        plans = TestClient(app).get("/api/line-reactions").json()["plans"]
+
+        self.assertEqual(20, len(plans))
+        self.assertEqual("priority-00", plans[0]["id"])
+        self.assertNotIn("priority-01", {plan["id"] for plan in plans})
+
     def _seed_triggered(self, identifier="test-line"):
         now = datetime.now(timezone.utc)
         from datetime import timedelta
@@ -320,6 +377,116 @@ class TestLineIntegration(unittest.TestCase):
         row = self.conn.execute("SELECT status,signal_json FROM line_reaction_plans").fetchone()
         self.assertEqual("armed", row["status"])
         self.assertIsNone(row["signal_json"])
+
+        from semi_bot_trading.line_reaction_worker import process_line_reactions
+        process_line_reactions(
+            self.conn, self.config, _make_env(), broker, "XAUUSDm", datetime.now(timezone.utc)
+        )
+        self.assertEqual(
+            "armed", self.conn.execute("SELECT status FROM line_reaction_plans").fetchone()[0]
+        )
+
+    def _seed_stale_pending_intent(self):
+        from semi_bot_trading.live_worker import live_trade_idea_id
+
+        now = self._seed_triggered()
+        idea_id = live_trade_idea_id("test-line", account_label="Test")
+        grace = timedelta(minutes=self.config.strategy.line_reaction_v1_pending_intent_grace_minutes)
+        created_at = (now - grace - timedelta(seconds=1)).isoformat()
+        self.conn.execute(
+            """INSERT INTO trade_ideas
+            (id,symbol,direction,playbook,status,related_zone_ids_json,context_snapshot_json,
+             suggested_entry,suggested_stop_loss,suggested_take_profit_json,risk_reward,
+             created_at,expires_at)
+            VALUES (?,'XAUUSD','long','line_reaction_v1','approved','[]','{}',3000,2995,
+                    '[3010]',2,?,?)""",
+            (idea_id, created_at, (now + timedelta(hours=1)).isoformat()),
+        )
+        self.conn.execute(
+            """INSERT INTO execution_requests
+            (id,trade_idea_id,account_label,symbol,broker_symbol,side,order_type,quantity,
+             entry_price,stop_loss,take_profit_json,risk_snapshot_json,context_snapshot_json,
+             requested_by,status,created_at,updated_at)
+            VALUES ('stale-request',?,'Test','XAUUSD','XAUUSDm','buy','market',0.1,3000,
+                    2995,'[3010]','{}','{}','strategy','pending',?,?)""",
+            (idea_id, created_at, created_at),
+        )
+        self.conn.commit()
+        return now
+
+    def test_stale_pending_intent_fails_without_retry_when_broker_has_no_exposure(self):
+        from tests.test_live_worker import _fake_client, _make_env
+        from semi_bot_trading.line_reaction_worker import process_line_reactions
+
+        now = self._seed_stale_pending_intent()
+        broker = _fake_client()
+        broker.bot_order_counts.return_value = (0, 0)
+
+        process_line_reactions(
+            self.conn, self.config, replace(_make_env(), execution_enabled=False),
+            broker, "XAUUSDm", now,
+        )
+
+        request = self.conn.execute(
+            "SELECT status,failure_reason FROM execution_requests WHERE id='stale-request'"
+        ).fetchone()
+        self.assertEqual("failed", request["status"])
+        self.assertIn("no active bot", request["failure_reason"])
+        line = self.conn.execute(
+            "SELECT status,last_error FROM line_reaction_plans WHERE id='test-line'"
+        ).fetchone()
+        self.assertEqual("failed", line["status"])
+        broker.place_market_order.assert_not_called()
+        self.conn.execute(
+            """INSERT INTO line_reaction_plans
+            (id,symbol,account_label,direction,price,status,config_json,expires_at,created_at,updated_at)
+            VALUES ('released','XAUUSD','Test','long',3010,'executing',?,?,?,?)""",
+            (LineConfig().model_dump_json(), (now + timedelta(hours=1)).isoformat(),
+             now.isoformat(), now.isoformat()),
+        )
+        self.conn.rollback()
+
+    def test_stale_pending_intent_requires_reconciliation_when_broker_has_exposure(self):
+        from tests.test_live_worker import _fake_client, _make_env
+        from semi_bot_trading.line_reaction_worker import process_line_reactions
+
+        now = self._seed_stale_pending_intent()
+        broker = _fake_client()
+        broker.bot_order_counts.return_value = (1, 0)
+
+        process_line_reactions(
+            self.conn, self.config, _make_env(), broker, "XAUUSDm", now,
+        )
+
+        request = self.conn.execute(
+            "SELECT status,failure_reason FROM execution_requests WHERE id='stale-request'"
+        ).fetchone()
+        self.assertEqual("reconciliation_required", request["status"])
+        self.assertIn("Check MT5", request["failure_reason"])
+        line = self.conn.execute(
+            "SELECT status,last_error FROM line_reaction_plans WHERE id='test-line'"
+        ).fetchone()
+        self.assertEqual("reconciliation_required", line["status"])
+        self.assertIn("Check MT5", line["last_error"])
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                """INSERT INTO line_reaction_plans
+                (id,symbol,account_label,direction,price,status,config_json,expires_at,created_at,updated_at)
+                VALUES ('blocked','XAUUSD','Test','long',3010,'executing',?,?,?,?)""",
+                (LineConfig().model_dump_json(), (now + timedelta(hours=1)).isoformat(),
+                 now.isoformat(), now.isoformat()),
+            )
+        self.conn.rollback()
+
+        broker.bot_order_counts.return_value = (0, 0)
+        process_line_reactions(
+            self.conn, self.config, _make_env(), broker, "XAUUSDm", now + timedelta(minutes=1),
+        )
+        self.assertEqual(
+            "failed", self.conn.execute(
+                "SELECT status FROM line_reaction_plans WHERE id='test-line'"
+            ).fetchone()[0],
+        )
 
     def test_line_transition_rejects_unexpected_source_status(self):
         from semi_bot_trading.line_reaction_worker import transition_line

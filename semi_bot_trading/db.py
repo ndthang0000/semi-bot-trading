@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS line_reaction_plans (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS line_reaction_one_active_account
 ON line_reaction_plans(account_label)
-WHERE status IN ('executing', 'pending', 'open', 'cancel_requested');
+WHERE status IN ('executing', 'pending', 'open', 'cancel_requested', 'reconciliation_required');
 CREATE TABLE IF NOT EXISTS trade_fills (
     id TEXT PRIMARY KEY,
     trade_order_id TEXT NOT NULL,
@@ -598,6 +598,16 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE line_reaction_plans SET client_group_id=id WHERE client_group_id IS NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_line_reaction_group ON line_reaction_plans(client_group_id, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_line_reaction_request ON line_reaction_plans(client_request_id)")
+    line_active_index = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='line_reaction_one_active_account'"
+    ).fetchone()
+    if line_active_index is None or "reconciliation_required" not in (line_active_index["sql"] or ""):
+        conn.execute("DROP INDEX IF EXISTS line_reaction_one_active_account")
+        conn.execute(
+            """CREATE UNIQUE INDEX line_reaction_one_active_account
+            ON line_reaction_plans(account_label)
+            WHERE status IN ('executing','pending','open','cancel_requested','reconciliation_required')"""
+        )
     ensure_column(conn, "structure_points", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "structure_points", "status", "TEXT NOT NULL DEFAULT 'confirmed'")
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
