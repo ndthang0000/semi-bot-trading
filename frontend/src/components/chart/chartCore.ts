@@ -55,7 +55,8 @@ const REPLAY_VISIBLE_BARS = 120;
 const VERTICAL_FOCUS_BARS = 14;
 
 export function manualZoneSpec(kind: AddEntityKind): ManualZoneSpec {
-  const specs: Record<AddEntityKind, ManualZoneSpec> = {
+  if (kind === "line_buy" || kind === "line_sell") throw new Error("Line Reaction uses its own drawing flow");
+  const specs: Record<Exclude<AddEntityKind, "line_buy" | "line_sell">, ManualZoneSpec> = {
     support: { label: "Support", zoneType: "support", direction: "bullish", weight: 0.8, confidence: 1 },
     resistance: { label: "Resistance", zoneType: "resistance", direction: "bearish", weight: 0.8, confidence: 1 },
     demand_order_block: { label: "Demand OB", zoneType: "order_block", direction: "bullish", weight: 0.78, confidence: 1 },

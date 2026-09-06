@@ -49,6 +49,14 @@ describe("playbook-controlled chart layers", () => {
     expect(layers.tradeVisibilityMode).toBe("off");
     expect(playbookLayerRequirements.h1_impulse_retest_v1.structure).toBe(false);
   });
+
+  it("scopes Line Reaction V1 to Line Prices with required Structure and ZigZag", () => {
+    const layers = playbookControlledLayers(["line_reaction_v1"]);
+
+    expect(layers.showZones).toBe(false);
+    expect(layers.showStructure).toBe(true);
+    expect(playbookLayerRequirements.line_reaction_v1.structure).toBe(true);
+  });
 });
 
 describe("Liquidity Sweep V1 zone presentation", () => {

@@ -281,3 +281,7 @@ end_utc = "21:00"
 enabled = false
 start_utc = "21:00"
 end_utc = "24:00"
+
+# Per-line configuration is stored by the dashboard; Draft is inert.
+[strategy.playbooks.line_reaction_v1]
+enabled = true

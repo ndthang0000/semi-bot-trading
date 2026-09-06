@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .trading_sessions import session_end
+from .trading_sessions import selected_session_end, session_end
 
 import json
 import logging
@@ -1093,6 +1093,9 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             process_manual_ai_plans(conn, config, env, client, broker_symbol, now)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
+            if ftmo_news_guard is None:
+                from .line_reaction_worker import process_line_reactions
+                process_line_reactions(conn, config, env, client, broker_symbol, now)
             if ftmo_news_guard is None:
                 manage_open_trade_partial_take_profit(conn, config, env, client, broker_symbol)
             elif ftmo_news_guard["phase"] == "prepare":
@@ -2747,6 +2750,21 @@ def build_execution_pricing_plan(
     direction = str(candidate["direction"])
     side = "buy" if direction == "long" else "sell"
     current_price = client.current_price_for_side(broker_symbol, side)
+    if candidate.get("playbook") == "line_reaction_v1":
+        from .line_reaction import price_line
+        meta = candidate["metadata"]
+        line = {"id": candidate["id"], "price": meta["line_price"],
+                "direction": direction, "config": meta["line_config"], "expires_at": candidate["expires_at"]}
+        levels = price_line(line, meta["line_signal"], current_price, meta["line_signal"].get("wave_metrics"))
+        candidate.update(levels)
+        return ExecutionPricingPlan(
+            order_type=levels["metadata"]["order_type"], entry_price=levels["entry"],
+            stop_loss=levels["stop_loss"], take_profit=levels["take_profit"],
+            expires_at=levels["expires_at"], current_price=current_price,
+            signal_entry=signal_entry, signal_stop_loss=signal_stop, signal_take_profit=signal_take_profit,
+            drift=current_price-signal_entry, adverse_drift=0, drift_action="line_reaction_geometry",
+        )
+
     direction_sign = 1.0 if direction == "long" else -1.0
     drift = (current_price - signal_entry) * direction_sign
     adverse_drift = max(drift, 0.0)
@@ -2891,6 +2909,22 @@ def execute_candidate(
         },
     }
 
+    if candidate.get("playbook") == "line_reaction_v1":
+        if not config.strategy.line_reaction_v1_enabled:
+            return
+        line_sessions = candidate["metadata"]["line_config"]["trade_sessions"]
+        if selected_session_end(line_sessions, utc_now_iso()) is None:
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        reserved = conn.execute(
+            "SELECT status,expires_at FROM line_reaction_plans WHERE id=? AND account_label=? AND removed_at IS NULL",
+            (candidate["id"], env.account_label),
+        ).fetchone()
+        if (reserved is None or reserved["status"] != "executing"
+                or datetime.fromisoformat(reserved["expires_at"]) <= datetime.now(UTC)
+                or live_candidate_already_executed(conn, str(candidate["id"]), account_label=env.account_label)):
+            conn.rollback()
+            return
     # ── Persist intent BEFORE calling MT5 (Bug #4 guard against double-execution).
     # status='pending' blocks live_candidate_already_executed on the next poll even
     # if the process crashes between MT5 call and the post-execution DB commit.
@@ -2969,6 +3003,33 @@ def execute_candidate(
             )
             conn.commit()
             return
+        if candidate.get("playbook") == "line_reaction_v1":
+            from .line_reaction import dt as line_dt
+            line_row = conn.execute("SELECT status FROM line_reaction_plans WHERE id=?", (candidate["id"],)).fetchone()
+            if not line_row or line_row["status"] != "executing":
+                raise ValueError("Line cancelled before broker execution")
+            signal = candidate["metadata"]["line_signal"]
+            if datetime.now(UTC) >= line_dt(signal["signal_close_time"]) + timedelta(minutes=15):
+                raise ValueError("Line trigger expired before execution")
+            if selected_session_end(candidate["metadata"]["line_config"]["trade_sessions"], utc_now_iso()) is None:
+                conn.execute(
+                    "UPDATE execution_requests SET status='cancelled',failure_reason=?,updated_at=? WHERE id=?",
+                    ("Selected Line trading session ended before broker execution", utc_now_iso(), request_id),
+                )
+                conn.execute(
+                    "UPDATE line_reaction_plans SET status='armed',signal_json=NULL,last_error=?,updated_at=? WHERE id=? AND status='executing'",
+                    ("Signal cleared because its selected trading session ended", utc_now_iso(), candidate["id"]),
+                )
+                conn.commit()
+                return
+            if exec_order_type == "market":
+                quote_entry = client.current_price_for_side(broker_symbol, side)
+                actual_distance = (quote_entry-exec_stop) * (1 if side == "buy" else -1)
+                if actual_distance <= 0 or actual_distance > signal["max_distance"]:
+                    raise ValueError("Line market moved outside validated SL geometry")
+        if candidate.get("playbook") == "line_reaction_v1" and exec_order_type == "market":
+            if env.max_spread_price > 0 and client.get_current_spread(broker_symbol) > env.max_spread_price:
+                raise ValueError("Line Reaction market spread exceeds MAX_SPREAD_PRICE")
         mt5_request = MT5OrderRequest(
             broker_symbol=broker_symbol,
             side=side,

@@ -18,6 +18,7 @@ export const playbookAddEntityKinds: Record<PlaybookKey, AddEntityMenuKind[]> = 
   manual_ai_v1: ["manual_ai"],
   liquidity_sweep_reclaim_v1: ["buy_side_liquidity", "sell_side_liquidity"],
   h1_impulse_retest_v1: [],
+  line_reaction_v1: ["line_buy", "line_sell"],
 };
 
 /** Multiple selected playbooks expose the union of their valid entity types. */

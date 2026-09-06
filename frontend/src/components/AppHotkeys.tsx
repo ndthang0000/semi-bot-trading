@@ -39,7 +39,7 @@ const SHORTCUT_GROUPS = [
     title: "Theo ngữ cảnh",
     shortcuts: [
       ["S", "Lưu Zone hoặc Trade Review"],
-      ["D / Delete", "Xóa Zone đang chọn"],
+      ["Delete / Backspace", "Xóa Zone, Drawing hoặc Line đang chọn"],
       ["Esc", "Đóng hoặc bỏ chọn"],
       ["↑ ↓ ← →", "Di chuyển trong Mindful Maze"],
     ],

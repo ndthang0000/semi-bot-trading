@@ -16,6 +16,7 @@ PLAYBOOK_ZONE_TYPES: dict[str, set[str]] = {
     "manual_ai_v1": set(),
     # Human-selected H1 research preview; never emitted by the worker builder.
     "h1_impulse_retest_v1": set(),
+    "line_reaction_v1": set(),
     "liquidity_sweep_reclaim_v1": {"liquidity_pool"},
 }
 TRADE_MODES = {"reject", "internal_reject", "breakout", "liquidity_sweep"}

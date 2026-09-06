@@ -131,7 +131,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
               <option disabled={!canCreateManualAi} value="manual_ai">Manual AI trade…</option>
             ) : null}
             {zoneEntityOptions.map((option) => (
-              <option disabled={!canAddEntity} key={option.kind} value={option.kind}>{option.label}</option>
+              <option disabled={option.kind.startsWith("line_") ? mode !== "dashboard" || startIndex !== null : !canAddEntity} key={option.kind} value={option.kind}>{option.label}</option>
             ))}
           </select>
           {addEntityKind ? (
@@ -508,6 +508,8 @@ function MobileToggleRow({
 }
 
 const MOBILE_DRAW_ITEMS: Array<{ kind: AddEntityKind; label: string; description: string }> = [
+  { kind: "line_buy", label: "Add line buy", description: "Click hai điểm để vẽ line Long" },
+  { kind: "line_sell", label: "Add line sell", description: "Click hai điểm để vẽ line Short" },
   { kind: "support", label: "Support", description: "Manual H1 support zone" },
   { kind: "resistance", label: "Resistance", description: "Manual H1 resistance zone" },
   { kind: "demand_order_block", label: "Demand OB", description: "Bullish order block" },
@@ -881,6 +883,7 @@ function LayerMenu() {
 
   const visibleZoneCount = Object.values(zoneTypeVisibility).filter(Boolean).length;
   const h1ImpulseSelected = selectedPlaybooks.includes("h1_impulse_retest_v1");
+  const structureRequired = selectedPlaybooks.some((playbook) => playbookLayerRequirements[playbook].structure);
   const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (h1ImpulseSelected && showH1ImpulseCandidates && timeframe === "H1" ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
   const allZonesVisible = visibleZoneCount === LAYER_ITEMS.length;
 
@@ -953,7 +956,7 @@ function LayerMenu() {
                 onChange={(checked) => setZoneTypeVisible(item.key, checked)}
               />
             ))}
-            <MenuCheck checked={showStructure} colorClass="bg-blue-400" label="Structure + ZigZag" onChange={setShowStructure} />
+            <MenuCheck checked={showStructure} colorClass="bg-blue-400" disabled={structureRequired} label="Structure + ZigZag" onChange={setShowStructure} />
             <MenuCheck checked={showIntradayLevels} colorClass="bg-amber-300" label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
             <MenuCheck
               checked={showBrokenIntradayLevels}
@@ -1043,9 +1046,12 @@ const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
   { key: "manual_ai_v1", label: "Manual AI" },
   { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1" },
   { key: "h1_impulse_retest_v1", label: "H1 Impulse Retest V1" },
+  { key: "line_reaction_v1", label: "Line Reaction V1" },
 ];
 
 const ADD_ENTITY_OPTIONS: Array<{ kind: AddEntityKind; label: string }> = [
+  { kind: "line_buy", label: "Add line buy" },
+  { kind: "line_sell", label: "Add line sell" },
   { kind: "support", label: "Support" },
   { kind: "resistance", label: "Resistance" },
   { kind: "demand_order_block", label: "Demand OB" },

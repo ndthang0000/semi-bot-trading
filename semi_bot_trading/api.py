@@ -3147,6 +3147,9 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             conn.commit()
             return context_row_to_chart(updated)
 
+    from .line_reaction_api import register_line_routes
+    register_line_routes(app, config, require_auth)
+
     # ------------------------------------------------------------------
     # Static file serving — production VPS (frontend/dist built by Vite)
     # In development the Vite dev server (port 5173) proxies /api to here,
@@ -3163,6 +3166,9 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def serve_spa(full_path: str) -> Any:
+            # API misses must stay JSON errors, never the SPA HTML shell.
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="API route not found")
             # Serve real files (favicon.ico, vite.svg, …) if they exist
             candidate = _frontend_dist / full_path
             if candidate.is_file():

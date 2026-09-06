@@ -1,3 +1,7 @@
+import { lineDraftFromPoints } from "./chart/lineDrawing";
+import { useLineReactionStore } from "../store/lineReactionStore";
+import { LineReactionLayer } from "./chart/LineReactionLayer";
+import { cancelLineReaction } from "../api/lineReaction";
 import {
   CandlestickSeries,
   ColorType,
@@ -140,6 +144,10 @@ const MIN_ZONE_DURATION_SECONDS = 60;
 
 
 export function TradingChart({ payload, drawings = [], spread, newsData, onEntityCreated, onZonePersisted, onDrawingsChanged }: TradingChartProps) {
+  const [lineDraw, setLineDraw] = useState<{ start: DrawingPoint; end: DrawingPoint } | null>(null);
+  const lineKind = useChartStore(state => state.addEntityKind);
+  const isLineDrawing = lineKind === "line_buy" || lineKind === "line_sell";
+  const lineReactionSelected = useChartStore(state => state.selectedPlaybooks.includes("line_reaction_v1"));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -942,6 +950,21 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setMeasurePreview({ start: point, end: point });
   }, [drawingPointFromPointer, drawingTool, persistDrawing]);
 
+  useEffect(() => { setLineDraw(null); }, [lineKind, payload.symbol, payload.timeframe, payload.replay?.as_of]);
+
+  const lineClick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault(); event.stopPropagation();
+    if (payload.replay) return;
+    const point = drawingPointFromPointer(event.clientX, event.clientY);
+    if (!point) return;
+    if (!lineDraw) { setLineDraw({ start: point, end: point }); return; }
+    const draft = lineDraftFromPoints(lineDraw.start, point, lineKind === "line_buy" ? "long" : "short");
+    if (!draft) return;
+    useLineReactionStore.getState().setDraft(draft);
+    setSelected(null);
+    setLineDraw(null); setAddEntityKind(null); setInspectorTab("zones");
+  };
+
   const handleDrawingHover = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const point = drawingPointFromPointer(event.clientX, event.clientY);
     if (!point) return;
@@ -1053,6 +1076,10 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   useEffect(() => {
     const hotkeys = (event: KeyboardEvent) => {
+      const selectedLineId = useLineReactionStore.getState().selectedId;
+      if (event.key === "Escape" && selectedLineId) {
+        useLineReactionStore.getState().select(null);
+      }
       if (isEditableHotkeyTarget(event.target) || event.repeat) return;
       const key = event.key.toLowerCase();
       let tool: ChartDrawingTool | null = null;
@@ -1061,12 +1088,22 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "n") tool = "note";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "f") tool = event.shiftKey ? "fib_ote" : "fib_standard";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "h") tool = "horizontal_line";
-      else if (event.key === "Escape") tool = "cursor";
+      else if (event.key === "Escape") { tool = "cursor"; setAddEntityKind(null); setLineDraw(null); }
       if (tool) {
         event.preventDefault();
         event.stopImmediatePropagation();
         setPendingNote(null);
         changeDrawingTool(tool);
+      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedLineId) {
+        const plan = useLineReactionStore.getState().plans.find(item => item.id === selectedLineId);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!plan || !window.confirm(`Xóa Line ${plan.price.toFixed(2)} ${plan.direction.toUpperCase()}? Setup chưa khớp lệnh sẽ bị hủy trên các account đã chọn.`)) return;
+        void cancelLineReaction(selectedLineId)
+          .then(plan => {
+            useLineReactionStore.getState().upsertPlan(plan);
+            useLineReactionStore.getState().select(null);
+          }).catch(error => window.alert(error instanceof Error ? error.message : "Không thể xóa Line"));
       } else if ((event.key === "Delete" || event.key === "Backspace") && selectedDrawingId) {
         const drawing = drawingsRef.current.find((item) => item.id === selectedDrawingId);
         if (drawing) {
@@ -1360,6 +1397,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setManualAiLevelEdit(null);
     setManualAiEditSetupId(null);
     selectSetup(null);
+    useLineReactionStore.getState().select(null);
     restoreLockedViewport(chartRef.current, lockedViewportRef);
     scheduleOverlayRecalc();
   }, [manualAiLevelEdit?.saving, scheduleOverlayRecalc, selectSetup, setManualAiEditSetupId, setSelected]);
@@ -1899,6 +1937,9 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     <div
       data-chart-capture-root="true"
       className="relative h-full min-h-0 touch-none overflow-hidden bg-[#080b10] lg:min-h-[540px]"
+      onPointerDownCapture={event => {
+        if (!(event.target as HTMLElement).closest("[data-line-reaction]")) useLineReactionStore.getState().select(null);
+      }}
       onMouseLeave={() => setPointerY(null)}
       onMouseMove={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
@@ -1921,6 +1962,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           }}
         />
       ) : null}
+      {!payload.replay && lineReactionSelected ? <LineReactionLayer chartRef={chartRef} seriesRef={candleSeriesRef} candles={payload.layers.candles} /> : null}
       <ChartDrawingControls
         drawings={renderedDrawings}
         measure={measurePreview}
@@ -1963,14 +2005,16 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         <div
           className="absolute inset-0 z-40 cursor-crosshair"
           onClick={(event) => event.stopPropagation()}
-          onPointerDown={beginManualDraw}
+          onPointerDown={isLineDrawing ? lineClick : beginManualDraw}
+          onPointerMove={event => { if (isLineDrawing && lineDraw) { const point = drawingPointFromPointer(event.clientX, event.clientY); if (point) setLineDraw({ start: lineDraw.start, end: { ...point, y: lineDraw.start.y, price: lineDraw.start.price } }); } }}
         />
       ) : null}
       {addEntityKind ? (
         <div className="pointer-events-none absolute left-4 top-4 z-50 rounded-md border border-cyan-400/40 bg-ink-900/90 px-3 py-2 text-xs text-cyan-100 shadow-lg">
-          Drag to add {manualZoneSpec(addEntityKind).label}
+          {isLineDrawing ? (lineDraw ? "Di chuột ngang sang trái · click lần hai để lưu Draft · Esc hủy" : "Click điểm đầu của line · Esc hủy") : "Drag to add " + manualZoneSpec(addEntityKind).label}
         </div>
       ) : null}
+      {isLineDrawing && lineDraw && <div className={"pointer-events-none absolute z-50 border-t-2 border-dashed " + (lineKind === "line_buy" ? "border-emerald-400" : "border-rose-400")} style={{ top: lineDraw.start.y, left: Math.min(lineDraw.start.x, lineDraw.end.x), width: Math.abs(lineDraw.end.x-lineDraw.start.x) }} />}
       {drawError ? (
         <div className="pointer-events-none absolute left-4 top-4 z-40 max-w-sm rounded-md border border-rose-500/40 bg-rose-950/90 px-3 py-2 text-xs text-rose-100 shadow-lg">
           {drawError}

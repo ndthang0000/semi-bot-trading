@@ -705,3 +705,38 @@ va chua gui close thanh cong. The nhac tuan thu SL/TP va quy tac quan ly da chon
 hien SL dang luu va TP ke hoach; khong coi day la xac nhan SL tai broker.
 Neu SL thieu/khong hop le, thay loi nhac giu lenh bang yeu cau kiem tra bao ve.
 Khong hien cho pending, backtest hay lenh da dong.
+
+### Line Reaction
+
+Add Entity -> Add line buy / Add line sell. Click điểm đầu, di chuột ngang sang trái
+để xem line tạm, click điểm cuối để tự lưu Draft. Esc hủy thao tác. Giá theo điểm
+đầu; hai timestamp chỉ xác định đoạn vẽ, không backdate thời gian được trade.
+Tab Zones trong inspector bên phải tự mở và hiển thị line trong nhóm Reaction Lines,
+tách khỏi nhóm Price Areas. Chỉnh danh sách account và config, Save rồi Arm.
+Click line trên chart cũng mở đúng setup trong nhóm Reaction Lines.
+Danh sách Line Prices mặc định chỉ hiện hướng, giá, status, account và expiry;
+editor cùng các action Save/Arm/Delete chỉ mở sau khi user click một line.
+Mỗi line là một setup logic dùng chung cho nhiều account; khi tạo Draft, tất cả
+worker online được chọn mặc định. Account offline vẫn hiện kèm trạng thái và có thể
+được chọn thủ công. Backend lưu một execution row/account dưới cùng `client_group_id`;
+bỏ account khỏi Draft/Armed chỉ đánh dấu member đã hủy để giữ audit. Hướng Long/Short được khóa theo Add line buy/sell. Đầu phải
+`visual_end` trong tương lai là expiry thực tế. Khi giảm số giờ, UI giữ nguyên đầu
+trái và kéo đầu phải về gần hiện tại; không dịch thời gian bắt đầu của line.
+Draft hiển thị bằng nét đứt; Armed hiển thị bằng nét liền. Click một Draft hoặc
+Armed line trên chart sẽ hiện handle ở hai đầu để kéo dài/thu ngắn. Line Detail
+hiển thị `Hết hạn` read-only; trader kéo đầu phải trên chart để thay đổi. Account
+và config vẫn sửa được khi Armed. Khi bất kỳ account
+đã sang Executing/Pending/Open, setup được khóa để tránh đổi kế hoạch giữa lúc gửi lệnh.
+Esc hoặc click vị trí khác trên chart sẽ bỏ chọn Line và đóng Line Detail.
+Delete/Backspace hỏi xác nhận trước khi xóa Line đang chọn. Draft dùng nét đứt
+mảnh hơn Armed để dễ phân biệt.
+Line Detail có multi-select phiên giao dịch riêng cho từng Line, mặc định chọn
+Asian, London, London–NY, New York và Off-hours (toàn bộ ngày UTC). Bỏ chọn phiên
+nào sẽ chặn signal/order mới của Line trong phiên đó; pending chưa fill bị hủy khi
+ra khỏi phiên đã chọn, còn position đã fill tiếp tục được quản lý bình thường.
+Các phiên được chọn liền nhau được gộp thành một cửa sổ liên tục, kể cả qua 00:00;
+chọn cả năm phiên không cắt ngắn TTL ở ranh giới giữa các phiên.
+Line Prices, line overlay và Add line buy/sell chỉ hiện khi Line Reaction V1 được
+chọn. Playbook này đồng thời bắt buộc bật layer Structure + ZigZag.
+Không còn form/nút quản lý Line Reaction nổi trên chart hoặc tool vẽ line cũ.
+Xem docs/24-line-reaction-v1.md.

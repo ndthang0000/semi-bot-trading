@@ -33,4 +33,9 @@ describe("playbook Add entity routing", () => {
     const kinds = allowedAddEntityKinds(["manual_ai_v1", "liquidity_sweep_reclaim_v1"]);
     expect(kinds).toEqual(new Set(["manual_ai", "buy_side_liquidity", "sell_side_liquidity"]));
   });
+
+  it("exposes line drawing only for Line Reaction V1", () => {
+    expect(allowedAddEntityKinds(["line_reaction_v1"])).toEqual(new Set(["line_buy", "line_sell"]));
+    expect(allowedAddEntityKinds(["zone_reaction_v2"]).has("line_buy")).toBe(false);
+  });
 });

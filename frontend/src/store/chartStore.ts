@@ -36,6 +36,7 @@ export const playbookLayerRequirements: Record<
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
   manual_ai_v1: { zones: [], structure: true },
+  line_reaction_v1: { zones: [], structure: true },
   liquidity_sweep_reclaim_v1: { zones: ["liquidity_pool"], structure: true },
   h1_impulse_retest_v1: { zones: [], structure: false, structureDefaultOn: true },
 };

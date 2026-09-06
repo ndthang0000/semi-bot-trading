@@ -1,3 +1,4 @@
+import { LineReactionPanel } from "./inspector/LineReactionPanel";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, History, Layers, Maximize2, Minimize2, MousePointer2, Sigma, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -7,6 +8,7 @@ import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tra
 import { accountBadgeClass } from "../lib/accountPresentation";
 import { compactTime, localDateTime, price } from "../lib/time";
 import { useChartStore } from "../store/chartStore";
+import { useLineReactionStore } from "../store/lineReactionStore";
 import type { ChartPayload, M15TriggerOverlay, PriceZone, SetupCandidate, TradeOrder, ZoneTypeVisibility } from "../types";
 import { TradeDetails } from "./inspector/TradeDetails";
 import { ZoneEditor } from "./inspector/ZoneEditor";
@@ -51,6 +53,11 @@ export function Inspector({ accountLabels = [], payload, onZoneUpdated }: Inspec
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const zones = payload?.layers.zones ?? [];
+  const lineReactionSelected = selectedPlaybooks.includes("line_reaction_v1");
+  const linePlans = useLineReactionStore((state) => state.plans);
+  const activeLineCount = lineReactionSelected
+    ? linePlans.filter((plan) => !["cancelled", "expired", "closed", "failed"].includes(plan.status)).length
+    : 0;
   const setupCandidates = [
     ...(payload?.layers.setup_candidates ?? []),
     ...(selectedPlaybooks.includes("h1_impulse_retest_v1")
@@ -77,6 +84,17 @@ export function Inspector({ accountLabels = [], payload, onZoneUpdated }: Inspec
     if (selected?.kind === "zone") setActiveTab("zones");
   }, [selected?.kind, setActiveTab]);
 
+  useEffect(() => {
+    if (selected) useLineReactionStore.getState().select(null);
+  }, [selected]);
+
+  useEffect(() => {
+    if (!lineReactionSelected) {
+      useLineReactionStore.getState().select(null);
+      useLineReactionStore.getState().setDraft(null);
+    }
+  }, [lineReactionSelected]);
+
   const showToast = useCallback((kind: ToastMessage["kind"], text: string) => {
     setToast({ id: Date.now(), kind, text });
   }, []);
@@ -91,7 +109,7 @@ export function Inspector({ accountLabels = [], payload, onZoneUpdated }: Inspec
     <aside className="relative grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-ink-900 lg:border-l lg:border-ink-700">
       {toast ? <Toast toast={toast} onClose={() => setToast(null)} /> : null}
       <div className="border-b border-ink-700 p-3">
-        <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-700 bg-ink-950 p-1">
+        <div className="grid grid-cols-3 gap-1 rounded-lg border border-ink-700 bg-ink-950 p-1">
           <button
             className={`inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${
               activeTab === "zones" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-400 hover:bg-ink-800 hover:text-slate-100"
@@ -101,7 +119,7 @@ export function Inspector({ accountLabels = [], payload, onZoneUpdated }: Inspec
           >
             <Layers size={16} />
             Zones
-            <span className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400">{visibleZones.length}</span>
+            <span className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] text-slate-400">{visibleZones.length + activeLineCount}</span>
           </button>
           <button
             className={`inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-semibold transition ${
@@ -137,6 +155,9 @@ export function Inspector({ accountLabels = [], payload, onZoneUpdated }: Inspec
           showToast={showToast}
           visibleZones={visibleZones}
           totalZones={zones.length}
+          symbol={symbol}
+          showPriceAreas={showZones}
+          showReactionLines={lineReactionSelected && !payload?.replay}
         />
       ) : activeTab === "setups" ? (
         <SetupsPanel candidates={setupCandidates} m15Triggers={payload?.layers.m15_triggers ?? []} zones={zones} onChanged={onZoneUpdated} showToast={showToast} />
@@ -507,6 +528,9 @@ function ZonesTab({
   setSelected,
   focusZone,
   showToast,
+  symbol,
+  showPriceAreas,
+  showReactionLines,
 }: {
   selected: ReturnType<typeof useChartStore.getState>["selected"];
   visibleZones: PriceZone[];
@@ -516,6 +540,9 @@ function ZonesTab({
   setSelected: (selected: ReturnType<typeof useChartStore.getState>["selected"]) => void;
   focusZone: (zone: PriceZone) => void;
   showToast: (kind: ToastMessage["kind"], text: string) => void;
+  symbol: string;
+  showPriceAreas: boolean;
+  showReactionLines: boolean;
 }) {
   const [isImportOpen, setIsImportOpen] = useState(false);
   return (
@@ -539,7 +566,7 @@ function ZonesTab({
           Selected
         </div>
         {!selected ? (
-          <div className="rounded-md border border-dashed border-ink-700 p-4 text-sm text-slate-500">Click a zone or marker</div>
+          <div className="rounded-md border border-dashed border-ink-700 p-4 text-sm text-slate-500">Click a price area, marker, or reaction line</div>
         ) : selected.kind === "zone" ? (
           <ZoneEditor zone={selected.entity} onZoneUpdated={onZoneUpdated} showToast={showToast} />
         ) : selected.kind === "structure" ? (
@@ -555,10 +582,12 @@ function ZonesTab({
         )}
       </section>
 
-      <section className="p-4">
+      {showReactionLines ? <LineReactionPanel symbol={symbol} /> : null}
+
+      {showPriceAreas ? <section className="p-4">
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
           <Layers size={14} />
-          Zones
+          Price Areas
           {importantZonesOnly ? (
             <span className="ml-auto normal-case tracking-normal text-slate-600">
               {visibleZones.length}/{totalZones}
@@ -586,6 +615,7 @@ function ZonesTab({
                 }`}
                 type="button"
                 onClick={() => {
+                  useLineReactionStore.getState().select(null);
                   setSelected({ kind: "zone", entity: zone });
                   focusZone(zone);
                 }}
@@ -601,7 +631,7 @@ function ZonesTab({
             ))}
           </div>
         </div>
-      </section>
+      </section> : null}
     </div>
   );
 }
@@ -1433,6 +1463,7 @@ function previewOutcomeClass(status: string): string {
 function playbookLabel(value: string): string {
   if (value === "sr_breakout_v1") return "SR Breakout V1";
   if (value === "zone_reaction_v2") return "Zone Reaction V2";
+  if (value === "line_reaction_v1") return "Line Reaction V1";
   if (value === "h1_impulse_retest_v1") return "H1 Impulse Retest V1";
   return value
     .split("_")

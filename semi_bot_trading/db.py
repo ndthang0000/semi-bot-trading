@@ -167,6 +167,29 @@ CREATE TABLE IF NOT EXISTS trade_orders (
 CREATE INDEX IF NOT EXISTS idx_trade_orders_lookup
 ON trade_orders(symbol, status, opened_at, closed_at);
 
+CREATE TABLE IF NOT EXISTS line_reaction_plans (
+    id TEXT PRIMARY KEY,
+    client_group_id TEXT,
+    symbol TEXT NOT NULL,
+    account_label TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    price REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    config_json TEXT NOT NULL,
+    armed_at TEXT,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    signal_json TEXT,
+    visual_start TEXT,
+    visual_end TEXT,
+    client_request_id TEXT,
+    removed_at TEXT,
+    last_error TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS line_reaction_one_active_account
+ON line_reaction_plans(account_label)
+WHERE status IN ('executing', 'pending', 'open', 'cancel_requested');
 CREATE TABLE IF NOT EXISTS trade_fills (
     id TEXT PRIMARY KEY,
     trade_order_id TEXT NOT NULL,
@@ -567,6 +590,14 @@ def connect(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    ensure_column(conn, "line_reaction_plans", "client_group_id", "TEXT")
+    ensure_column(conn, "line_reaction_plans", "visual_start", "TEXT")
+    ensure_column(conn, "line_reaction_plans", "visual_end", "TEXT")
+    ensure_column(conn, "line_reaction_plans", "client_request_id", "TEXT")
+    ensure_column(conn, "line_reaction_plans", "removed_at", "TEXT")
+    conn.execute("UPDATE line_reaction_plans SET client_group_id=id WHERE client_group_id IS NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_line_reaction_group ON line_reaction_plans(client_group_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_line_reaction_request ON line_reaction_plans(client_request_id)")
     ensure_column(conn, "structure_points", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
     ensure_column(conn, "structure_points", "status", "TEXT NOT NULL DEFAULT 'confirmed'")
     ensure_column(conn, "price_zones", "detector", "TEXT NOT NULL DEFAULT 'unknown'")
