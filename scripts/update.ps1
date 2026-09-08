@@ -114,7 +114,11 @@ Write-Host "[1/5] Pulling latest code from GitHub..." -ForegroundColor Yellow
 Set-Location $Root
 $beforeHash = git rev-parse HEAD
 Assert-NativeCommandSucceeded -Description "git rev-parse before update"
-git pull
+# Deployment does not need repository garbage collection. On Windows, auto-GC
+# can prompt forever when an IDE, antivirus scanner, or stale Git process holds
+# an old pack index open. Restrict pull to a fast-forward and defer maintenance
+# to a separate operator action outside the worker restart window.
+git -c gc.auto=0 -c maintenance.auto=false pull --ff-only
 Assert-NativeCommandSucceeded -Description "git pull"
 $afterHash = git rev-parse HEAD
 Assert-NativeCommandSucceeded -Description "git rev-parse after update"

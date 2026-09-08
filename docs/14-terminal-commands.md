@@ -925,3 +925,9 @@ use:
 ```powershell
 .\scripts\update.ps1 -RestartAllWorkers
 ```
+
+The deployment pull disables Git auto-maintenance and requires a fast-forward.
+This prevents Windows from blocking deployment with repeated `Unlink of file
+.git/objects/pack/... failed` prompts while an IDE or antivirus process holds an
+old pack index. Run manual `git maintenance` only outside the live-worker
+restart window.
