@@ -143,7 +143,7 @@ $Settings = New-ScheduledTaskSettingsSet `
 $TaskPrincipal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Highest
 
 foreach ($Worker in $Workers) {
-    $ActionArguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}" -WorkerName "{1}" -EnvFile "{2}" -PythonPath "{3}"' -f `
+    $ActionArguments = '-NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -WorkerName "{1}" -EnvFile "{2}" -PythonPath "{3}"' -f `
         $RunnerPath, $Worker.Name, $Worker.EnvFile, $PythonPath
     $Action = New-ScheduledTaskAction `
         -Execute $PowerShellPath `

@@ -841,8 +841,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 The tasks are registered as `SemiBotTrading-ExnessWorker` and
 `SemiBotTrading-FTMOWorker` with `Run only when user is logged on`. They start at
-logon and are also started immediately by the installer. Use `-SkipStart` if the
-trade plans in the database must be reviewed before either worker starts:
+logon and are also started immediately by the installer. Their PowerShell host
+runs with a hidden window; closing a visible host from an older task definition
+would stop that worker. Use `-SkipStart` if the trade plans in the database must
+be reviewed before either worker starts:
 
 ```powershell
 .\scripts\install-worker-tasks.ps1 -SkipStart
