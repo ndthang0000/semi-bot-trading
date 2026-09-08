@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RunnerPath = Join-Path $PSScriptRoot "run-live-worker-task.ps1"
-$PowerShellPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+$PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $CurrentUser = $CurrentIdentity.Name
 $Principal = New-Object System.Security.Principal.WindowsPrincipal($CurrentIdentity)
@@ -93,6 +93,9 @@ $PythonPath = (Resolve-Path -LiteralPath $PythonPath).Path
 if (-not (Test-Path -LiteralPath $RunnerPath -PathType Leaf)) {
     throw "Scheduled-task runner not found: $RunnerPath"
 }
+if (-not (Test-Path -LiteralPath $PowerShellPath -PathType Leaf)) {
+    throw "Windows PowerShell executable not found: $PowerShellPath"
+}
 foreach ($Worker in $Workers) {
     if (-not (Test-Path -LiteralPath $Worker.EnvFile -PathType Leaf)) {
         throw "Missing $($Worker.Name) environment file: $($Worker.EnvFile)"
@@ -101,6 +104,7 @@ foreach ($Worker in $Workers) {
 
 Write-Host "Installing live-worker tasks for $CurrentUser in Windows Session $CurrentSessionId" -ForegroundColor Cyan
 Write-Host "Python: $PythonPath"
+Write-Host "PowerShell: $PowerShellPath"
 
 foreach ($Worker in $Workers) {
     Disable-LegacyWorkerService -ServiceName $Worker.LegacyService
@@ -148,6 +152,8 @@ foreach ($Worker in $Workers) {
     $Task = New-ScheduledTask -Action $Action -Trigger $Trigger -Settings $Settings -Principal $TaskPrincipal
     Register-ScheduledTask -TaskName $Worker.TaskName -InputObject $Task -Force | Out-Null
     Write-Host "Registered: $($Worker.TaskName)" -ForegroundColor Green
+    Write-Host "  Execute: $($Action.Execute)" -ForegroundColor Gray
+    Write-Host "  Working directory: $($Action.WorkingDirectory)" -ForegroundColor Gray
 }
 
 if (-not $SkipStart) {

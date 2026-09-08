@@ -873,6 +873,24 @@ Keep the Windows account logged in. Closing/disconnecting the RDP client is
 safe; choosing **Sign out** stops the interactive tasks. After a VPS reboot,
 log in once and verify both tasks are `Running`.
 
+If `Start-ScheduledTask` reports `0x80070002` (`The system cannot find the file
+specified`), inspect the registered action and rerun the latest installer:
+
+```powershell
+(Get-ScheduledTask -TaskName "SemiBotTrading-ExnessWorker").Actions |
+  Format-List Execute, Arguments, WorkingDirectory
+
+Test-Path C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+Test-Path C:\workspace\reaction-zone-bot\scripts\run-live-worker-task.ps1
+
+git pull
+.\scripts\install-worker-tasks.ps1 -SkipStart
+```
+
+The installer pins the action to the validated Windows PowerShell executable
+under `%SystemRoot%`; it does not reuse the host process that happened to invoke
+the installer.
+
 Restart API and Exness worker:
 
 ```powershell
