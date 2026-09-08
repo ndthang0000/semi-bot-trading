@@ -893,6 +893,10 @@ The installer pins the action to the validated Windows PowerShell executable
 under `%SystemRoot%`; it does not reuse the host process that happened to invoke
 the installer.
 
+The task runner treats Python `stderr` as worker log output. Warnings and caught
+iteration tracebacks must not terminate the Scheduled Task; only a non-zero
+Python process exit triggers Task Scheduler's restart policy.
+
 Restart API and Exness worker:
 
 ```powershell

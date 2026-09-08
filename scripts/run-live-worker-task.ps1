@@ -55,8 +55,23 @@ try {
     Set-Location $Root
     $env:PYTHONUNBUFFERED = "1"
     $env:PYTHONUTF8 = "1"
-    & $PythonPath -m semi_bot_trading.cli live-worker --env $ResolvedEnvFile 1>> $StdoutPath 2>> $StderrPath
-    $WorkerExitCode = $LASTEXITCODE
+    $Utf8Encoding = New-Object System.Text.UTF8Encoding($false)
+    [Console]::OutputEncoding = $Utf8Encoding
+    $OutputEncoding = $Utf8Encoding
+
+    # Windows PowerShell 5.1 converts native stderr records into PowerShell
+    # errors. With the script-level preference set to Stop, an ordinary Python
+    # warning or a caught iteration traceback terminates this wrapper even
+    # though the live worker is designed to continue. Keep native stderr as log
+    # output and decide process success strictly from Python's exit code.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $PythonPath -m semi_bot_trading.cli live-worker --env $ResolvedEnvFile 1>> $StdoutPath 2>> $StderrPath
+        $WorkerExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
     if ($WorkerExitCode -ne 0) {
         throw "$WorkerName worker exited with code $WorkerExitCode"
     }
