@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TradeOrder, TradeReview } from "../types";
-import { groupAccountExecutions, groupTradesForReview, tradeReviewGroupId } from "./tradeReviewGroups";
+import {
+  filterTradeReviewGroupsByAccount,
+  groupAccountExecutions,
+  groupTradesForReview,
+  tradeReviewGroupId,
+} from "./tradeReviewGroups";
 
 function trade(id: string, account: string, groupId?: string, pnlR: number | null = 1): TradeOrder {
   return {
@@ -55,6 +60,22 @@ describe("trade review groups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].representative.id).toBe("ftmo");
     expect(groupAccountExecutions(groups[0])).toHaveLength(2);
+  });
+
+  it("uses the selected account execution as the filtered representative", () => {
+    const exness = trade("exness", "Exness Personal", "setup-1", 0.33);
+    const ftmo = trade("ftmo", "FTMO 100K 2-Step", "setup-1", -0.11);
+    ftmo.review = review(ftmo.id);
+    const groups = groupTradesForReview([exness, ftmo]);
+
+    const filtered = filterTradeReviewGroupsByAccount(groups, "Exness Personal");
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].representative.id).toBe("exness");
+    expect(filtered[0].representative.account_label).toBe("Exness Personal");
+    expect(filtered[0].trades.map((item) => item.id)).toEqual(["exness"]);
+    expect(filtered[0].review?.trade_order_id).toBe("ftmo");
+    expect(filtered[0].representative.review?.trade_order_id).toBe("ftmo");
   });
 
   it("keeps orders without a verified group identity separate", () => {

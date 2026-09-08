@@ -37,6 +37,25 @@ export function groupAccountExecutions(group: TradeReviewGroup): TradeOrder[] {
     .sort(compareRepresentativePriority);
 }
 
+export function filterTradeReviewGroupsByAccount(
+  groups: TradeReviewGroup[],
+  accountLabel: string | null,
+): TradeReviewGroup[] {
+  if (!accountLabel) return groups;
+
+  return groups.flatMap((group) => {
+    const trades = group.trades
+      .filter((trade) => (trade.account_label || "Default") === accountLabel)
+      .sort(compareRepresentativePriority);
+    if (trades.length === 0) return [];
+    return [{
+      ...group,
+      trades,
+      representative: { ...trades[0], review: group.review },
+    }];
+  });
+}
+
 function preferredReview(trades: TradeOrder[]): TradeReview | null {
   return trades.find((trade) => isFtmo(trade) && trade.review)?.review
     ?? trades.find((trade) => trade.review)?.review

@@ -11,7 +11,7 @@ import {
 } from "../api/chart";
 import { authFetch } from "../api/auth";
 import { accountBadgeClass } from "../lib/accountPresentation";
-import { groupAccountExecutions, groupTradesForReview } from "../lib/tradeReviewGroups";
+import { filterTradeReviewGroupsByAccount, groupAccountExecutions, groupTradesForReview } from "../lib/tradeReviewGroups";
 import { isTradeReviewComplete, type WeeklyReviewGateState } from "../lib/weeklyReview";
 import {
   firstTakeProfitPrice,
@@ -952,9 +952,13 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
   }, [filters]);
 
   const allGroups = useMemo(() => groupTradesForReview(data?.trades ?? []), [data?.trades]);
+  const accountGroups = useMemo(
+    () => filterTradeReviewGroupsByAccount(allGroups, filters.account === "all" ? null : filters.account),
+    [allGroups, filters.account],
+  );
   const reviewGateGroupIds = weeklyReviewGate?.dueGroupIds ?? null;
   const baseGroups = useMemo(() => {
-    return allGroups.filter((group) => {
+    return accountGroups.filter((group) => {
       const trade = group.representative;
       const reviewed = isTradeReviewComplete(group.review);
       if ((reviewGateActive || tab === "queue") && reviewGateGroupIds && !reviewGateGroupIds.has(group.id)) return false;
@@ -964,7 +968,7 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
       if (filters.reviewed === "no" && reviewed) return false;
       return true;
     });
-  }, [allGroups, filters.reviewed, reviewGateActive, reviewGateGroupIds, tab]);
+  }, [accountGroups, filters.reviewed, reviewGateActive, reviewGateGroupIds, tab]);
   const accounts = useMemo(
     () => Array.from(new Set((data?.trades ?? []).map((trade) => trade.account_label || "Default"))).sort(),
     [data?.trades],
@@ -977,19 +981,17 @@ export function JournalPage({ weeklyReviewGate }: { weeklyReviewGate?: WeeklyRev
     const counts: Record<TradeLifecycleStatus, number> = { pending: 0, open: 0, closed: 0, expired: 0, cancelled: 0, failed: 0 };
     for (const group of baseGroups) {
       const trade = group.representative;
-      if (filters.account !== "all" && !group.trades.some((item) => (item.account_label || "Default") === filters.account)) continue;
       if (filters.playbook !== "all" && trade.playbook !== filters.playbook) continue;
       counts[tradeLifecycleStatus(trade)] += 1;
     }
     return counts;
-  }, [baseGroups, filters.account, filters.playbook]);
+  }, [baseGroups, filters.playbook]);
   const groups = useMemo(() => baseGroups.filter((group) => {
     const trade = group.representative;
-    if (filters.account !== "all" && !group.trades.some((item) => (item.account_label || "Default") === filters.account)) return false;
     if (filters.playbook !== "all" && trade.playbook !== filters.playbook) return false;
     if (filters.status !== "all" && tradeLifecycleStatus(trade) !== filters.status) return false;
     return true;
-  }), [baseGroups, filters.account, filters.playbook, filters.status]);
+  }), [baseGroups, filters.playbook, filters.status]);
 
   const selectedFresh = selectedGroupId ? (groups.find((group) => group.id === selectedGroupId) ?? null) : null;
   const title = reviewGateActive ? "Weekly Review Required" : "Trade Journal";
