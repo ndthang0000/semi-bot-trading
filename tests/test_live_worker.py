@@ -614,6 +614,58 @@ class TestManualTradingLock(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(row["manual_lock_last_error"])
 
+    def test_failed_manual_position_close_is_not_retried_every_guard_cycle(self) -> None:
+        self._conn.execute(
+            """
+            UPDATE account_execution_controls
+            SET manual_lock_effective_enabled = 1,
+                manual_lock_baseline_positions_json = '[]'
+            WHERE account_label = 'Test'
+            """
+        )
+        self._conn.commit()
+        client = MagicMock()
+        position = {
+            "ticket": "new-position",
+            "magic": 0,
+            "side": "buy",
+            "volume": 0.1,
+        }
+        client.get_open_positions.return_value = [position]
+        client.get_pending_orders.return_value = []
+        client.close_position.side_effect = RuntimeError(
+            "MT5 close position rejected retcode=10027: AutoTrading disabled by client"
+        )
+
+        first = process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+        second = process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        client.close_position.assert_called_once()
+        row = self._conn.execute(
+            "SELECT manual_lock_last_error FROM account_execution_controls WHERE account_label = 'Test'"
+        ).fetchone()
+        self.assertIn("10027", row["manual_lock_last_error"])
+        alert = self._conn.execute(
+            "SELECT message_payload_json FROM alert_events WHERE account_label = 'Test'"
+        ).fetchone()
+        reasons = json.loads(alert["message_payload_json"])["reason"]
+        self.assertIn("10027", reasons[2])
+
+        client.get_open_positions.return_value = []
+        process_manual_trading_lock(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+        row = self._conn.execute(
+            "SELECT manual_lock_last_error FROM account_execution_controls WHERE account_label = 'Test'"
+        ).fetchone()
+        self.assertIsNone(row["manual_lock_last_error"])
+
     def test_wait_recovers_mt5_session_and_uses_resolved_symbol_after_restart(self) -> None:
         clock = [0.0]
 

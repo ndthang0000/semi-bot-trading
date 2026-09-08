@@ -619,10 +619,39 @@ def process_manual_trading_lock(
         for ticket, item in position_by_ticket.items()
         if ticket not in baseline_positions and ticket not in baseline_orders
     ]
+    attempted_orders = [
+        item
+        for item in violating_orders
+        if _claim_manual_lock_action(
+            conn,
+            env.account_label,
+            "pending order",
+            str(item["ticket"]),
+            success_action="cancelled",
+            failure_action="failed to cancel",
+        )
+    ]
+    attempted_positions = [
+        item
+        for item in violating_positions
+        if _claim_manual_lock_action(
+            conn,
+            env.account_label,
+            "position",
+            str(item["ticket"]),
+            success_action="closed",
+            failure_action="failed to close",
+        )
+    ]
+    if (violating_orders or violating_positions) and not (attempted_orders or attempted_positions):
+        # The first mutation attempt owns this exposure. A failed close/cancel
+        # requires operator action; retrying every one-second guard cycle can
+        # trigger broker hyperactivity protection.
+        return False
     acted = False
     errors: list[str] = []
 
-    for order in violating_orders:
+    for order in attempted_orders:
         ticket = str(order["ticket"])
         try:
             client.cancel_pending_order(
@@ -636,7 +665,7 @@ def process_manual_trading_lock(
             errors.append(f"pending {ticket}: {exc}")
             _queue_manual_lock_action_alert(conn, config, env, "failed to cancel", "pending order", ticket, order, exc)
 
-    for position in violating_positions:
+    for position in attempted_positions:
         ticket = str(position["ticket"])
         try:
             client.close_position(
@@ -653,7 +682,7 @@ def process_manual_trading_lock(
             errors.append(f"position {ticket}: {exc}")
             _queue_manual_lock_action_alert(conn, config, env, "failed to close", "position", ticket, position, exc)
 
-    if violating_orders or violating_positions:
+    if attempted_orders or attempted_positions:
         conn.execute(
             """
             UPDATE account_execution_controls
@@ -676,6 +705,37 @@ def process_manual_trading_lock(
     return acted or bool(errors)
 
 
+def _claim_manual_lock_action(
+    conn: Connection,
+    account_label: str,
+    exposure_type: str,
+    ticket: str,
+    *,
+    success_action: str,
+    failure_action: str,
+) -> bool:
+    """Persist one broker-mutation attempt for a manual exposure ticket."""
+    legacy_keys = (
+        f"manual-lock:{account_label}:{exposure_type}:{ticket}:{success_action}",
+        f"manual-lock:{account_label}:{exposure_type}:{ticket}:{failure_action}",
+    )
+    if conn.execute(
+        "SELECT 1 FROM alert_events WHERE account_label = ? AND dedupe_key IN (?, ?) LIMIT 1",
+        (account_label, *legacy_keys),
+    ).fetchone() is not None:
+        return False
+    claim_key = f"manual-lock-attempt:{account_label}:{exposure_type}:{ticket}"
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO system_alert_claims (dedupe_key, event_type, claimed_by, created_at)
+        VALUES (?, 'manual_lock_action', ?, ?)
+        """,
+        (claim_key, account_label, utc_now_iso()),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
 def _ticket_set(raw: str | None) -> set[str]:
     try:
         parsed = json.loads(raw or "[]")
@@ -696,17 +756,16 @@ def _queue_manual_lock_action_alert(
     exposure: dict[str, Any],
     error: Exception | None = None,
 ) -> None:
-    details = [
-        f"Account: {env.account_label}",
-        f"Ticket: {ticket}",
-        f"Magic: {int(exposure.get('magic', 0) or 0)}",
-    ]
+    details = [f"Account: {env.account_label}", f"Ticket: {ticket}"]
+    if error is not None:
+        # Keep the broker rejection inside the first three generic alert lines
+        # so Telegram does not hide the information needed for diagnosis.
+        details.append(f"Error: {error}")
+    details.append(f"Magic: {int(exposure.get('magic', 0) or 0)}")
     if exposure_type == "position":
         details.append(f"Side/volume: {exposure.get('side')} {exposure.get('volume')}")
     else:
         details.append(f"Volume/price: {exposure.get('volume')} @ {exposure.get('price_open')}")
-    if error is not None:
-        details.append(f"Error: {error}")
     queue_alert(
         conn,
         account_label=env.account_label,

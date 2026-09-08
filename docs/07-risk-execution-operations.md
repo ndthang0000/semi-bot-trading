@@ -468,6 +468,10 @@ non-zero EA magic numbers are untouched. MT5 cannot intercept a human click
 before broker acceptance, so a manual market position may incur spread/slippage
 before the guard closes it. The fast guard and 15-second strategy cycle share
 one MT5 client and run sequentially to avoid concurrent terminal calls.
+Each manual ticket receives at most one automatic cancel/close attempt. If MT5
+rejects that mutation, the lock keeps the error visible and alerts the operator
+to close the exposure manually; it does not retry on every one-second guard
+cycle.
 
 Nếu MT5 terminal bị `Restart App` trong lúc worker đang chạy, lỗi mất session
 hoặc broker symbol sẽ kích hoạt reconnect, resolve lại `MT5_SYMBOL` và validate
