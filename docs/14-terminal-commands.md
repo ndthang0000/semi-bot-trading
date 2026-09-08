@@ -826,6 +826,53 @@ Pull latest code, install package, fetch news, restart API only:
 .\scripts\update.ps1
 ```
 
+### One-time live-worker migration to Windows Task Scheduler
+
+Run these commands from an **elevated PowerShell window inside the active RDP
+desktop session**. The installer creates both account workers, disables the old
+`BotWorker` and `BotWorkerFTMO` WinSW services, and removes matching orphan MT5
+processes from Windows Session 0. `BotAPI` remains a WinSW service.
+
+```powershell
+cd C:\workspace\reaction-zone-bot
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\install-worker-tasks.ps1
+```
+
+The tasks are registered as `SemiBotTrading-ExnessWorker` and
+`SemiBotTrading-FTMOWorker` with `Run only when user is logged on`. They start at
+logon and are also started immediately by the installer. Use `-SkipStart` if the
+trade plans in the database must be reviewed before either worker starts:
+
+```powershell
+.\scripts\install-worker-tasks.ps1 -SkipStart
+```
+
+Verify task state and confirm worker Python processes run in the current RDP
+session rather than Session 0:
+
+```powershell
+Get-ScheduledTask -TaskName "SemiBotTrading-*Worker" |
+  Select-Object TaskName, State
+
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -in @("python.exe", "terminal64.exe") } |
+  Select-Object Name, ProcessId, ParentProcessId, SessionId, ExecutablePath
+```
+
+Task-runner logs are written to:
+
+```text
+var\BotWorker.task.out.log
+var\BotWorker.task.err.log
+var\BotWorkerFTMO.task.out.log
+var\BotWorkerFTMO.task.err.log
+```
+
+Keep the Windows account logged in. Closing/disconnecting the RDP client is
+safe; choosing **Sign out** stops the interactive tasks. After a VPS reboot,
+log in once and verify both tasks are `Running`.
+
 Restart API and Exness worker:
 
 ```powershell
@@ -844,5 +891,13 @@ Restart API and FTMO worker:
 .\scripts\update.ps1 -RestartFTMO
 ```
 
-`BotWorkerFTMO` is optional; the script skips it if `C:\winsw\BotWorkerFTMO.exe`
-has not been created yet.
+Worker restart flags target the Scheduled Tasks. The update script stops the
+selected worker task before `git pull` and dependency/frontend work, then starts
+it again only after the update succeeds. It fails with an installation
+instruction if the requested task does not exist; it never falls back to the
+old Session 0 WinSW worker. For normal VPS deployment of backend worker changes,
+use:
+
+```powershell
+.\scripts\update.ps1 -RestartAllWorkers
+```

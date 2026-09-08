@@ -7,8 +7,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $WinSW = "C:\winsw"
+$ExnessTaskName = "SemiBotTrading-ExnessWorker"
+$FTMOTaskName = "SemiBotTrading-FTMOWorker"
 
 function Invoke-WinSW {
     param(
@@ -27,18 +29,95 @@ function Invoke-WinSW {
     return & $exe $Command
 }
 
+function Assert-NativeCommandSucceeded {
+    param([Parameter(Mandatory=$true)][string]$Description)
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE. Selected workers remain stopped; fix the error before starting them."
+    }
+}
+
+function Get-WorkerTask {
+    param([Parameter(Mandatory=$true)][string]$TaskName)
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $Task) {
+        throw "Scheduled task '$TaskName' not found. Run .\scripts\install-worker-tasks.ps1 from an elevated RDP PowerShell session first."
+    }
+    return $Task
+}
+
+function Stop-WorkerTask {
+    param([Parameter(Mandatory=$true)][string]$TaskName)
+
+    $Task = Get-WorkerTask -TaskName $TaskName
+    if ($Task.State -ne "Ready" -and $Task.State -ne "Disabled") {
+        Stop-ScheduledTask -TaskName $TaskName
+        for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
+            Start-Sleep -Milliseconds 500
+            $Task = Get-ScheduledTask -TaskName $TaskName
+            if ($Task.State -eq "Ready" -or $Task.State -eq "Disabled") {
+                break
+            }
+        }
+        if ($Task.State -ne "Ready" -and $Task.State -ne "Disabled") {
+            throw "Scheduled task '$TaskName' did not stop within 10 seconds."
+        }
+    }
+    Write-Host "      Stopped scheduled task: $TaskName" -ForegroundColor Green
+}
+
+function Start-WorkerTask {
+    param([Parameter(Mandatory=$true)][string]$TaskName)
+
+    $Task = Get-WorkerTask -TaskName $TaskName
+    if ($Task.State -eq "Disabled") {
+        throw "Scheduled task '$TaskName' is disabled. Enable it before running the update."
+    }
+    Start-ScheduledTask -TaskName $TaskName
+    Write-Host "      Started scheduled task: $TaskName" -ForegroundColor Green
+}
+
+function Get-WorkerTaskStatus {
+    param([Parameter(Mandatory=$true)][string]$TaskName)
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $Task) {
+        return "NOT INSTALLED"
+    }
+    $Info = Get-ScheduledTaskInfo -TaskName $TaskName
+    return "$($Task.State) (last result: $($Info.LastTaskResult))"
+}
+
+$RestartExnessWorker = $RestartWorker -or $RestartAllWorkers
+$RestartFTMOWorker = $RestartFTMO -or $RestartAllWorkers
+
 Write-Host ""
 Write-Host "===============================" -ForegroundColor Cyan
 Write-Host "  Reaction Zone Bot - Update   " -ForegroundColor Cyan
 Write-Host "===============================" -ForegroundColor Cyan
 Write-Host ""
 
+if ($RestartExnessWorker -or $RestartFTMOWorker) {
+    Write-Host "[pre] Stopping selected live-worker tasks before update..." -ForegroundColor Yellow
+    if ($RestartExnessWorker) {
+        Stop-WorkerTask -TaskName $ExnessTaskName
+    }
+    if ($RestartFTMOWorker) {
+        Stop-WorkerTask -TaskName $FTMOTaskName
+    }
+    Write-Host ""
+}
+
 # ── 1. Git pull ──────────────────────────────────────────────────────────────
 Write-Host "[1/5] Pulling latest code from GitHub..." -ForegroundColor Yellow
 Set-Location $Root
 $beforeHash = git rev-parse HEAD
+Assert-NativeCommandSucceeded -Description "git rev-parse before update"
 git pull
+Assert-NativeCommandSucceeded -Description "git pull"
 $afterHash = git rev-parse HEAD
+Assert-NativeCommandSucceeded -Description "git rev-parse after update"
 
 if ($beforeHash -eq $afterHash) {
     Write-Host "      Already up to date." -ForegroundColor Gray
@@ -50,6 +129,7 @@ if ($beforeHash -eq $afterHash) {
 Write-Host ""
 Write-Host "[2/5] Installing Python dependencies..." -ForegroundColor Yellow
 pip install -e . --quiet --upgrade
+Assert-NativeCommandSucceeded -Description "Python dependency installation"
 Write-Host "      Done." -ForegroundColor Green
 
 # ── 3. Build frontend ────────────────────────────────────────────────────────
@@ -66,7 +146,9 @@ if ($SkipFrontend) {
             Write-Host "[3/5] Building frontend..." -ForegroundColor Yellow
             Set-Location (Join-Path $Root "frontend")
             npm install --silent
+            Assert-NativeCommandSucceeded -Description "Frontend dependency installation"
             npm run build
+            Assert-NativeCommandSucceeded -Description "Frontend build"
             Set-Location $Root
             Write-Host "      Done." -ForegroundColor Green
         } else {
@@ -83,6 +165,7 @@ if ($SkipNews) {
     Write-Host "[4/5] Fetching economic calendar..." -ForegroundColor Yellow
     Set-Location $Root
     python -m semi_bot_trading.cli fetch-news
+    Assert-NativeCommandSucceeded -Description "Economic calendar fetch"
     Write-Host "      Done." -ForegroundColor Green
 }
 
@@ -93,33 +176,29 @@ Write-Host "[5/5] Restarting services..." -ForegroundColor Yellow
 Invoke-WinSW -ServiceName "BotAPI" -Command "restart" -Required | Out-Null
 Write-Host "      BotAPI restarted." -ForegroundColor Green
 
-if ($RestartWorker -or $RestartAllWorkers) {
-    Invoke-WinSW -ServiceName "BotWorker" -Command "restart" -Required | Out-Null
-    Write-Host "      BotWorker restarted." -ForegroundColor Green
+if ($RestartExnessWorker) {
+    Start-WorkerTask -TaskName $ExnessTaskName
 } else {
-    Write-Host "      BotWorker skipped (use -RestartWorker to restart)." -ForegroundColor Gray
+    Write-Host "      Exness worker skipped (use -RestartWorker to restart)." -ForegroundColor Gray
 }
 
-if ($RestartFTMO -or $RestartAllWorkers) {
-    Invoke-WinSW -ServiceName "BotWorkerFTMO" -Command "restart" | Out-Null
-    if (Test-Path (Join-Path $WinSW "BotWorkerFTMO.exe")) {
-        Write-Host "      BotWorkerFTMO restarted." -ForegroundColor Green
-    }
+if ($RestartFTMOWorker) {
+    Start-WorkerTask -TaskName $FTMOTaskName
 } else {
-    Write-Host "      BotWorkerFTMO skipped (use -RestartFTMO or -RestartAllWorkers to restart)." -ForegroundColor Gray
+    Write-Host "      FTMO worker skipped (use -RestartFTMO or -RestartAllWorkers to restart)." -ForegroundColor Gray
 }
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host ""
 Start-Sleep 2
 $apiStatus = Invoke-WinSW -ServiceName "BotAPI" -Command "status" -Required
-$workerStatus = Invoke-WinSW -ServiceName "BotWorker" -Command "status"
-$ftmoStatus = Invoke-WinSW -ServiceName "BotWorkerFTMO" -Command "status"
+$workerStatus = Get-WorkerTaskStatus -TaskName $ExnessTaskName
+$ftmoStatus = Get-WorkerTaskStatus -TaskName $FTMOTaskName
 
 Write-Host "===============================" -ForegroundColor Cyan
 Write-Host "  Update complete!" -ForegroundColor Green
 Write-Host "  BotAPI    : $apiStatus"
-Write-Host "  BotWorker : $workerStatus"
-Write-Host "  FTMO      : $ftmoStatus"
+Write-Host "  Exness task : $workerStatus"
+Write-Host "  FTMO task   : $ftmoStatus"
 Write-Host "===============================" -ForegroundColor Cyan
 Write-Host ""

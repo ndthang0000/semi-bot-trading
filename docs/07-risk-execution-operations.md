@@ -498,13 +498,29 @@ expirations. This keeps FTMO deal reconstruction and order expiry on the broker
 clock while an Exness worker configured with `0` remains unchanged.
 Recheck it when the broker's summer/winter server time changes.
 
-`MT5_PATH` is optional for manual runs, but strongly recommended for Windows
-services on VPS because MetaTrader5 auto-discovery can fail in Session 0. Point
-it to `terminal64.exe`, not just the install folder, for example:
+`MT5_PATH` is optional for manual runs, but required for each Windows VPS live
+worker. Point it to that broker's `terminal64.exe`, not just the install folder,
+for example:
 
 ```text
 MT5_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
 ```
+
+MT5 live workers must run as interactive Windows Scheduled Tasks under the same
+logged-in Windows user that owns the visible MT5 terminals. Do not run them as
+`LocalSystem` WinSW services: Session 0 has a separate MT5 IPC endpoint and
+separate terminal state, so a service can connect to a hidden terminal where
+algorithmic trading is disabled even while the visible RDP terminal is healthy.
+`BotAPI` can remain a WinSW service because it does not own MT5 IPC. The standard
+task names are `SemiBotTrading-ExnessWorker` and
+`SemiBotTrading-FTMOWorker`; install them with
+`scripts/install-worker-tasks.ps1`.
+
+The task runner refuses to start in Session 0. Both tasks use interactive logon,
+run at user logon, ignore duplicate starts, and restart up to three times after
+an unexpected exit. Disconnecting RDP keeps the Windows session and workers
+alive. Signing out ends the interactive session, so after a VPS reboot the
+configured user must log in once before the workers can run.
 
 The worker syncs only closed candles before running detectors. Heavy detectors
 run when a new M15 candle has closed, while setup evaluation and execution
