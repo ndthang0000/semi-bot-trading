@@ -234,17 +234,38 @@ def _detect_line_signal(conn, config, line, now: datetime) -> dict[str, Any] | N
 
 
 def _claim_line_signal(conn, line_id: str, signal: dict[str, Any], now: datetime) -> bool:
-    """Atomically reserve the account slot before any execution work begins."""
+    """Atomically reserve one logical Line group across all selected accounts."""
     try:
         conn.commit()
         conn.execute("BEGIN IMMEDIATE")
+        target = conn.execute(
+            """SELECT id,COALESCE(client_group_id,id) AS group_id
+            FROM line_reaction_plans
+            WHERE id=? AND status='armed' AND removed_at IS NULL""",
+            (line_id,),
+        ).fetchone()
+        if target is None:
+            conn.rollback()
+            return False
+        group_id = target["group_id"]
+        members = conn.execute(
+            """SELECT id,status FROM line_reaction_plans
+            WHERE COALESCE(client_group_id,id)=? AND removed_at IS NULL""",
+            (group_id,),
+        ).fetchall()
+        if not members or any(member["status"] != "armed" for member in members):
+            conn.rollback()
+            return False
         changed = conn.execute(
             """UPDATE line_reaction_plans SET status='executing',signal_json=?,updated_at=?
-            WHERE id=? AND status='armed' AND removed_at IS NULL""",
-            (json.dumps(signal), now.isoformat(), line_id),
+            WHERE COALESCE(client_group_id,id)=? AND status='armed' AND removed_at IS NULL""",
+            (json.dumps(signal), now.isoformat(), group_id),
         ).rowcount
+        if changed != len(members):
+            conn.rollback()
+            return False
         conn.commit()
-        return bool(changed)
+        return True
     except sqlite3.IntegrityError:
         conn.rollback()
         return False

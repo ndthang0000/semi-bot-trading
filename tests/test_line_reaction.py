@@ -293,6 +293,83 @@ class TestLineIntegration(unittest.TestCase):
         self.assertFalse(json.loads(order["metadata_json"])["partial_take_profit"]["enabled"])
         self.assertEqual("open",self.conn.execute("SELECT status FROM line_reaction_plans").fetchone()["status"])
 
+    def test_signal_claim_reserves_the_same_group_for_every_account(self):
+        from semi_bot_trading.line_reaction_worker import _claim_line_signal
+
+        now = datetime.now(timezone.utc)
+        config_json = LineConfig(risk_reward=3).model_dump_json()
+        signal = {
+            "signal_time": (now - timedelta(minutes=15)).isoformat(),
+            "signal_close_time": now.isoformat(),
+            "reference_price": 3000,
+            "structural_stop": 2995,
+            "max_distance": 10,
+            "atr": 5,
+            "h1_atr": 10,
+        }
+        for account in ("Test", "Second"):
+            self.conn.execute(
+                """INSERT INTO line_reaction_plans
+                (id,client_group_id,symbol,account_label,direction,price,status,config_json,
+                 armed_at,expires_at,created_at,updated_at)
+                VALUES (?, 'shared-3r','XAUUSD',?,'long',2998,'armed',?,?,?,?,?)""",
+                (
+                    f"shared-3r-{account}", account, config_json,
+                    (now - timedelta(hours=1)).isoformat(),
+                    (now + timedelta(hours=1)).isoformat(), now.isoformat(), now.isoformat(),
+                ),
+            )
+        self.conn.commit()
+
+        self.assertTrue(_claim_line_signal(self.conn, "shared-3r-Test", signal, now))
+        rows = self.conn.execute(
+            "SELECT status,config_json,signal_json FROM line_reaction_plans WHERE client_group_id='shared-3r'"
+        ).fetchall()
+        self.assertEqual(2, len(rows))
+        self.assertEqual({"executing"}, {row["status"] for row in rows})
+        self.assertEqual({3.0}, {json.loads(row["config_json"])["risk_reward"] for row in rows})
+        self.assertEqual(
+            {signal["signal_close_time"]},
+            {json.loads(row["signal_json"])["signal_close_time"] for row in rows},
+        )
+
+    def test_signal_claim_blocks_the_whole_group_when_one_account_is_busy(self):
+        from semi_bot_trading.line_reaction_worker import _claim_line_signal
+
+        now = datetime.now(timezone.utc)
+        signal = {"signal_close_time": now.isoformat()}
+        self.conn.execute(
+            """INSERT INTO line_reaction_plans
+            (id,client_group_id,symbol,account_label,direction,price,status,config_json,
+             armed_at,expires_at,created_at,updated_at)
+            VALUES ('active','active-group','XAUUSD','Test','long',2998,'open',?,?,?,?,?)""",
+            (
+                LineConfig().model_dump_json(), (now - timedelta(hours=1)).isoformat(),
+                (now + timedelta(hours=1)).isoformat(), now.isoformat(), now.isoformat(),
+            ),
+        )
+        for account in ("Test", "Second"):
+            self.conn.execute(
+                """INSERT INTO line_reaction_plans
+                (id,client_group_id,symbol,account_label,direction,price,status,config_json,
+                 armed_at,expires_at,created_at,updated_at)
+                VALUES (?, 'waiting-group','XAUUSD',?,'long',2998,'armed',?,?,?,?,?)""",
+                (
+                    f"waiting-{account}", account, LineConfig(risk_reward=3).model_dump_json(),
+                    (now - timedelta(hours=1)).isoformat(), (now + timedelta(hours=1)).isoformat(),
+                    now.isoformat(), now.isoformat(),
+                ),
+            )
+        self.conn.commit()
+
+        self.assertFalse(_claim_line_signal(self.conn, "waiting-Test", signal, now))
+        self.assertEqual(
+            {"armed"},
+            {row[0] for row in self.conn.execute(
+                "SELECT status FROM line_reaction_plans WHERE client_group_id='waiting-group'"
+            )},
+        )
+
     def test_worker_high_spread_does_not_send(self):
         from semi_bot_trading.line_reaction_worker import process_line_reactions
         from tests.test_live_worker import _make_env,_fake_client

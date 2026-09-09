@@ -99,7 +99,12 @@ SQLite unique partial index on account_label for executing/pending/open/cancel_r
 reconciliation_required serializes Line Reaction exposure per account across
 symbols/worker processes.
 Intent existence is rechecked inside BEGIN IMMEDIATE before persistence.
-Multiple armed lines may wait; only one can reserve. Accounts are independent.
+Multiple armed lines may wait. A trigger reserves every available member of the
+same logical Line group in one transaction, so selected accounts execute the same
+frozen signal and Line config. If any selected account is already reserved by an
+executing, pending, open, cancel-requested or reconciliation-required Line, the
+whole new group keeps waiting. This prevents workers from choosing different
+overlapping Lines with different TP/partial settings on the same recovery candle.
 
 Expiry/cancel removes confirmed pending orders only, never filled/unknown positions.
 GTC fallback needs worker polling; cancellation is delayed/offline when worker is off.
