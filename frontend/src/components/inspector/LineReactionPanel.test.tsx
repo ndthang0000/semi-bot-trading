@@ -73,3 +73,42 @@ it("sorts line cards from highest to lowest price and distinguishes Draft from A
   expect(badges.find(node => node.textContent === "draft")?.className).toContain("amber");
   expect(badges.find(node => node.textContent === "armed")?.className).toContain("emerald");
 });
+
+it("saves a 1.25R break-even configuration on an armed line", async () => {
+  const config = { recovery_ratio:2, body_period:20, stop_buffer_atr:0.1, max_stop_h1_atr:1.2,
+    limit_offset:5, limit_ttl_minutes:120, risk_reward:2, target_mode:"fixed_rr",
+    partial_enabled:true, partial_trigger_r:1, partial_fraction:0, trade_sessions:["london"] };
+  const plan = { id:"armed-line", account_label:"Fund", account_labels:["Fund"],
+    price:4330, direction:"long", status:"armed", created_at:new Date().toISOString(),
+    updated_at:new Date().toISOString(), armed_at:new Date().toISOString(), signal:null,
+    expires_at:new Date(Date.now()+3600000).toISOString(), visual_start:null, visual_end:null,
+    last_error:null, config };
+  vi.mocked(authFetch).mockImplementation(async (path, init) => {
+    if (String(path) === "/api/accounts") return new Response(JSON.stringify({ accounts: [
+      { account_label:"Fund", execution:{worker_status:"online"} },
+    ] }));
+    if (init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ ...plan, config:body.config, updated_at:new Date().toISOString() }));
+    }
+    return new Response(JSON.stringify({ sessions, plans:[plan] }));
+  });
+  useLineReactionStore.setState({ plans:[plan], draft:null, selectedId:plan.id });
+  container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" />));
+
+  const triggerInput = Array.from(container.querySelectorAll("label"))
+    .find(label => label.textContent?.startsWith("Trigger R"))?.querySelector("input");
+  expect(triggerInput?.step).toBe("0.05");
+  await act(async () => {
+    if (!triggerInput) throw new Error("Trigger R input not found");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(triggerInput, "1.25");
+    triggerInput.dispatchEvent(new Event("input", { bubbles:true }));
+  });
+  const save = Array.from(container.querySelectorAll("button")).find(button => button.textContent?.trim() === "Save");
+  await act(async () => save?.click());
+
+  const patchCall = vi.mocked(authFetch).mock.calls.find(([, options]) => options?.method === "PATCH");
+  expect(patchCall?.[0]).toBe("/api/line-reactions/armed-line");
+  expect(JSON.parse(String(patchCall?.[1]?.body)).config.partial_trigger_r).toBe(1.25);
+});
