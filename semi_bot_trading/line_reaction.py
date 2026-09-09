@@ -24,7 +24,7 @@ class LineConfig(BaseModel):
     target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"
     partial_enabled: bool = False
     partial_trigger_r: float = Field(default=1, ge=0.5, le=1.5)
-    partial_fraction: float = Field(default=0.4, ge=0.25, le=0.5)
+    partial_fraction: float = Field(default=0.4, ge=0, le=0.5)
     trade_sessions: list[str] = Field(
         default_factory=lambda: list(SESSION_NAMES), min_length=1, max_length=5
     )

@@ -68,6 +68,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const partialPlan = readObject(metadata.partial_take_profit);
   const tradeManagement = readObject(metadata.trade_management);
   const partialDone = partialPlan.done === true;
+  const breakevenOnly = readNumber(partialPlan.fraction) === 0;
   const breakevenApplied = partialPlan.breakeven_applied === true;
   const initialStopLoss = readNumber(metadata.initial_stop_loss);
   const brokerEntryPrice = readNumber(metadata.broker_position_entry_price) ?? trade.entry_price;
@@ -269,9 +270,9 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
 
       {Object.keys(partialPlan).length > 0 ? (
         <div className="grid gap-2 rounded-md border border-emerald-400/25 bg-emerald-400/[0.06] p-3">
-          <TradeMetric label="Partial" value={partialDone ? "done" : "armed"} />
+          <TradeMetric label={breakevenOnly ? "Break even" : "Partial"} value={partialDone ? "done" : "armed"} />
           <TradeMetric label="Trigger" value={`${formatUnknownNumber(partialPlan.trigger_r)}R @ ${price(readNumber(partialPlan.trigger_price))}`} />
-          <TradeMetric label="Partial close" value={partialDone ? `${formatUnknownNumber(partialPlan.closed_volume)} lot` : "--"} />
+          {!breakevenOnly ? <TradeMetric label="Partial close" value={partialDone ? `${formatUnknownNumber(partialPlan.closed_volume)} lot` : "--"} /> : null}
           <TradeMetric
             label="BE SL"
             value={breakevenApplied ? price(readNumber(partialPlan.breakeven_stop)) : partialDone ? "pending" : price(readNumber(partialPlan.breakeven_stop))}

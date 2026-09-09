@@ -1277,6 +1277,50 @@ class TestPartialTakeProfit(unittest.TestCase):
         self.assertTrue(metadata["partial_take_profit"]["done"])
         self.assertEqual(0.01, metadata["partial_take_profit"]["closed_volume"])
 
+    def test_locked_zero_fraction_moves_to_break_even_without_partial_close(self):
+        self._insert_open_order()
+        self._conn.execute("UPDATE trade_ideas SET playbook = 'line_reaction_v1'")
+        metadata = self._metadata()
+        metadata["partial_take_profit"].update({"fraction": 0, "locked": True})
+        self._conn.execute(
+            "UPDATE trade_orders SET metadata_json = ? WHERE id = 'order-partial'",
+            (json.dumps(metadata),),
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3025.5, open_tickets={"11111"})
+        client.get_open_positions.return_value = [
+            {"ticket": "11111", "side": "buy", "volume": 0.02, "price_open": 3000.0, "sl": 2980.0, "tp": 3050.0}
+        ]
+
+        manage_open_trade_partial_take_profit(
+            self._conn, self._config, self._env, client, "XAUUSDm"
+        )
+
+        client.close_partial_position.assert_not_called()
+        client.modify_position_sltp.assert_called_once_with(
+            "XAUUSDm",
+            position_ticket="11111",
+            stop_loss=3000.0,
+            take_profit=3050.0,
+            magic=self._env.mt5_magic,
+            comment="Automatic BE",
+        )
+        row = self._conn.execute(
+            "SELECT stop_loss,metadata_json FROM trade_orders WHERE id='order-partial'"
+        ).fetchone()
+        saved = json.loads(row["metadata_json"])
+        self.assertEqual(3000.0, row["stop_loss"])
+        self.assertEqual("automatic_breakeven", saved["stop_management_state"])
+        self.assertTrue(saved["partial_take_profit"]["done"])
+        self.assertTrue(saved["partial_take_profit"]["breakeven_applied"])
+        self.assertEqual(0.0, saved["partial_take_profit"]["closed_volume"])
+        alert = self._conn.execute(
+            "SELECT message_payload_json FROM alert_events ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        payload = json.loads(alert["message_payload_json"])
+        self.assertEqual("Break-even activated", payload["title"])
+        self.assertEqual(["Moved SL to 3000.00"], payload["reason"])
+
     def test_partial_take_profit_does_not_repeat_after_done(self):
         self._insert_open_order(done=True)
         client = _fake_client(current_price=3026.0, open_tickets={"11111"})

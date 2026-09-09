@@ -3517,7 +3517,7 @@ def manage_open_trade_partial_take_profit(
     client: MT5BrokerClient,
     broker_symbol: str,
 ) -> None:
-    """Partial-close the configured fraction at its R milestone and move the rest to BE."""
+    """Apply the configured partial close and/or break-even move at its R milestone."""
     if not env.execution_enabled or not broker_symbol:
         return
     account_enabled, account_trigger_r, account_fraction = account_partial_take_profit_settings(conn, env)
@@ -3601,11 +3601,14 @@ def manage_open_trade_partial_take_profit(
             initial_quantity = float(metadata.get("initial_quantity") or row["quantity"])
         except (TypeError, ValueError, KeyError):
             continue
-        if position_volume <= 0 or fraction <= 0:
+        if position_volume <= 0:
             continue
+        breakeven_only = fraction <= 0
         be_stop = float(plan.get("breakeven_stop") or entry)
         final_tp = float(plan.get("final_take_profit") or (json.loads(row["take_profit_json"] or "[]") or [0])[0])
         move_to_breakeven = plan.get("move_stop_to", "breakeven") == "breakeven"
+        if breakeven_only and not move_to_breakeven:
+            continue
         ticket = str(position["ticket"])
         if plan.get("done"):
             if not move_to_breakeven or plan.get("breakeven_applied"):
@@ -3617,6 +3620,7 @@ def manage_open_trade_partial_take_profit(
                 stop_loss=be_stop,
                 take_profit=final_tp,
                 magic=env.mt5_magic,
+                comment="Automatic BE" if breakeven_only else "BE after partial",
             )
             if modify_error is not None:
                 queue_alert(
@@ -3628,7 +3632,7 @@ def manage_open_trade_partial_take_profit(
                     severity="critical",
                     entity_ids=[row["id"]],
                     payload={"title": "Break-even move retry failed", "outcome": "failed", "reason": [modify_error]},
-                    dedupe_key=f"partial-be-retry-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
+                    dedupe_key=f"{'break-even' if breakeven_only else 'partial-be'}-retry-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
                 )
                 continue
             now = utc_now_iso()
@@ -3636,7 +3640,9 @@ def manage_open_trade_partial_take_profit(
             plan["modify_result"] = modify_result
             plan["modify_error"] = None
             metadata["partial_take_profit"] = plan
-            metadata["stop_management_state"] = "partial_taken_be"
+            metadata["stop_management_state"] = (
+                "automatic_breakeven" if breakeven_only else "partial_taken_be"
+            )
             metadata["current_stop_loss"] = be_stop
             conn.execute(
                 """
@@ -3652,10 +3658,16 @@ def manage_open_trade_partial_take_profit(
         if not reached:
             continue
         target_remaining_volume = _round_lot_volume(initial_quantity * (1.0 - fraction))
-        already_partially_closed = target_remaining_volume > 0 and position_volume <= target_remaining_volume + 1e-9
+        already_partially_closed = (
+            not breakeven_only
+            and target_remaining_volume > 0
+            and position_volume <= target_remaining_volume + 1e-9
+        )
         close_result: dict[str, Any] | None = None
         close_volume = 0.0
-        if already_partially_closed:
+        if breakeven_only:
+            pass
+        elif already_partially_closed:
             close_volume = _round_lot_volume(max(initial_quantity - position_volume, 0.0))
         else:
             close_volume = _round_lot_volume(position_volume * fraction)
@@ -3695,6 +3707,7 @@ def manage_open_trade_partial_take_profit(
                 stop_loss=be_stop,
                 take_profit=final_tp,
                 magic=env.mt5_magic,
+                comment="Automatic BE" if breakeven_only else "BE after partial",
             )
         if modify_error is not None:
             queue_alert(
@@ -3705,8 +3718,12 @@ def manage_open_trade_partial_take_profit(
                 event_type="execution_event",
                 severity="critical",
                 entity_ids=[row["id"]],
-                payload={"title": "Break-even move failed after partial TP", "outcome": "failed", "reason": [modify_error]},
-                dedupe_key=f"partial-be-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
+                payload={
+                    "title": "Automatic break-even failed" if breakeven_only else "Break-even move failed after partial TP",
+                    "outcome": "failed",
+                    "reason": [modify_error],
+                },
+                dedupe_key=f"{'break-even' if breakeven_only else 'partial-be'}-failed:{row['id']}:{datetime.now(UTC).date().isoformat()}",
             )
         now = utc_now_iso()
         plan.update(
@@ -3724,7 +3741,15 @@ def manage_open_trade_partial_take_profit(
             }
         )
         metadata["partial_take_profit"] = plan
-        if not move_to_breakeven:
+        if breakeven_only and modify_error is None:
+            metadata["stop_management_state"] = "automatic_breakeven"
+            metadata["current_stop_loss"] = be_stop
+            persisted_stop_loss = be_stop
+        elif breakeven_only:
+            metadata["stop_management_state"] = "automatic_breakeven_failed"
+            metadata["current_stop_loss"] = float(row["stop_loss"])
+            persisted_stop_loss = float(row["stop_loss"])
+        elif not move_to_breakeven:
             metadata["stop_management_state"] = "partial_taken_sl_unchanged"
             metadata["current_stop_loss"] = float(row["stop_loss"])
             persisted_stop_loss = float(row["stop_loss"])
@@ -3744,6 +3769,16 @@ def manage_open_trade_partial_take_profit(
             """,
             (persisted_stop_loss, json.dumps(metadata, sort_keys=True, default=str), now, row["id"]),
         )
+        alert_title = (
+            "Break-even activated" if breakeven_only and modify_error is None
+            else "Break-even move pending" if breakeven_only
+            else "Partial TP + break-even" if modify_error is None
+            else "Partial TP done; break-even pending"
+        )
+        alert_reason = [] if breakeven_only else [f"Closed {close_volume:g} lot at ~{current_close_price:.2f}"]
+        alert_reason.append(
+            f"Moved SL to {be_stop:.2f}" if modify_error is None else f"BE move failed: {modify_error}"
+        )
         queue_alert(
             conn,
             account_label=env.account_label,
@@ -3753,14 +3788,11 @@ def manage_open_trade_partial_take_profit(
             severity="important",
             entity_ids=[row["id"]],
             payload={
-                "title": "Partial TP + break-even" if modify_error is None else "Partial TP done; break-even pending",
-                "outcome": "take_profit",
-                "reason": [
-                    f"Closed {close_volume:g} lot at ~{current_close_price:.2f}",
-                    f"Moved SL to {be_stop:.2f}" if modify_error is None else f"BE move failed: {modify_error}",
-                ],
+                "title": alert_title,
+                "outcome": "info" if breakeven_only else "take_profit",
+                "reason": alert_reason,
             },
-            dedupe_key=f"partial-tp:{row['id']}",
+            dedupe_key=f"{'break-even' if breakeven_only else 'partial-tp'}:{row['id']}",
         )
         updated_any = True
     if updated_any:

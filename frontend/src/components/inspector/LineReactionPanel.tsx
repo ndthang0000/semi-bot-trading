@@ -93,9 +93,9 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
       .finally(() => setBusy(false));
   }, [draft, accounts, sessions, symbol, upsertPlan]);
 
-  const field = (key: keyof Config, label: string, step = "0.1") => (
+  const field = (key: keyof Config, label: string, step = "0.1", min?: number, max?: number) => (
     <label className="grid gap-1 text-xs text-slate-300">{label}
-      <input className="rounded bg-ink-950 p-2" type="number" step={step} value={Number(config[key])}
+      <input className="rounded bg-ink-950 p-2" type="number" step={step} min={min} max={max} value={Number(config[key])}
         onChange={event => setConfig({ ...config, [key]: Number(event.target.value) })} />
     </label>
   );
@@ -203,8 +203,8 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
           <option value="1.5">1,5R</option><option value="2">2R</option><option value="2.5">2,5R</option><option value="3">3R</option></select></label>
         <label className="grid gap-1 text-xs">Cách chọn TP<select className="bg-ink-950 p-2" value={config.target_mode} onChange={event => setConfig({ ...config, target_mode: event.target.value })}>
           <option value="fixed_rr">Fixed RR</option><option value="wave_safe">Wave Safe</option><option value="wave_base">Wave Base</option></select></label>
-        <label className="text-xs"><input type="checkbox" checked={config.partial_enabled} onChange={event => setConfig({ ...config, partial_enabled: event.target.checked })} /> Partial TP + BE riêng</label>
-        {config.partial_enabled && <div className="grid grid-cols-2 gap-2">{field("partial_trigger_r", "Trigger R")}{field("partial_fraction", "Tỷ lệ chốt (0–1)")}</div>}
+        <label className="text-xs"><input type="checkbox" checked={config.partial_enabled} onChange={event => setConfig({ ...config, partial_enabled: event.target.checked })} /> Quản lý tại R + BE</label>
+        {config.partial_enabled && <div className="grid gap-1.5"><div className="grid grid-cols-2 gap-2">{field("partial_trigger_r", "Trigger R", "0.1", 0.5, 1.5)}{field("partial_fraction", "Tỷ lệ chốt (0–0,5)", "0.05", 0, 0.5)}</div><p className="text-[10px] text-slate-500">Đặt tỷ lệ chốt = 0 để chỉ dời SL về hòa vốn.</p></div>}
         <p className="text-[11px] text-slate-400">Risk: quỹ 0,75%; cá nhân 1,5%. Một lệnh đồng thời/account. SL bị cap có thể nằm trong râu. Wave thiếu dữ liệu hoặc dưới 2R sẽ không vào lệnh.</p>
         <div className="grid grid-cols-3 gap-2">
           <button disabled={busy || selectedAccounts.length === 0} className="flex items-center justify-center gap-1 rounded bg-cyan-700 p-2 text-xs disabled:opacity-40"><Save size={14} /> Save</button>

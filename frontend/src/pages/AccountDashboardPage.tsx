@@ -18,6 +18,7 @@ interface TradeMeta {
   confluence_count?: number;
   atr?: number;
   partial_take_profit?: {
+    fraction?: number;
     done?: boolean;
     breakeven_applied?: boolean;
     closed_volume?: number;
@@ -212,7 +213,8 @@ function formatVietnamTime(value: string | null): string {
 }
 
 function hasPartialTakeProfit(t: TradeOrder): boolean {
-  return t.metadata?.partial_take_profit?.done === true;
+  const plan = t.metadata?.partial_take_profit;
+  return plan?.done === true && Number(plan.fraction) > 0;
 }
 
 function hasBreakevenApplied(t: TradeOrder): boolean {

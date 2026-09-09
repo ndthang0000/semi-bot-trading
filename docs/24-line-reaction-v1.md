@@ -80,7 +80,9 @@ structure available at signal close. Require >=3 same-direction completed legs.
 Explicit wave mode with missing evidence or target below 2R blocks entry.
 Wave reward is capped at the selected 1.5/2/2.5/3R. Wave evidence is frozen at trigger.
 Risk: approved-plan policy, 0.75% fund / 1.5% personal, sized from final geometry.
-Partial defaults OFF; optional partial/BE is locked per-line metadata. Zone Reaction
+Partial defaults OFF; optional partial/BE is locked per-line metadata. A selected
+fraction of zero is the break-even-only mode: at the configured R trigger the
+worker preserves the full position and moves its SL to entry. Zone Reaction
 account partial settings never overwrite it.
 
 ## Lifecycle and concurrency
