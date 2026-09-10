@@ -14,11 +14,11 @@ SESSION_ENDED_BEFORE_EXECUTION = "Selected Line trading session ended before bro
 
 class LineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    recovery_ratio: float = Field(default=2.0, ge=2, le=10)
+    recovery_ratio: float = Field(default=2.0, ge=1, le=10)
     body_period: int = Field(default=20, ge=5, le=100)
     stop_buffer_atr: float = Field(default=0.1, ge=0, le=1)
-    max_stop_h1_atr: float = Field(default=1.2, gt=0, le=1.2)
-    limit_offset: float = Field(default=5, gt=0, le=50)
+    max_stop_h1_atr: float = Field(default=1.2, ge=0.01, le=1.2)
+    limit_offset: float = Field(default=5, ge=0.01, le=50)
     limit_ttl_minutes: int = Field(default=120, ge=5, le=1440)
     risk_reward: Literal[1.5, 2.0, 2.5, 3.0] = 2.0
     target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"

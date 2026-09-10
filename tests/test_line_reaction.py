@@ -101,10 +101,11 @@ class TestLineReaction(unittest.TestCase):
     def test_validation(self):
         self.assertEqual(1.5, LineConfig(risk_reward=1.5).risk_reward)
         self.assertEqual(3, LineConfig(risk_reward=3).risk_reward)
+        self.assertEqual(1.2, LineConfig(recovery_ratio=1.2).recovery_ratio)
         self.assertEqual(0, LineConfig(partial_fraction=0).partial_fraction)
         self.assertEqual(["asian", "london", "london_ny", "new_york", "off_hours"], LineConfig().trade_sessions)
         self.assertEqual(["london", "new_york"], LineConfig(trade_sessions=["london", "new_york", "london"]).trade_sessions)
-        for change in ({"recovery_ratio":1.5},{"max_stop_h1_atr":2},{"limit_offset":float("nan")}):
+        for change in ({"recovery_ratio":0.9},{"max_stop_h1_atr":2},{"limit_offset":float("nan")}):
             with self.assertRaises(ValueError):
                 LineConfig(**change)
         with self.assertRaises(ValueError):

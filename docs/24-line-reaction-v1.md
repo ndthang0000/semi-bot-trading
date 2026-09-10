@@ -38,7 +38,8 @@ M15 closed candles only. Candle open >= armed_at; close must be available now,
 trigger younger than 15 minutes, line unexpired. Require low <= line <= high,
 correct body direction and close strictly on the reclaim side.
 Shared close_extreme_recovery_metrics compares close-low (long) or high-close
-(short) to the exact preceding 20 candle bodies. Default/minimum ratio 2.0;
+(short) to the exact preceding 20 candle bodies. The default ratio is 2.0 and
+the trader-configurable range is 1.0–10.0;
 configurable period. If BOTH directions pass the threshold, reject the candle,
 including equality. Missing/zero baseline, missing ATR, doji and stale signals fail closed.
 

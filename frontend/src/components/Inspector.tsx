@@ -582,7 +582,7 @@ function ZonesTab({
         )}
       </section>
 
-      {showReactionLines ? <LineReactionPanel symbol={symbol} /> : null}
+      {showReactionLines ? <LineReactionPanel symbol={symbol} showToast={showToast} /> : null}
 
       {showPriceAreas ? <section className="p-4">
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">

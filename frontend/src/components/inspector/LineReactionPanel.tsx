@@ -30,7 +30,23 @@ const statusBadgeClass = (status: string) => {
   if (status === "reconciliation_required") return "border-rose-400/40 bg-rose-400/10 text-rose-200";
   return "border-ink-700 bg-ink-950 text-slate-400";
 };
-export function LineReactionPanel({ symbol }: { symbol: string }) {
+type ToastKind = "success" | "error";
+type NumberFieldOptions = { step: string; min: number; max: number };
+const numberFields: Record<"recovery_ratio" | "body_period" | "stop_buffer_atr" | "max_stop_h1_atr" | "limit_offset" | "limit_ttl_minutes" | "partial_trigger_r" | "partial_fraction", NumberFieldOptions> = {
+  recovery_ratio: { step: "0.1", min: 1, max: 10 },
+  body_period: { step: "1", min: 5, max: 100 },
+  stop_buffer_atr: { step: "0.05", min: 0, max: 1 },
+  max_stop_h1_atr: { step: "0.01", min: 0.01, max: 1.2 },
+  limit_offset: { step: "0.01", min: 0.01, max: 50 },
+  limit_ttl_minutes: { step: "1", min: 5, max: 1440 },
+  partial_trigger_r: { step: "0.05", min: 0.5, max: 1.5 },
+  partial_fraction: { step: "0.05", min: 0, max: 0.5 },
+};
+
+export function LineReactionPanel({ symbol, showToast }: {
+  symbol: string;
+  showToast: (kind: ToastKind, text: string) => void;
+}) {
   const plans = useLineReactionStore(s => s.plans);
   const setPlans = useLineReactionStore(s => s.setPlans);
   const upsertPlan = useLineReactionStore(s => s.upsertPlan);
@@ -62,13 +78,22 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
     return () => { active = false; clearInterval(poll); };
   }, [setPlans]);
 
-  const act = async (operation: () => Promise<Plan>, clearSelection = false) => {
+  const act = async (operation: () => Promise<Plan>, options: {
+    clearSelection?: boolean;
+    successMessage?: string;
+    errorPrefix?: string;
+  } = {}) => {
     setBusy(true); setError("");
     try {
       const plan = await operation();
       upsertPlan(plan);
-      if (clearSelection) useLineReactionStore.getState().select(null);
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
+      if (options.clearSelection) useLineReactionStore.getState().select(null);
+      if (options.successMessage) showToast("success", options.successMessage);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      if (options.errorPrefix) showToast("error", `${options.errorPrefix}: ${message}`);
+    } finally { setBusy(false); }
   };
 
   useEffect(() => {
@@ -93,12 +118,19 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
       .finally(() => setBusy(false));
   }, [draft, accounts, sessions, symbol, upsertPlan]);
 
-  const field = (key: keyof Config, label: string, step = "0.1", min?: number, max?: number) => (
+  const field = (key: keyof typeof numberFields, label: string) => {
+    const limits = numberFields[key];
+    return (
     <label className="grid gap-1 text-xs text-slate-300">{label}
-      <input className="rounded bg-ink-950 p-2" type="number" step={step} min={min} max={max} value={Number(config[key])}
+      <input className="rounded bg-ink-950 p-2" type="number" required step={limits.step} min={limits.min} max={limits.max} value={Number(config[key])}
+        onInvalid={event => {
+          event.preventDefault();
+          showToast("error", `${label}: nhập từ ${limits.min} đến ${limits.max}, bước ${limits.step}.`);
+        }}
         onChange={event => setConfig({ ...config, [key]: Number(event.target.value) })} />
     </label>
-  );
+    );
+  };
   const activePlans = plans
     .filter(plan => !["cancelled", "expired", "closed", "failed"].includes(plan.status))
     .sort((left, right) => right.price - left.price);
@@ -161,11 +193,14 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
       </div>
       {["draft", "armed"].includes(selected.status) ? <form className="grid gap-3" onSubmit={event => {
         event.preventDefault();
-        void act(() => updateLineReaction(selected.id, {
+        void act(
+          () => updateLineReaction(selected.id, {
             symbol, account_labels: selectedAccounts, direction: selected.direction, price: selected.price, config,
             visual_start: selected.visual_start, visual_end: selected.visual_end,
             ...(selected.visual_end ? {} : { expires_in_minutes: Math.max(15, Math.ceil(remainingHours(selected.expires_at) * 60)) }),
-          }));
+          }),
+          { successMessage: "Đã lưu cấu hình Line Reaction.", errorPrefix: "Không thể lưu Line" },
+        );
       }}>
         <fieldset className="grid gap-1.5">
           <legend className="mb-1 text-xs text-slate-300">Accounts <span className="text-slate-500">· {selectedAccounts.length}/{accounts.length} đã chọn</span></legend>
@@ -193,24 +228,24 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
         </div>
         <div className="grid grid-cols-2 gap-2">
           {field("recovery_ratio", "Recovery / body")}
-          {field("body_period", "Số nến baseline", "1")}
+          {field("body_period", "Số nến baseline")}
           {field("stop_buffer_atr", "Buffer ATR M15")}
           {field("max_stop_h1_atr", "Max SL / ATR H1")}
           {field("limit_offset", "Trả giá từ close")}
-          {field("limit_ttl_minutes", "Limit TTL (phút)", "1")}
+          {field("limit_ttl_minutes", "Limit TTL (phút)")}
         </div>
         <label className="grid gap-1 text-xs">TP tối đa<select className="bg-ink-950 p-2" value={config.risk_reward} onChange={event => setConfig({ ...config, risk_reward: Number(event.target.value) })}>
           <option value="1.5">1,5R</option><option value="2">2R</option><option value="2.5">2,5R</option><option value="3">3R</option></select></label>
         <label className="grid gap-1 text-xs">Cách chọn TP<select className="bg-ink-950 p-2" value={config.target_mode} onChange={event => setConfig({ ...config, target_mode: event.target.value })}>
           <option value="fixed_rr">Fixed RR</option><option value="wave_safe">Wave Safe</option><option value="wave_base">Wave Base</option></select></label>
         <label className="text-xs"><input type="checkbox" checked={config.partial_enabled} onChange={event => setConfig({ ...config, partial_enabled: event.target.checked })} /> Quản lý tại R + BE</label>
-        {config.partial_enabled && <div className="grid gap-1.5"><div className="grid grid-cols-2 gap-2">{field("partial_trigger_r", "Trigger R", "0.05", 0.5, 1.5)}{field("partial_fraction", "Tỷ lệ chốt (0–0,5)", "0.05", 0, 0.5)}</div><p className="text-[10px] text-slate-500">Đặt tỷ lệ chốt = 0 để chỉ dời SL về hòa vốn.</p></div>}
+        {config.partial_enabled && <div className="grid gap-1.5"><div className="grid grid-cols-2 gap-2">{field("partial_trigger_r", "Trigger R")}{field("partial_fraction", "Tỷ lệ chốt (0–0,5)")}</div><p className="text-[10px] text-slate-500">Đặt tỷ lệ chốt = 0 để chỉ dời SL về hòa vốn.</p></div>}
         <p className="text-[11px] text-slate-400">Risk: quỹ 0,75%; cá nhân 1,5%. Một lệnh đồng thời/account. SL bị cap có thể nằm trong râu. Wave thiếu dữ liệu hoặc dưới 2R sẽ không vào lệnh.</p>
         <div className="grid grid-cols-3 gap-2">
           <button disabled={busy || selectedAccounts.length === 0} className="flex items-center justify-center gap-1 rounded bg-cyan-700 p-2 text-xs disabled:opacity-40"><Save size={14} /> Save</button>
-          <button type="button" disabled={busy || selected.status === "armed" || selectedDirty} title={selected.status === "armed" ? "Setup đã Armed; bạn vẫn có thể chỉnh và Save" : "Lưu thay đổi Draft trước khi Arm"} className="flex items-center justify-center gap-1 rounded bg-emerald-700/80 p-2 text-xs disabled:opacity-40" onClick={() => void act(() => armLineReaction(selected.id))}><ShieldCheck size={14} /> {selected.status === "armed" ? "Armed" : "Arm"}</button>
+          <button type="button" disabled={busy || selected.status === "armed" || selectedDirty} title={selected.status === "armed" ? "Setup đã Armed; bạn vẫn có thể chỉnh và Save" : "Lưu thay đổi Draft trước khi Arm"} className="flex items-center justify-center gap-1 rounded bg-emerald-700/80 p-2 text-xs disabled:opacity-40" onClick={() => void act(() => armLineReaction(selected.id), { successMessage: "Đã Arm Line Reaction.", errorPrefix: "Không thể Arm Line" })}><ShieldCheck size={14} /> {selected.status === "armed" ? "Armed" : "Arm"}</button>
           <button type="button" disabled={busy} className="flex items-center justify-center gap-1 rounded bg-rose-500/10 p-2 text-xs text-rose-300 disabled:opacity-40" onClick={() => {
-            if (window.confirm(`Xóa Line ${selected.price.toFixed(2)} ${selected.direction.toUpperCase()}? Setup chưa khớp lệnh sẽ bị hủy trên các account đã chọn.`)) void act(() => cancelLineReaction(selected.id), true);
+            if (window.confirm(`Xóa Line ${selected.price.toFixed(2)} ${selected.direction.toUpperCase()}? Setup chưa khớp lệnh sẽ bị hủy trên các account đã chọn.`)) void act(() => cancelLineReaction(selected.id), { clearSelection: true, successMessage: "Đã xóa Line Reaction.", errorPrefix: "Không thể xóa Line" });
           }}><Trash2 size={14} /> Delete</button>
         </div>
       </form> : <div className="grid gap-2 text-xs text-slate-300">
@@ -220,7 +255,7 @@ export function LineReactionPanel({ symbol }: { symbol: string }) {
         </div>
         <div className="text-slate-500">{selected.config.target_mode} · {selected.config.risk_reward}R · trả {selected.config.limit_offset} · còn {hoursLabel(selected.expires_at)}</div>
         {selected.last_error && <p className="text-amber-300">{selected.last_error}</p>}
-        {canCancelSelected ? <button type="button" disabled={busy} className="justify-self-start text-rose-300 disabled:opacity-40" onClick={() => void act(() => cancelLineReaction(selected.id), true)}>Hủy setup/pending còn lại</button> : null}
+        {canCancelSelected ? <button type="button" disabled={busy} className="justify-self-start text-rose-300 disabled:opacity-40" onClick={() => void act(() => cancelLineReaction(selected.id), { clearSelection: true, successMessage: "Đã hủy setup/pending còn lại.", errorPrefix: "Không thể hủy setup" })}>Hủy setup/pending còn lại</button> : null}
       </div>}
     </div> : null}
   </section>;

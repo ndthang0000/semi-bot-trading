@@ -9,6 +9,7 @@ vi.mock("../../api/auth", () => ({ authFetch: vi.fn() }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: ReturnType<typeof createRoot> | undefined;
 let container: HTMLDivElement;
+const showToast = vi.fn();
 const sessions = [
   ["asian", "Asian", "00:00", "07:00"], ["london", "London", "07:00", "12:00"],
   ["london_ny", "London–NY", "12:00", "17:00"], ["new_york", "New York", "17:00", "21:00"],
@@ -34,7 +35,7 @@ it("saving a drawn line creates an inert draft and requires a separate arm actio
   });
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   useLineReactionStore.getState().setDraft({ price:3000, direction:"long", visual_start:"2026-09-06T10:00:00Z",visual_end:"2026-09-06T12:00:00Z",client_request_id:"request-1234" });
-  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" />));
+  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" showToast={showToast} />));
   const posts = vi.mocked(authFetch).mock.calls.filter(([, options]) => options?.method === "POST");
   expect(posts).toHaveLength(1);
   expect(posts[0][0]).toBe("/api/line-reactions");
@@ -66,7 +67,7 @@ it("sorts line cards from highest to lowest price and distinguishes Draft from A
     ] }));
   });
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" />));
+  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" showToast={showToast} />));
   const prices = Array.from(container.querySelectorAll("button strong.font-mono"), node => node.textContent);
   expect(prices).toEqual(["4390.20", "4364.09", "4325.01"]);
   const badges = Array.from(container.querySelectorAll("button span.uppercase"));
@@ -95,15 +96,20 @@ it("saves a 1.25R break-even configuration on an armed line", async () => {
   });
   useLineReactionStore.setState({ plans:[plan], draft:null, selectedId:plan.id });
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" />));
+  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" showToast={showToast} />));
 
   const triggerInput = Array.from(container.querySelectorAll("label"))
     .find(label => label.textContent?.startsWith("Trigger R"))?.querySelector("input");
+  const recoveryInput = Array.from(container.querySelectorAll("label"))
+    .find(label => label.textContent?.startsWith("Recovery / body"))?.querySelector("input");
   expect(triggerInput?.step).toBe("0.05");
+  expect(recoveryInput).toMatchObject({ min:"1", max:"10", step:"0.1" });
   await act(async () => {
-    if (!triggerInput) throw new Error("Trigger R input not found");
+    if (!triggerInput || !recoveryInput) throw new Error("Line config input not found");
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(triggerInput, "1.25");
     triggerInput.dispatchEvent(new Event("input", { bubbles:true }));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(recoveryInput, "1.2");
+    recoveryInput.dispatchEvent(new Event("input", { bubbles:true }));
   });
   const save = Array.from(container.querySelectorAll("button")).find(button => button.textContent?.trim() === "Save");
   await act(async () => save?.click());
@@ -111,4 +117,38 @@ it("saves a 1.25R break-even configuration on an armed line", async () => {
   const patchCall = vi.mocked(authFetch).mock.calls.find(([, options]) => options?.method === "PATCH");
   expect(patchCall?.[0]).toBe("/api/line-reactions/armed-line");
   expect(JSON.parse(String(patchCall?.[1]?.body)).config.partial_trigger_r).toBe(1.25);
+  expect(JSON.parse(String(patchCall?.[1]?.body)).config.recovery_ratio).toBe(1.2);
+  expect(showToast).toHaveBeenCalledWith("success", "Đã lưu cấu hình Line Reaction.");
+});
+
+it("shows the API error in a toast when saving fails", async () => {
+  const config = { recovery_ratio:2, body_period:20, stop_buffer_atr:0.1, max_stop_h1_atr:1.2,
+    limit_offset:5, limit_ttl_minutes:120, risk_reward:2, target_mode:"fixed_rr",
+    partial_enabled:false, partial_trigger_r:1, partial_fraction:0.4, trade_sessions:["london"] };
+  const plan = { id:"failed-save", account_label:"Fund", account_labels:["Fund"],
+    price:4330, direction:"long", status:"armed", created_at:new Date().toISOString(),
+    updated_at:new Date().toISOString(), armed_at:new Date().toISOString(), signal:null,
+    expires_at:new Date(Date.now()+3600000).toISOString(), visual_start:null, visual_end:null,
+    last_error:null, config };
+  vi.mocked(authFetch).mockImplementation(async (path, init) => {
+    if (String(path) === "/api/accounts") return new Response(JSON.stringify({ accounts: [
+      { account_label:"Fund", execution:{worker_status:"online"} },
+    ] }));
+    if (init?.method === "PATCH") return new Response(
+      JSON.stringify({ detail:"Only Draft or Armed lines can be edited" }),
+      { status:409 },
+    );
+    return new Response(JSON.stringify({ sessions, plans:[plan] }));
+  });
+  useLineReactionStore.setState({ plans:[plan], draft:null, selectedId:plan.id });
+  container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+  await act(async () => root?.render(<LineReactionPanel symbol="XAUUSD" showToast={showToast} />));
+  const save = Array.from(container.querySelectorAll("button")).find(button => button.textContent?.trim() === "Save");
+  await act(async () => save?.click());
+
+  expect(showToast).toHaveBeenCalledWith(
+    "error",
+    "Không thể lưu Line: Only Draft or Armed lines can be edited",
+  );
+  expect(container.textContent).toContain("Only Draft or Armed lines can be edited");
 });
