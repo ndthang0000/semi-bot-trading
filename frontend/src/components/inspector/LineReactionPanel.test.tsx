@@ -43,7 +43,7 @@ it("saving a drawn line creates an inert draft and requires a separate arm actio
     account_labels:["Fund", "Personal"], price:3000, visual_end:"2026-09-06T12:00:00Z",
     client_request_id:"request-1234",
     config:{recovery_ratio:2, max_stop_h1_atr:1.2, partial_enabled:false,
-      trade_sessions:["asian", "london", "london_ny", "new_york", "off_hours"]},
+      limit_offset:0, trade_sessions:["asian", "london", "london_ny", "new_york", "off_hours"]},
   });
   expect(JSON.parse(String(posts[0][1]?.body)).account_labels).not.toContain("Paused");
   expect(container.textContent).toContain("Pausedoffline");

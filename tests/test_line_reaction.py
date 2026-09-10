@@ -23,13 +23,43 @@ class TestLineReaction(unittest.TestCase):
     def signal(self):
         return evaluate_line(self.line,self.candles,2,5,self.now)
 
-    def test_recovery_and_market_wick(self):
+    def test_large_recovery_uses_automatic_limit_and_wick_stop(self):
         signal = self.signal()
         self.assertIsNotNone(signal)
         plan = price_line(self.line,signal,103)
-        self.assertEqual("market",plan["metadata"]["order_type"])
+        self.assertEqual("limit",plan["metadata"]["order_type"])
+        self.assertEqual(102,plan["entry"])
         self.assertAlmostEqual(98.8,plan["stop_loss"])
-        self.assertAlmostEqual(111.4,plan["take_profit"][0])
+        self.assertAlmostEqual(108.4,plan["take_profit"][0])
+        self.assertEqual("auto_recovery", plan["metadata"]["entry_discount"]["source"])
+        self.assertEqual(1, plan["metadata"]["entry_discount"]["auto_offset"])
+
+    def test_recovery_below_3x_with_zero_offset_uses_market(self):
+        self.candles[-1].update(high=102, close=101.5)
+        signal = self.signal()
+        self.assertIsNotNone(signal)
+        plan = price_line(self.line, signal, 101.5)
+        self.assertEqual("market", plan["metadata"]["order_type"])
+        self.assertEqual(101.5, plan["entry"])
+        self.assertAlmostEqual(98.8, plan["stop_loss"])
+        self.assertAlmostEqual(106.9, plan["take_profit"][0])
+        self.assertEqual(0, plan["metadata"]["entry_discount"]["effective_offset"])
+
+    def test_positive_manual_offset_forces_limit_below_3x(self):
+        self.candles[-1].update(high=102, close=101.5)
+        self.line["config"]["limit_offset"] = 1
+        plan = price_line(self.line, self.signal(), 101.75)
+        self.assertEqual("limit", plan["metadata"]["order_type"])
+        self.assertEqual(100.5, plan["entry"])
+        self.assertEqual("manual", plan["metadata"]["entry_discount"]["source"])
+
+    def test_auto_limit_geometry_is_stable_across_account_quotes(self):
+        signal = self.signal()
+        first = price_line(self.line, signal, 103)
+        second = price_line(self.line, signal, 104)
+        self.assertEqual(first["entry"], second["entry"])
+        self.assertEqual(first["stop_loss"], second["stop_loss"])
+        self.assertEqual(first["take_profit"], second["take_profit"])
 
     def test_double_ended_recovery_rejected(self):
         self.candles[-1]["high"] = 105
@@ -50,6 +80,7 @@ class TestLineReaction(unittest.TestCase):
         self.assertIsNone(self.signal())
 
     def test_limit_capped_and_rr_recomputed(self):
+        self.line["config"]["limit_offset"] = 5
         self.candles[-1].update(low=80)
         signal = self.signal()
         plan = price_line(self.line,signal,103)
@@ -63,13 +94,48 @@ class TestLineReaction(unittest.TestCase):
         self.candles[-1].update(open=100,close=97,low=96.5,high=101)
         signal = self.signal()
         plan = price_line(self.line,signal,97)
+        self.assertEqual(98, plan["entry"])
         self.assertAlmostEqual(101.2,plan["stop_loss"])
-        self.assertAlmostEqual(88.6,plan["take_profit"][0])
+        self.assertAlmostEqual(91.6,plan["take_profit"][0])
+        self.line["config"]["limit_offset"] = 5
         self.candles[-1]["high"] = 120
         plan = price_line(self.line,self.signal(),97)
         self.assertEqual(102,plan["entry"])
         self.assertEqual(108,plan["stop_loss"])
         self.assertEqual([90],plan["take_profit"])
+
+    def test_auto_offset_scales_with_recovery_and_is_capped_by_m15_atr(self):
+        signal = {
+            "reference_price": 100, "structural_stop": 70, "max_distance": 36,
+            "atr": 30, "recovery_long_size": 20,
+            "signal_close_time": "2026-09-06T12:15:00+00:00",
+        }
+        offsets = []
+        for ratio in (3, 4, 5):
+            signal["recovery_long"] = ratio
+            plan = price_line(self.line, signal, 105)
+            offsets.append(plan["metadata"]["entry_discount"]["auto_offset"])
+        self.assertEqual([4, 6, 8], offsets)
+
+        signal.update(atr=10, recovery_long=6, recovery_long_size=40)
+        capped = price_line(self.line, signal, 105)
+        self.assertEqual(5, capped["metadata"]["entry_discount"]["auto_offset"])
+
+    def test_manual_offset_is_the_minimum_discount(self):
+        self.line["config"]["limit_offset"] = 3
+        plan = price_line(self.line, self.signal(), 103)
+        discount = plan["metadata"]["entry_discount"]
+        self.assertEqual("manual", discount["source"])
+        self.assertEqual(3, discount["effective_offset"])
+        self.assertEqual(100, plan["entry"])
+
+    def test_discount_rejects_invalid_limit_side_and_structural_stop(self):
+        self.line["config"]["limit_offset"] = 1
+        with self.assertRaisesRegex(ValueError, "valid side"):
+            price_line(self.line, self.signal(), 101)
+        self.line["config"]["limit_offset"] = 5
+        with self.assertRaisesRegex(ValueError, "reaction wick stop"):
+            price_line(self.line, self.signal(), 103)
 
     def test_wave_insufficient_blocks(self):
         self.line["config"]["target_mode"] = "wave_base"
@@ -102,10 +168,11 @@ class TestLineReaction(unittest.TestCase):
         self.assertEqual(1.5, LineConfig(risk_reward=1.5).risk_reward)
         self.assertEqual(3, LineConfig(risk_reward=3).risk_reward)
         self.assertEqual(1.2, LineConfig(recovery_ratio=1.2).recovery_ratio)
+        self.assertEqual(0, LineConfig().limit_offset)
         self.assertEqual(0, LineConfig(partial_fraction=0).partial_fraction)
         self.assertEqual(["asian", "london", "london_ny", "new_york", "off_hours"], LineConfig().trade_sessions)
         self.assertEqual(["london", "new_york"], LineConfig(trade_sessions=["london", "new_york", "london"]).trade_sessions)
-        for change in ({"recovery_ratio":0.9},{"max_stop_h1_atr":2},{"limit_offset":float("nan")}):
+        for change in ({"recovery_ratio":0.9},{"max_stop_h1_atr":2},{"limit_offset":-0.01},{"limit_offset":float("nan")}):
             with self.assertRaises(ValueError):
                 LineConfig(**change)
         with self.assertRaises(ValueError):
@@ -408,7 +475,11 @@ class TestLineIntegration(unittest.TestCase):
         now = self._seed_triggered()
         signal = json.loads(self.conn.execute("SELECT signal_json FROM line_reaction_plans").fetchone()[0])
         signal["structural_stop"] = 2950
-        self.conn.execute("UPDATE line_reaction_plans SET signal_json=?", (json.dumps(signal),))
+        config_json = LineConfig(limit_offset=5).model_dump_json()
+        self.conn.execute(
+            "UPDATE line_reaction_plans SET signal_json=?,config_json=?",
+            (json.dumps(signal), config_json),
+        )
         self.conn.commit()
         broker = _fake_client(current_price=3000)
         with patch("semi_bot_trading.live_worker.build_risk_manager",return_value=_fake_risk_manager()), patch(

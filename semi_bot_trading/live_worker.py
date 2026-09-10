@@ -3190,6 +3190,16 @@ def execute_candidate(
         )
         conn.commit()
         is_limit = exec_order_type == "limit"
+        alert_reasons = [f"MT5 broker order id: {broker_order_id}"]
+        entry_discount = candidate_metadata.get("entry_discount")
+        if isinstance(entry_discount, dict) and entry_discount.get("source") != "market":
+            alert_reasons.insert(
+                0,
+                "Smart entry: "
+                f"{float(entry_discount.get('recovery_ratio') or 0):g}x recovery, "
+                f"{float(entry_discount.get('effective_offset') or 0):g} price offset "
+                f"({entry_discount.get('source')})",
+            )
         queue_alert(
             conn,
             account_label=env.account_label,
@@ -3212,7 +3222,7 @@ def execute_candidate(
                     "expires_at": pricing_plan.expires_at if pricing_plan else candidate.get("expires_at"),
                     "drift_action": pricing_plan.drift_action if pricing_plan else "unknown",
                 },
-                "reason": [f"MT5 broker order id: {broker_order_id}"],
+                "reason": alert_reasons,
                 "chart_url": env.chart_url_base,
             },
             dedupe_key=f"live-order:{env.account_label}:{candidate['id']}",

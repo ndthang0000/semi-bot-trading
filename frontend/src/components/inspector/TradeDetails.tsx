@@ -66,6 +66,7 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
   const stopLossMode = readString(candidateMetadata.stop_source) ?? readString(metadata.stop_source);
   const takeProfit = firstTakeProfitPrice(trade.take_profit);
   const partialPlan = readObject(metadata.partial_take_profit);
+  const entryDiscount = readObject(candidateMetadata.entry_discount);
   const tradeManagement = readObject(metadata.trade_management);
   const partialDone = partialPlan.done === true;
   const breakevenOnly = readNumber(partialPlan.fraction) === 0;
@@ -267,6 +268,16 @@ export function TradeDetails({ trade, showToast }: { trade: TradeOrder; showToas
         <TradeMetric label="PnL R" value={trade.pnl_r === null ? "--" : `${trade.pnl_r.toFixed(2)}R`} />
         <TradeMetric label="Score" value={formatUnknownNumber(metadata.score)} />
       </div>
+
+      {trade.playbook === "line_reaction_v1" && Object.keys(entryDiscount).length > 0 ? (
+        <div className="grid gap-2 rounded-md border border-cyan-400/25 bg-cyan-400/[0.06] p-3">
+          <TradeMetric label="Entry mode" value={String(entryDiscount.source ?? "--")} />
+          <TradeMetric label="Recovery" value={`${formatUnknownNumber(entryDiscount.recovery_ratio)}x`} />
+          <TradeMetric label="Manual offset" value={price(readNumber(entryDiscount.manual_offset))} />
+          <TradeMetric label="Auto offset" value={price(readNumber(entryDiscount.auto_offset))} />
+          <TradeMetric label="Final offset" value={price(readNumber(entryDiscount.effective_offset))} />
+        </div>
+      ) : null}
 
       {Object.keys(partialPlan).length > 0 ? (
         <div className="grid gap-2 rounded-md border border-emerald-400/25 bg-emerald-400/[0.06] p-3">

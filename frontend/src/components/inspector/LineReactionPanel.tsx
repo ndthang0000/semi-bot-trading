@@ -9,7 +9,7 @@ import {
 
 const defaults: Config = {
   recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.2,
-  limit_offset: 5, limit_ttl_minutes: 120, risk_reward: 2, target_mode: "fixed_rr",
+  limit_offset: 0, limit_ttl_minutes: 120, risk_reward: 2, target_mode: "fixed_rr",
   partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0.4,
   trade_sessions: []
 };
@@ -37,7 +37,7 @@ const numberFields: Record<"recovery_ratio" | "body_period" | "stop_buffer_atr" 
   body_period: { step: "1", min: 5, max: 100 },
   stop_buffer_atr: { step: "0.05", min: 0, max: 1 },
   max_stop_h1_atr: { step: "0.01", min: 0.01, max: 1.2 },
-  limit_offset: { step: "0.01", min: 0.01, max: 50 },
+  limit_offset: { step: "0.01", min: 0, max: 50 },
   limit_ttl_minutes: { step: "1", min: 5, max: 1440 },
   partial_trigger_r: { step: "0.05", min: 0.5, max: 1.5 },
   partial_fraction: { step: "0.05", min: 0, max: 0.5 },
@@ -234,6 +234,7 @@ export function LineReactionPanel({ symbol, showToast }: {
           {field("limit_offset", "Trả giá từ close")}
           {field("limit_ttl_minutes", "Limit TTL (phút)")}
         </div>
+        <p className="text-[10px] text-slate-500">Trả giá = 0: market nếu recovery dưới 3x. Từ 3x, hệ thống tự đặt limit sâu dần; số nhập tại đây là mức trả giá tối thiểu.</p>
         <label className="grid gap-1 text-xs">TP tối đa<select className="bg-ink-950 p-2" value={config.risk_reward} onChange={event => setConfig({ ...config, risk_reward: Number(event.target.value) })}>
           <option value="1.5">1,5R</option><option value="2">2R</option><option value="2.5">2,5R</option><option value="3">3R</option></select></label>
         <label className="grid gap-1 text-xs">Cách chọn TP<select className="bg-ink-950 p-2" value={config.target_mode} onChange={event => setConfig({ ...config, target_mode: event.target.value })}>

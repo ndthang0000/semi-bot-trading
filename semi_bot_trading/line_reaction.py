@@ -10,6 +10,11 @@ from .trading_sessions import SESSION_NAMES
 
 PLAYBOOK = "line_reaction_v1"
 SESSION_ENDED_BEFORE_EXECUTION = "Selected Line trading session ended before broker execution"
+AUTO_LIMIT_RECOVERY_THRESHOLD = 3.0
+AUTO_LIMIT_BASE_RETRACE = 0.20
+AUTO_LIMIT_RETRACE_PER_RATIO = 0.10
+AUTO_LIMIT_MAX_RETRACE = 0.45
+AUTO_LIMIT_MAX_M15_ATR = 0.50
 
 
 class LineConfig(BaseModel):
@@ -18,7 +23,7 @@ class LineConfig(BaseModel):
     body_period: int = Field(default=20, ge=5, le=100)
     stop_buffer_atr: float = Field(default=0.1, ge=0, le=1)
     max_stop_h1_atr: float = Field(default=1.2, ge=0.01, le=1.2)
-    limit_offset: float = Field(default=5, ge=0.01, le=50)
+    limit_offset: float = Field(default=0, ge=0, le=50)
     limit_ttl_minutes: int = Field(default=120, ge=5, le=1440)
     risk_reward: Literal[1.5, 2.0, 2.5, 3.0] = 2.0
     target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"
@@ -107,6 +112,60 @@ def evaluate_line(line, candles, atr, h1_atr, now):
         "max_distance": cfg.max_stop_h1_atr * h1_atr,
         "atr": atr, "h1_atr": h1_atr,
         "recovery_long": up.ratio, "recovery_short": down.ratio,
+        "recovery_long_size": up.size, "recovery_short_size": down.size,
+        "recovery_average_body": up.average_body,
+    }
+
+
+def _entry_discount_plan(cfg: LineConfig, signal: dict, direction: str) -> dict:
+    ratio_key = "recovery_long" if direction == "long" else "recovery_short"
+    size_key = "recovery_long_size" if direction == "long" else "recovery_short_size"
+    ratio = float(signal.get(ratio_key) or 0)
+    atr = float(signal.get("atr") or 0)
+    recovery_size = signal.get(size_key)
+    if recovery_size is None and atr > 0:
+        reference = float(signal.get("reference_price") or 0)
+        structural = float(signal.get("structural_stop") or 0)
+        wick = (
+            structural + cfg.stop_buffer_atr * atr
+            if direction == "long"
+            else structural - cfg.stop_buffer_atr * atr
+        )
+        recovery_size = reference - wick if direction == "long" else wick - reference
+    recovery_size = float(recovery_size or 0)
+    values = (ratio, atr, recovery_size)
+    if not all(math.isfinite(value) and value >= 0 for value in values):
+        ratio = atr = recovery_size = 0
+
+    retracement = 0.0
+    auto_offset = 0.0
+    if ratio >= AUTO_LIMIT_RECOVERY_THRESHOLD and recovery_size > 0 and atr > 0:
+        retracement = min(
+            AUTO_LIMIT_BASE_RETRACE
+            + (ratio - AUTO_LIMIT_RECOVERY_THRESHOLD) * AUTO_LIMIT_RETRACE_PER_RATIO,
+            AUTO_LIMIT_MAX_RETRACE,
+        )
+        auto_offset = min(recovery_size * retracement, atr * AUTO_LIMIT_MAX_M15_ATR)
+
+    manual_offset = float(cfg.limit_offset)
+    effective_offset = max(manual_offset, auto_offset)
+    source = (
+        "market"
+        if effective_offset <= 0
+        else "auto_recovery"
+        if auto_offset > manual_offset
+        else "manual"
+    )
+    return {
+        "source": source,
+        "manual_offset": round(manual_offset, 5),
+        "auto_offset": round(auto_offset, 5),
+        "effective_offset": round(effective_offset, 5),
+        "recovery_ratio": round(ratio, 4),
+        "recovery_size": round(recovery_size, 5),
+        "retracement_fraction": round(retracement, 4),
+        "auto_threshold": AUTO_LIMIT_RECOVERY_THRESHOLD,
+        "max_m15_atr_fraction": AUTO_LIMIT_MAX_M15_ATR,
     }
 
 
@@ -117,8 +176,13 @@ def price_line(line, signal, broker_price, wave_metrics=None):
     distance = sign * (broker_price - structural)
     if distance <= 0:
         raise ValueError("Broker price has crossed structural invalidation")
-    kind = "market" if distance <= cap else "limit"
-    entry = broker_price if kind == "market" else signal["reference_price"] - sign * cfg.limit_offset
+    discount = _entry_discount_plan(cfg, signal, line["direction"])
+    kind = "market" if discount["effective_offset"] <= 0 else "limit"
+    entry = (
+        broker_price
+        if kind == "market"
+        else signal["reference_price"] - sign * discount["effective_offset"]
+    )
     if kind == "limit" and sign * (broker_price - entry) <= 0:
         raise ValueError("Discount limit is no longer on the valid side of broker price")
     natural_distance = sign * (entry - structural)
@@ -150,6 +214,7 @@ def price_line(line, signal, broker_price, wave_metrics=None):
         "metadata": {
             "order_type": kind, "entry_model": "line_reaction_" + kind,
             "line_id": line["id"], "line_price": line["price"], "line_signal": signal,
+            "entry_discount": discount,
             "stop_source": "atr_cap" if natural_distance > cap else "reaction_wick",
             "target_detail": target_detail, "line_config": cfg.model_dump(),
             "partial_take_profit": {"enabled": cfg.partial_enabled,

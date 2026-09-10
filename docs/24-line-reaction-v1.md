@@ -58,13 +58,24 @@ is the source used by the Line Detail UI for names and UTC times.
 
 ATR period 14, M15/H1 closed data snapshotted at trigger.
 Structural SL = low - 0.1 ATR M15 (long), high + 0.1 ATR M15 (short).
-If broker entry distance to structural SL <= 1.2 ATR H1, market with wick SL.
-Otherwise limit = trigger close - 5 (long), trigger close + 5 (short).
-Offset is price units, not points/pips, and does not follow the quote.
-Final distance = min(distance from limit to wick SL, 1.2 ATR H1).
+Manual offset defaults to zero. With recovery below 3x and manual offset zero,
+enter market. A positive manual offset always requests a limit and represents
+the minimum discount from the frozen trigger close.
+
+Recovery >=3x always enables automatic discounting. Recovery size is close-low
+for long and high-close for short. Retracement starts at 20% for 3x, increases
+10 percentage points per additional recovery ratio, and is capped at 45%.
+Automatic offset is capped at 0.5 ATR M15. Effective offset is the larger of the
+manual and automatic offsets. Limit = trigger close - offset (long) or trigger
+close + offset (short). Offset is expressed in price units, not points/pips,
+and does not follow the later broker quote.
+
+Final distance = min(distance from final entry to wick SL, 1.2 ATR H1).
 SL can therefore lie inside the trigger wick, recorded as atr_cap metadata.
 Invalid-side limit, crossed structural stop or nonpositive risk: no order.
 Reprice before sizing with this formula; don't use generic adverse-drift SL shifts.
+The frozen trade metadata records manual, automatic and effective offsets,
+recovery ratio/size and the retracement fraction for later analysis.
 Recheck the selected session, spread and market SL cap immediately before sending.
 Actual fills can still slip.
 
