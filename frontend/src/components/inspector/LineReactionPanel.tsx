@@ -37,7 +37,7 @@ const numberFields: Record<"recovery_ratio" | "body_period" | "stop_buffer_atr" 
   body_period: { step: "1", min: 5, max: 100 },
   stop_buffer_atr: { step: "0.05", min: 0, max: 1 },
   max_stop_h1_atr: { step: "0.01", min: 0.01, max: 1.2 },
-  limit_offset: { step: "0.01", min: 0, max: 50 },
+  limit_offset: { step: "0.05", min: 0, max: 50 },
   limit_ttl_minutes: { step: "1", min: 5, max: 1440 },
   partial_trigger_r: { step: "0.05", min: 0.5, max: 1.5 },
   partial_fraction: { step: "0.05", min: 0, max: 0.5 },

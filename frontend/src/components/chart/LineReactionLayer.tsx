@@ -87,7 +87,7 @@ export function LineReactionLayer({ chartRef, seriesRef, candles }: {
           useChartStore.getState().setSelected(null);
           useChartStore.getState().setInspectorTab("zones");
         }}
-        className={"absolute z-[35] text-left text-[10px] " + (p.status === "draft" ? "border-t border-dashed " : "border-t-2 border-solid ") + (p.direction === "long" ? "border-emerald-400 text-emerald-300" : "border-rose-400 text-rose-300")}
+        className={"absolute z-[35] border-t text-left text-[9px] leading-[11px] " + (p.status === "draft" ? "border-dashed " : "border-solid ") + (p.direction === "long" ? "border-emerald-400 text-emerald-300" : "border-rose-400 text-rose-300")}
         style={{ top: y, left, width: right-left }}>
         {p.direction === "long" ? "↑ LONG" : "↓ SHORT"} {p.price} · {p.status}
         {editable ? <>

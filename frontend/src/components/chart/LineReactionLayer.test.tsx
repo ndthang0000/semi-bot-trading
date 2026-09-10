@@ -65,11 +65,16 @@ it("renders Draft dashed and selects the line from the chart", async () => {
   expect(interval).not.toHaveBeenCalled();
   const line = container.querySelector<HTMLElement>("[data-line-reaction='true']");
   expect(line?.className).toContain("border-dashed");
+  expect(line?.className).toContain("text-[9px]");
+  expect(line?.className).toContain("leading-[11px]");
   await act(async () => line?.click());
   expect(useLineReactionStore.getState().selectedId).toBe("line-1");
   expect(container.querySelectorAll("button")).toHaveLength(2);
   await act(async () => useLineReactionStore.getState().setPlans([{ ...plan, status: "armed" }]));
-  expect(container.querySelector<HTMLElement>("[data-line-reaction='true']")?.className).toContain("border-solid");
+  const armedLine = container.querySelector<HTMLElement>("[data-line-reaction='true']");
+  expect(armedLine?.className).toContain("border-solid");
+  expect(armedLine?.className).toContain("border-t");
+  expect(armedLine?.className).not.toContain("border-t-2");
 });
 
 it("resizes the right endpoint without moving the start", async () => {

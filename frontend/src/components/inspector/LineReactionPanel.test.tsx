@@ -102,8 +102,11 @@ it("saves a 1.25R break-even configuration on an armed line", async () => {
     .find(label => label.textContent?.startsWith("Trigger R"))?.querySelector("input");
   const recoveryInput = Array.from(container.querySelectorAll("label"))
     .find(label => label.textContent?.startsWith("Recovery / body"))?.querySelector("input");
+  const limitOffsetInput = Array.from(container.querySelectorAll("label"))
+    .find(label => label.textContent?.startsWith("Trả giá từ close"))?.querySelector("input");
   expect(triggerInput?.step).toBe("0.05");
   expect(recoveryInput).toMatchObject({ min:"1", max:"10", step:"0.1" });
+  expect(limitOffsetInput?.step).toBe("0.05");
   await act(async () => {
     if (!triggerInput || !recoveryInput) throw new Error("Line config input not found");
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(triggerInput, "1.25");
