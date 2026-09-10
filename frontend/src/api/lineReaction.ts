@@ -24,6 +24,12 @@ export const fetchLineReactions = () => lineRequest<LineReactionResponse>("/api/
 export const createLineReaction = (body: unknown) => lineRequest<LinePlan>("/api/line-reactions", body, "POST");
 export const updateLineReaction = (id: string, body: unknown) =>
   lineRequest<LinePlan>(`/api/line-reactions/${encodeURIComponent(id)}`, body, "PATCH");
+export const updateLinePrice = (plan: LinePlan, price: number) => updateLineReaction(plan.id, {
+  symbol: plan.symbol ?? "XAUUSD", account_labels: plan.account_labels ?? [plan.account_label],
+  direction: plan.direction, price, config: plan.config,
+  visual_start: plan.visual_start ?? plan.armed_at ?? plan.created_at,
+  visual_end: plan.visual_end ?? plan.expires_at,
+});
 export const armLineReaction = (id: string) =>
   lineRequest<LinePlan>(`/api/line-reactions/${encodeURIComponent(id)}/arm`, {}, "POST");
 export const cancelLineReaction = (id: string) =>

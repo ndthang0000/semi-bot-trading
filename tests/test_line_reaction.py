@@ -28,11 +28,11 @@ class TestLineReaction(unittest.TestCase):
         self.assertIsNotNone(signal)
         plan = price_line(self.line,signal,103)
         self.assertEqual("limit",plan["metadata"]["order_type"])
-        self.assertEqual(102,plan["entry"])
+        self.assertEqual(101.8,plan["entry"])
         self.assertAlmostEqual(98.8,plan["stop_loss"])
-        self.assertAlmostEqual(108.4,plan["take_profit"][0])
+        self.assertAlmostEqual(107.8,plan["take_profit"][0])
         self.assertEqual("auto_recovery", plan["metadata"]["entry_discount"]["source"])
-        self.assertEqual(1, plan["metadata"]["entry_discount"]["auto_offset"])
+        self.assertEqual(1.2, plan["metadata"]["entry_discount"]["auto_offset"])
 
     def test_recovery_below_3x_with_zero_offset_uses_market(self):
         self.candles[-1].update(high=102, close=101.5)
@@ -76,13 +76,43 @@ class TestLineReaction(unittest.TestCase):
     def test_lookahead_stale_and_prearm(self):
         self.assertIsNone(evaluate_line(self.line,self.candles,2,5,self.now.replace(minute=14)))
         self.assertIsNone(evaluate_line(self.line,self.candles,2,5,self.now.replace(minute=30)))
-        self.line["armed_at"] = "2026-09-06T12:01:00+00:00"
+        for armed_at in ("2026-09-06T12:15:00+00:00", "2026-09-06T12:16:00+00:00"):
+            with self.subTest(armed_at=armed_at):
+                self.line["armed_at"] = armed_at
+                # Still fresh at evaluation, but already closed when armed.
+                self.assertIsNone(evaluate_line(
+                    self.line, self.candles, 2, 5, self.now.replace(minute=17)
+                ))
+
+    def test_candle_forming_at_arm_waits_for_close_and_still_expires(self):
+        for direction in ("long", "short"):
+            with self.subTest(direction=direction):
+                self.line["direction"] = direction
+                if direction == "short":
+                    self.candles[-1].update(open=100, close=97, low=96.5, high=101)
+                self.line["armed_at"] = "2026-09-06T12:14:59.999999+00:00"
+                self.assertIsNone(evaluate_line(
+                    self.line, self.candles, 2, 5, self.now - timedelta(microseconds=1)
+                ))
+                self.assertIsNotNone(self.signal())
+                self.assertIsNotNone(evaluate_line(
+                    self.line, self.candles, 2, 5,
+                    self.now + timedelta(minutes=15) - timedelta(microseconds=1)
+                ))
+                self.assertIsNone(evaluate_line(
+                    self.line, self.candles, 2, 5, self.now + timedelta(minutes=15)
+                ))
+
+    def test_expired_line_rejects_candle_forming_at_arm(self):
+        self.line["armed_at"] = "2026-09-06T12:10:00+00:00"
+        self.line["expires_at"] = self.now.isoformat()
         self.assertIsNone(self.signal())
 
     def test_limit_capped_and_rr_recomputed(self):
         self.line["config"]["limit_offset"] = 5
         self.candles[-1].update(low=80)
         signal = self.signal()
+        signal["recovery_long"] = 2
         plan = price_line(self.line,signal,103)
         self.assertEqual("limit",plan["metadata"]["order_type"])
         self.assertEqual(98,plan["entry"])
@@ -94,17 +124,17 @@ class TestLineReaction(unittest.TestCase):
         self.candles[-1].update(open=100,close=97,low=96.5,high=101)
         signal = self.signal()
         plan = price_line(self.line,signal,97)
-        self.assertEqual(98, plan["entry"])
+        self.assertEqual(98.2, plan["entry"])
         self.assertAlmostEqual(101.2,plan["stop_loss"])
-        self.assertAlmostEqual(91.6,plan["take_profit"][0])
+        self.assertAlmostEqual(92.2,plan["take_profit"][0])
         self.line["config"]["limit_offset"] = 5
         self.candles[-1]["high"] = 120
         plan = price_line(self.line,self.signal(),97)
-        self.assertEqual(102,plan["entry"])
-        self.assertEqual(108,plan["stop_loss"])
-        self.assertEqual([90],plan["take_profit"])
+        self.assertEqual(107.35,plan["entry"])
+        self.assertEqual(113.35,plan["stop_loss"])
+        self.assertEqual([95.35],plan["take_profit"])
 
-    def test_auto_offset_scales_with_recovery_and_is_capped_by_m15_atr(self):
+    def test_auto_offset_scales_with_recovery_and_is_capped_at_45_percent(self):
         signal = {
             "reference_price": 100, "structural_stop": 70, "max_distance": 36,
             "atr": 30, "recovery_long_size": 20,
@@ -117,9 +147,31 @@ class TestLineReaction(unittest.TestCase):
             offsets.append(plan["metadata"]["entry_discount"]["auto_offset"])
         self.assertEqual([4, 6, 8], offsets)
 
-        signal.update(atr=10, recovery_long=6, recovery_long_size=40)
+        signal.update(atr=0.01, recovery_long=6, recovery_long_size=40)
         capped = price_line(self.line, signal, 105)
-        self.assertEqual(5, capped["metadata"]["entry_discount"]["auto_offset"])
+        discount = capped["metadata"]["entry_discount"]
+        self.assertEqual(18, discount["auto_offset"])
+        self.assertEqual(0.45, discount["retracement_fraction"])
+        self.assertNotIn("max_m15_atr_fraction", discount)
+
+    def test_real_large_recovery_is_not_capped_by_m15_atr(self):
+        self.line.update(direction="short")
+        self.line["config"]["limit_offset"] = 7
+        signal = {
+            "reference_price": 4416.479,
+            "structural_stop": 4435.774107142857,
+            "max_distance": 20.528485714285775,
+            "atr": 7.70107142857153,
+            "recovery_short": 5.134636972158016,
+            "recovery_short_size": 18.524999999999636,
+            "signal_close_time": "2026-09-10T06:15:00+00:00",
+        }
+        plan = price_line(self.line, signal, 4416.17)
+        discount = plan["metadata"]["entry_discount"]
+        self.assertEqual("auto_recovery", discount["source"])
+        self.assertEqual(7.65941, discount["auto_offset"])
+        self.assertEqual(7.65941, discount["effective_offset"])
+        self.assertAlmostEqual(4424.13841, plan["entry"])
 
     def test_manual_offset_is_the_minimum_discount(self):
         self.line["config"]["limit_offset"] = 3
@@ -244,6 +296,19 @@ class TestLineIntegration(unittest.TestCase):
         self.assertEqual(200, armed_edit.status_code)
         self.assertEqual("armed", armed_edit.json()["status"])
         self.assertEqual(3, armed_edit.json()["config"]["recovery_ratio"])
+        self.assertEqual(armed.json()["armed_at"], armed_edit.json()["armed_at"])
+        repriced = client.patch("/api/line-reactions/"+plan["id"], json={**body,
+            "price":3000.5, "visual_start":visual_start, "visual_end":visual_end})
+        self.assertEqual(200, repriced.status_code)
+        self.assertGreater(repriced.json()["armed_at"], armed.json()["armed_at"])
+        rows = self.conn.execute("SELECT price,armed_at,signal_json FROM line_reaction_plans").fetchall()
+        self.assertEqual({3000.5}, {row["price"] for row in rows})
+        self.assertEqual({repriced.json()["armed_at"]}, {row["armed_at"] for row in rows})
+        self.assertTrue(all(row["signal_json"] is None for row in rows))
+        from semi_bot_trading.line_reaction_worker import _claim_line_signal
+        member_id = self.conn.execute("SELECT id FROM line_reaction_plans LIMIT 1").fetchone()[0]
+        self.assertFalse(_claim_line_signal(self.conn, member_id, {}, now,
+            expected_updated_at=armed_edit.json()["updated_at"]))
         self.assertEqual(409,client.post("/api/line-reactions/"+plan["id"]+"/arm",json={}).status_code)
         self.assertEqual("cancelled",client.post("/api/line-reactions/"+plan["id"]+"/cancel",json={}).json()["status"])
         self.assertEqual(2, self.conn.execute("SELECT COUNT(*) FROM line_reaction_plans WHERE status='cancelled'").fetchone()[0])

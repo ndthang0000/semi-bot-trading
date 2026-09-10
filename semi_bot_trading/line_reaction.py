@@ -14,7 +14,6 @@ AUTO_LIMIT_RECOVERY_THRESHOLD = 3.0
 AUTO_LIMIT_BASE_RETRACE = 0.20
 AUTO_LIMIT_RETRACE_PER_RATIO = 0.10
 AUTO_LIMIT_MAX_RETRACE = 0.45
-AUTO_LIMIT_MAX_M15_ATR = 0.50
 
 
 class LineConfig(BaseModel):
@@ -29,7 +28,7 @@ class LineConfig(BaseModel):
     target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"
     partial_enabled: bool = False
     partial_trigger_r: float = Field(default=1, ge=0.5, le=1.5)
-    partial_fraction: float = Field(default=0.4, ge=0, le=0.5)
+    partial_fraction: float = Field(default=0, ge=0, le=0.5)
     trade_sessions: list[str] = Field(
         default_factory=lambda: list(SESSION_NAMES), min_length=1, max_length=5
     )
@@ -90,7 +89,8 @@ def evaluate_line(line, candles, atr, h1_atr, now):
     candle = candles[-1]
     opened = dt(candle["time"])
     closed = opened + timedelta(minutes=15)
-    if opened < dt(line["armed_at"]) or closed > now or now >= dt(line["expires_at"]):
+    # Allow the candle forming at Arm, but never reuse one already closed at Arm.
+    if closed <= dt(line["armed_at"]) or closed > now or now >= dt(line["expires_at"]):
         return None
     # Never execute an old candle after restart or an extended entry gate.
     if now >= closed + timedelta(minutes=15):
@@ -133,19 +133,19 @@ def _entry_discount_plan(cfg: LineConfig, signal: dict, direction: str) -> dict:
         )
         recovery_size = reference - wick if direction == "long" else wick - reference
     recovery_size = float(recovery_size or 0)
-    values = (ratio, atr, recovery_size)
+    values = (ratio, recovery_size)
     if not all(math.isfinite(value) and value >= 0 for value in values):
-        ratio = atr = recovery_size = 0
+        ratio = recovery_size = 0
 
     retracement = 0.0
     auto_offset = 0.0
-    if ratio >= AUTO_LIMIT_RECOVERY_THRESHOLD and recovery_size > 0 and atr > 0:
+    if ratio >= AUTO_LIMIT_RECOVERY_THRESHOLD and recovery_size > 0:
         retracement = min(
             AUTO_LIMIT_BASE_RETRACE
             + (ratio - AUTO_LIMIT_RECOVERY_THRESHOLD) * AUTO_LIMIT_RETRACE_PER_RATIO,
             AUTO_LIMIT_MAX_RETRACE,
         )
-        auto_offset = min(recovery_size * retracement, atr * AUTO_LIMIT_MAX_M15_ATR)
+        auto_offset = recovery_size * retracement
 
     manual_offset = float(cfg.limit_offset)
     effective_offset = max(manual_offset, auto_offset)
@@ -165,7 +165,6 @@ def _entry_discount_plan(cfg: LineConfig, signal: dict, direction: str) -> dict:
         "recovery_size": round(recovery_size, 5),
         "retracement_fraction": round(retracement, 4),
         "auto_threshold": AUTO_LIMIT_RECOVERY_THRESHOLD,
-        "max_m15_atr_fraction": AUTO_LIMIT_MAX_M15_ATR,
     }
 
 

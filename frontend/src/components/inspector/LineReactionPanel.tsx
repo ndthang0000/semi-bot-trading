@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Save, ShieldCheck, Trash2, X } from "lucide-react";
+import { Pencil, Save, ShieldCheck, Trash2, X } from "lucide-react";
 import { useLineReactionStore, type LineConfig as Config, type LinePlan as Plan } from "../../store/lineReactionStore";
 import { useChartStore } from "../../store/chartStore";
 import {
   armLineReaction, cancelLineReaction, createLineReaction, fetchLineAccounts,
-  fetchLineReactions, updateLineReaction, type LineAccount, type LineSession,
+  fetchLineReactions, updateLineReaction, updateLinePrice, type LineAccount, type LineSession,
 } from "../../api/lineReaction";
 
 const defaults: Config = {
   recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.2,
   limit_offset: 0, limit_ttl_minutes: 120, risk_reward: 2, target_mode: "fixed_rr",
-  partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0.4,
+  partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0,
   trade_sessions: []
 };
 
@@ -37,7 +37,7 @@ const numberFields: Record<"recovery_ratio" | "body_period" | "stop_buffer_atr" 
   body_period: { step: "1", min: 5, max: 100 },
   stop_buffer_atr: { step: "0.05", min: 0, max: 1 },
   max_stop_h1_atr: { step: "0.01", min: 0.01, max: 1.2 },
-  limit_offset: { step: "0.05", min: 0, max: 50 },
+  limit_offset: { step: "0.5", min: 0, max: 50 },
   limit_ttl_minutes: { step: "1", min: 5, max: 1440 },
   partial_trigger_r: { step: "0.05", min: 0.5, max: 1.5 },
   partial_fraction: { step: "0.05", min: 0, max: 0.5 },
@@ -60,6 +60,8 @@ export function LineReactionPanel({ symbol, showToast }: {
   const [config, setConfig] = useState<Config>(defaults);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [priceEdit, setPriceEdit] = useState<string | null>(null);
+  useEffect(() => { setPriceEdit(null); }, [selectedId, selected?.price, selected?.status]);
 
   useEffect(() => {
     let active = true;
@@ -163,7 +165,6 @@ export function LineReactionPanel({ symbol, showToast }: {
       {activePlans.map(plan => {
         const isSelected = plan.id === selectedId;
         const isLong = plan.direction === "long";
-        const labels = planAccounts(plan);
         return <button key={plan.id} type="button"
           className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left transition ${isSelected ? "border-cyan-400 bg-cyan-400/10" : "border-ink-700 bg-ink-850 hover:border-slate-600"}`}
           onClick={() => {
@@ -173,7 +174,12 @@ export function LineReactionPanel({ symbol, showToast }: {
           <span className={`grid h-7 w-7 shrink-0 place-items-center rounded ${isLong ? "bg-emerald-400/10 text-emerald-300" : "bg-rose-400/10 text-rose-300"}`}>{isLong ? "↑" : "↓"}</span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2"><strong className={`font-mono text-sm tabular-nums ${isLong ? "text-emerald-200" : "text-rose-200"}`}>{plan.price.toFixed(2)}</strong><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${statusBadgeClass(plan.status)}`}>{plan.status}</span></span>
-            <span className="block truncate text-[10px] text-slate-500">{labels.length} account · còn {hoursLabel(plan.expires_at)}</span>
+            <span className="flex flex-wrap gap-x-2 text-[10px] text-slate-400">
+              <span>Rec {plan.config.recovery_ratio}×</span>
+              <span>Dis {plan.config.limit_offset}</span>
+              <span>TP {plan.config.risk_reward}R{plan.config.target_mode === "wave_safe" ? " · Wave Safe" : plan.config.target_mode === "wave_base" ? " · Wave Base" : ""}</span>
+              <span className="whitespace-nowrap text-slate-500">còn {hoursLabel(plan.expires_at)}</span>
+            </span>
           </span>
           <span className="text-xs text-slate-600">{isSelected ? "▴" : "▾"}</span>
         </button>;
@@ -187,7 +193,23 @@ export function LineReactionPanel({ symbol, showToast }: {
       </div>
       <div className={`mb-3 rounded-lg border p-3 ${selected.direction === "long" ? "border-emerald-400/30 bg-emerald-400/10" : "border-rose-400/30 bg-rose-400/10"}`}>
         <div className="flex items-center justify-between gap-3">
-          <div><p className="text-[10px] uppercase tracking-widest text-slate-400">Giá Line</p><strong className="font-mono text-2xl tabular-nums">{selected.price.toFixed(2)}</strong></div>
+          <div className="min-w-0"><p className="text-[10px] uppercase tracking-widest text-slate-400">Giá Line</p>
+            {priceEdit !== null ? <form className="flex items-center gap-1" onSubmit={event => {
+              event.preventDefault();
+              const price = Number(priceEdit);
+              if (!Number.isFinite(price) || price <= 0) return;
+              void act(() => updateLinePrice(selected, price), { successMessage: "Đã cập nhật giá Line.", errorPrefix: "Không thể đổi giá Line" });
+              setPriceEdit(null);
+            }}>
+              <input aria-label="Giá Line" autoFocus required type="number" min="0.01" step="any" className="w-28 rounded bg-ink-950 p-1 font-mono text-lg" value={priceEdit} onChange={event => setPriceEdit(event.target.value)} onKeyDown={event => {
+                if (event.key === "Escape") { event.stopPropagation(); setPriceEdit(null); }
+              }} />
+              <button aria-label="Lưu giá Line" disabled={busy} type="submit"><Save size={16} /></button>
+              <button aria-label="Hủy sửa giá" type="button" onClick={() => setPriceEdit(null)}><X size={16} /></button>
+            </form> : <div className="flex items-center gap-2"><strong className="font-mono text-2xl tabular-nums">{selected.price.toFixed(2)}</strong>
+              {["draft", "armed"].includes(selected.status) && <button type="button" aria-label="Sửa giá Line" disabled={busy} onClick={() => setPriceEdit(String(selected.price))}><Pencil size={16} /></button>}
+            </div>}
+          </div>
           <span className={`rounded-full px-3 py-1 text-xs font-bold ${selected.direction === "long" ? "bg-emerald-400/15 text-emerald-200" : "bg-rose-400/15 text-rose-200"}`}>{selected.direction === "long" ? "↑ LONG" : "↓ SHORT"}</span>
         </div>
       </div>

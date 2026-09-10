@@ -1,9 +1,9 @@
-import { useMemo, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import type { ChartCandle } from "../../types";
 import { useLineReactionStore, type LinePlan } from "../../store/lineReactionStore";
 import { useChartStore } from "../../store/chartStore";
-import { updateLineReaction } from "../../api/lineReaction";
+import { updateLineReaction, updateLinePrice } from "../../api/lineReaction";
 import { chartTimeToUnix, projectedTimeFromCoordinate, unixToIso } from "./chartCore";
 
 type ResizePreview = { id: string; visual_start: string; visual_end: string };
@@ -17,6 +17,64 @@ export function LineReactionLayer({ chartRef, seriesRef, candles }: {
   const selectedId = useLineReactionStore(s => s.selectedId);
   const [preview, setPreview] = useState<ResizePreview | null>(null);
   const [resizeError, setResizeError] = useState("");
+  const [pricePreview, setPricePreview] = useState<{ id: string; price: number } | null>(null);
+  const priceBusy = useRef(false);
+  const dragCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanup.current?.(), []);
+  const savePrice = async (plan: LinePlan, price: number) => {
+    if (priceBusy.current || price === plan.price || !Number.isFinite(price) || price <= 0) { setPricePreview(null); return; }
+    priceBusy.current = true;
+    setResizeError("");
+    try {
+      const result = await updateLinePrice(plan, price);
+      useLineReactionStore.getState().upsertPlan(result);
+    } catch (error) { setResizeError(String(error)); }
+    finally { priceBusy.current = false; setPricePreview(null); }
+  };
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.target instanceof HTMLElement && event.target.closest("input,textarea,select,[contenteditable='true']")) return;
+      const state = useLineReactionStore.getState();
+      const plan = state.plans.find(item => item.id === state.selectedId);
+      if (!plan || !["draft", "armed"].includes(plan.status)) return;
+      event.preventDefault(); event.stopPropagation();
+      if (priceBusy.current || dragCleanup.current) return;
+      void savePrice(plan, Number((plan.price + (event.key === "ArrowUp" ? 0.5 : -0.5)).toFixed(2)));
+    };
+    window.addEventListener("keydown", keydown, true);
+    return () => window.removeEventListener("keydown", keydown, true);
+  }, []);
+  const beginPriceDrag = (event: ReactPointerEvent<HTMLDivElement>, plan: LinePlan) => {
+    if (plan.id !== selectedId || !["draft", "armed"].includes(plan.status) || !seriesRef.current || priceBusy.current || event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const series = seriesRef.current;
+    const startPrice = series.coordinateToPrice(event.clientY - chartRef.current!.chartElement().getBoundingClientRect().top);
+    if (startPrice === null) return;
+    let price = plan.price;
+    const move = (pointer: PointerEvent) => {
+      const at = series.coordinateToPrice(pointer.clientY - chartRef.current!.chartElement().getBoundingClientRect().top);
+      if (at === null) return;
+      price = Math.max(0.01, Number((plan.price + Number(at) - Number(startPrice)).toFixed(2)));
+      setPricePreview({ id: plan.id, price });
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", escape, true);
+      dragCleanup.current = null;
+    };
+    const cancel = () => { cleanup(); setPricePreview(null); };
+    const escape = (key: KeyboardEvent) => { if (key.key === "Escape") { key.preventDefault(); key.stopPropagation(); cancel(); } };
+    const finish = () => { cleanup(); void savePrice(plan, price); };
+    dragCleanup.current = cleanup;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", escape, true);
+  };
   const chart = chartRef.current, series = seriesRef.current;
   const candleData = useMemo(
     () => candles.map(candle => ({ ...candle, time: (Date.parse(candle.time) / 1000) as UTCTimestamp })),
@@ -41,6 +99,8 @@ export function LineReactionLayer({ chartRef, seriesRef, candles }: {
   };
 
   const beginResize = (event: ReactPointerEvent<HTMLButtonElement>, plan: LinePlan, edge: "start" | "end") => {
+    event.stopPropagation();
+    if (priceBusy.current || dragCleanup.current) return;
     if (!chart || !plan.visual_start || !plan.visual_end || !["draft", "armed"].includes(plan.status)) return;
     event.preventDefault(); event.stopPropagation();
     let next: ResizePreview = { id: plan.id, visual_start: plan.visual_start, visual_end: plan.visual_end };
@@ -73,7 +133,8 @@ export function LineReactionLayer({ chartRef, seriesRef, candles }: {
   return <>
     {plans.filter(p => !["cancelled","expired","closed","failed"].includes(p.status)).map(p => {
       const geometry = preview?.id === p.id ? preview : null;
-      const y = series?.priceToCoordinate(p.price), start = coordinate(geometry?.visual_start ?? p.visual_start ?? p.armed_at ?? p.created_at), end = coordinate(geometry?.visual_end ?? p.visual_end ?? p.expires_at);
+      const displayPrice = pricePreview?.id === p.id ? pricePreview.price : p.price;
+      const y = series?.priceToCoordinate(displayPrice), start = coordinate(geometry?.visual_start ?? p.visual_start ?? p.armed_at ?? p.created_at), end = coordinate(geometry?.visual_end ?? p.visual_end ?? p.expires_at);
       if (y == null || start == null || end == null) return null;
       const width = chart ? Number(chart.timeScale().width()) : end;
       const left = Math.max(0, start), right = Math.min(width, end);
@@ -82,14 +143,15 @@ export function LineReactionLayer({ chartRef, seriesRef, candles }: {
       const selected = p.id === selectedId;
       const editable = selected && ["draft", "armed"].includes(p.status) && p.visual_start && p.visual_end;
       return <div key={p.id} data-line-reaction="true" role="button" tabIndex={0} title={labels.join(", ") + " · " + p.status + " · " + p.expires_at}
+        onPointerDown={event => beginPriceDrag(event, p)}
         onClick={() => {
           select(p.id);
           useChartStore.getState().setSelected(null);
           useChartStore.getState().setInspectorTab("zones");
         }}
         className={"absolute z-[35] border-t text-left text-[9px] leading-[11px] " + (p.status === "draft" ? "border-dashed " : "border-solid ") + (p.direction === "long" ? "border-emerald-400 text-emerald-300" : "border-rose-400 text-rose-300")}
-        style={{ top: y, left, width: right-left }}>
-        {p.direction === "long" ? "↑ LONG" : "↓ SHORT"} {p.price} · {p.status}
+        style={{ top: y, left, width: right-left, cursor: selected && ["draft", "armed"].includes(p.status) ? (pricePreview ? "grabbing" : "grab") : "pointer", touchAction: "none" }}>
+        {p.direction === "long" ? "↑ LONG" : "↓ SHORT"} {displayPrice} · {p.status}
         {editable ? <>
           <button aria-label="Kéo đầu trái Line" className="absolute -left-1.5 -top-1.5 h-3 w-3 cursor-ew-resize rounded-full border border-white/80 bg-ink-900 shadow" onClick={event => event.stopPropagation()} onPointerDown={event => beginResize(event, p, "start")} />
           <button aria-label="Kéo đầu phải Line" className="absolute -right-1.5 -top-1.5 h-3 w-3 cursor-ew-resize rounded-full border border-white/80 bg-ink-900 shadow" onClick={event => event.stopPropagation()} onPointerDown={event => beginResize(event, p, "end")} />

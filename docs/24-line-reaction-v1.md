@@ -4,15 +4,31 @@ Human-authored horizontal price segment, account scoped, independent of price zo
 Use Add Entity -> Add line buy / Add line sell. Click the first point, move
 horizontally left (temporary dashed segment), then click the endpoint to save Draft.
 The first point fixes price; endpoint time order is normalized. Esc cancels drawing.
+Before the first click, Add line buy/sell shows the same cyan horizontal price
+guide and price label as Copy Price, following the pointer. After the first
+click, the full-width guide disappears; only the temporary Line segment remains
+while the second endpoint is placed.
+The guide hides on pointer leave and clears on cancellation or tool changes.
 The Zones tab in the right inspector opens automatically and groups these entries
 under Reaction Lines, separately from Price Areas. Edit Draft config/accounts,
 save, then Arm explicitly. Execution starts at server arm time, never at a drawn
 past time. The future right endpoint (`visual_end`) is the execution expiry.
+Line Prices show recovery ratio, configured minimum entry offset, TP in R (with
+Wave mode when selected), and remaining expiry instead of the account count.
+The summary includes remaining expiry on the same row and wraps on narrow panels.
 Line Prices stay compact until selected; configuration and lifecycle actions are
 shown only in the selected line detail.
 Draft lines use a dashed stroke; Armed and later lifecycle states use a solid
 stroke. Selecting a Draft or Armed line on the chart reveals left/right handles.
 Dragging either handle changes the visible duration and refreshes execution expiry.
+Draft/Armed prices can be edited with the pencil beside Price in Line Detail
+and saved explicitly. A selected chart Line can be dragged vertically without
+moving its endpoints; Arrow Up/Down changes price by 0.5 outside text inputs.
+Escape or pointer cancellation abandons a price drag. Price changes on Armed
+groups reset armed_at for all members and clear the signal; candles already
+closed at the edit time cannot trigger. A worker claim checks updated_at inside
+its transaction so a signal evaluated before an edit cannot reserve the group.
+Executing/Pending/Open prices remain locked.
 Line Detail shows the remaining duration and absolute expiry read-only. Traders
 change expiry by dragging the right endpoint on the chart.
 Escape clears the selected line and closes Line Detail. Clicking elsewhere in the
@@ -34,7 +50,11 @@ Global switch: [strategy.playbooks.line_reaction_v1] enabled = true.
 
 ## Trigger
 
-M15 closed candles only. Candle open >= armed_at; close must be available now,
+M15 closed candles only. Candle close > armed_at; the candle forming when the
+Line is armed may qualify, but only after it closes. Candles closed before or
+exactly at Arm are never eligible, even if still fresh or inside the drawn span.
+The forming candle's full OHLC is evaluated; its touch may precede Arm.
+Close must be available now,
 trigger younger than 15 minutes, line unexpired. Require low <= line <= high,
 correct body direction and close strictly on the reclaim side.
 Shared close_extreme_recovery_metrics compares close-low (long) or high-close
@@ -65,10 +85,11 @@ the minimum discount from the frozen trigger close.
 Recovery >=3x always enables automatic discounting. Recovery size is close-low
 for long and high-close for short. Retracement starts at 20% for 3x, increases
 10 percentage points per additional recovery ratio, and is capped at 45%.
-Automatic offset is capped at 0.5 ATR M15. Effective offset is the larger of the
-manual and automatic offsets. Limit = trigger close - offset (long) or trigger
-close + offset (short). Offset is expressed in price units, not points/pips,
-and does not follow the later broker quote.
+Automatic offset is recovery size multiplied by that retracement, with no ATR
+cap. Effective offset is the larger of the manual and automatic offsets. Limit
+= trigger close - offset (long) or trigger close + offset (short). Offset is
+expressed in price units, not points/pips, and does not follow the later broker
+quote.
 
 Final distance = min(distance from final entry to wick SL, 1.2 ATR H1).
 SL can therefore lie inside the trigger wick, recorded as atr_cap metadata.
@@ -92,7 +113,8 @@ structure available at signal close. Require >=3 same-direction completed legs.
 Explicit wave mode with missing evidence or target below 2R blocks entry.
 Wave reward is capped at the selected 1.5/2/2.5/3R. Wave evidence is frozen at trigger.
 Risk: approved-plan policy, 0.75% fund / 1.5% personal, sized from final geometry.
-Partial defaults OFF; optional partial/BE is locked per-line metadata. A selected
+Partial defaults OFF, with trigger R = 1 and close fraction = 0 for new Lines;
+optional partial/BE is locked per-line metadata. A selected
 fraction of zero is the break-even-only mode: at the configured R trigger the
 worker preserves the full position and moves its SL to entry. Zone Reaction
 account partial settings never overwrite it.

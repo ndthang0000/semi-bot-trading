@@ -148,6 +148,8 @@ def register_line_routes(app, config, require_auth):
             group_id = rows[0]["client_group_id"] or rows[0]["id"]
             group_status = rows[0]["status"]
             group_armed_at = rows[0]["armed_at"]
+            if group_status == "armed" and any(row["price"] != body.price for row in rows):
+                group_armed_at = now.isoformat()
             current = {row["account_label"]: row for row in rows}
             wanted = set(body.account_labels)
             for label, row in current.items():
@@ -158,9 +160,9 @@ def register_line_routes(app, config, require_auth):
                     )
                     continue
                 conn.execute("""UPDATE line_reaction_plans SET price=?,config_json=?,expires_at=?,updated_at=?,
-                    visual_start=?,visual_end=?,client_group_id=? WHERE id=?""",
+                    visual_start=?,visual_end=?,client_group_id=?,armed_at=?,signal_json=NULL WHERE id=?""",
                     (body.price, body.config.model_dump_json(), expires_at, now.isoformat(),
-                     body.visual_start, body.visual_end, group_id, row["id"]))
+                     body.visual_start, body.visual_end, group_id, group_armed_at, row["id"]))
             for label in wanted - set(current):
                 conn.execute("""INSERT INTO line_reaction_plans
                     (id,client_group_id,symbol,account_label,direction,price,status,config_json,armed_at,expires_at,created_at,updated_at,visual_start,visual_end)

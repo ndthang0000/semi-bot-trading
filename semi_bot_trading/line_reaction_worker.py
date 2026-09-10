@@ -71,7 +71,7 @@ def process_line_reactions(conn, config, env, client, broker_symbol, now):
         signal = line["signal"]
         if signal is None:
             signal = _detect_line_signal(conn, config, line, now)
-            if signal is None or not _claim_line_signal(conn, line["id"], signal, now):
+            if signal is None or not _claim_line_signal(conn, line["id"], signal, now, expected_updated_at=line["updated_at"]):
                 continue
             line["signal"] = signal
             line["status"] = "executing"
@@ -233,18 +233,18 @@ def _detect_line_signal(conn, config, line, now: datetime) -> dict[str, Any] | N
     return signal
 
 
-def _claim_line_signal(conn, line_id: str, signal: dict[str, Any], now: datetime) -> bool:
+def _claim_line_signal(conn, line_id: str, signal: dict[str, Any], now: datetime, *, expected_updated_at=None) -> bool:
     """Atomically reserve one logical Line group across all selected accounts."""
     try:
         conn.commit()
         conn.execute("BEGIN IMMEDIATE")
         target = conn.execute(
-            """SELECT id,COALESCE(client_group_id,id) AS group_id
+            """SELECT id,updated_at,COALESCE(client_group_id,id) AS group_id
             FROM line_reaction_plans
             WHERE id=? AND status='armed' AND removed_at IS NULL""",
             (line_id,),
         ).fetchone()
-        if target is None:
+        if target is None or (expected_updated_at is not None and target["updated_at"] != expected_updated_at):
             conn.rollback()
             return False
         group_id = target["group_id"]

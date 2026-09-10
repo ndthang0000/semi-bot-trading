@@ -200,6 +200,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [renderedDrawings, setRenderedDrawings] = useState<RenderedChartDrawing[]>([]);
   const [measurePreview, setMeasurePreview] = useState<MeasurePreview | null>(null);
   const [copyPriceGuide, setCopyPriceGuide] = useState<PriceGuide | null>(null);
+  const [linePriceGuide, setLinePriceGuide] = useState<PriceGuide | null>(null);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingPlotWidth, setDrawingPlotWidth] = useState(0);
   const [drawingMessage, setDrawingMessage] = useState<string | null>(null);
@@ -950,14 +951,14 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setMeasurePreview({ start: point, end: point });
   }, [drawingPointFromPointer, drawingTool, persistDrawing]);
 
-  useEffect(() => { setLineDraw(null); }, [lineKind, payload.symbol, payload.timeframe, payload.replay?.as_of]);
+  useEffect(() => { setLineDraw(null); setLinePriceGuide(null); }, [lineKind, payload.symbol, payload.timeframe, payload.replay?.as_of]);
 
   const lineClick = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault(); event.stopPropagation();
     if (payload.replay) return;
     const point = drawingPointFromPointer(event.clientX, event.clientY);
     if (!point) return;
-    if (!lineDraw) { setLineDraw({ start: point, end: point }); return; }
+    if (!lineDraw) { setLineDraw({ start: point, end: point }); setLinePriceGuide(null); return; }
     const draft = lineDraftFromPoints(lineDraw.start, point, lineKind === "line_buy" ? "long" : "short");
     if (!draft) return;
     useLineReactionStore.getState().setDraft(draft);
@@ -1966,7 +1967,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       <ChartDrawingControls
         drawings={renderedDrawings}
         measure={measurePreview}
-        priceGuide={copyPriceGuide}
+        priceGuide={isLineDrawing ? (lineDraw ? null : linePriceGuide) : copyPriceGuide}
         plotWidth={drawingPlotWidth}
         selectedId={selectedDrawingId}
         activeTool={drawingTool}
@@ -2006,7 +2007,15 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           className="absolute inset-0 z-40 cursor-crosshair"
           onClick={(event) => event.stopPropagation()}
           onPointerDown={isLineDrawing ? lineClick : beginManualDraw}
-          onPointerMove={event => { if (isLineDrawing && lineDraw) { const point = drawingPointFromPointer(event.clientX, event.clientY); if (point) setLineDraw({ start: lineDraw.start, end: { ...point, y: lineDraw.start.y, price: lineDraw.start.price } }); } }}
+          onPointerMove={event => {
+            if (!isLineDrawing) return;
+            const point = drawingPointFromPointer(event.clientX, event.clientY);
+            if (!point) { setLinePriceGuide(null); return; }
+            const anchor = lineDraw?.start ?? point;
+            setLinePriceGuide(lineDraw ? null : { y: anchor.y, price: anchor.price });
+            if (lineDraw) setLineDraw({ start: lineDraw.start, end: { ...point, y: anchor.y, price: anchor.price } });
+          }}
+          onPointerLeave={() => setLinePriceGuide(null)}
         />
       ) : null}
       {addEntityKind ? (

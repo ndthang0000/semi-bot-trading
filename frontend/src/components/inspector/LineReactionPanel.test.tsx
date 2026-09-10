@@ -106,7 +106,7 @@ it("saves a 1.25R break-even configuration on an armed line", async () => {
     .find(label => label.textContent?.startsWith("Trả giá từ close"))?.querySelector("input");
   expect(triggerInput?.step).toBe("0.05");
   expect(recoveryInput).toMatchObject({ min:"1", max:"10", step:"0.1" });
-  expect(limitOffsetInput?.step).toBe("0.05");
+  expect(limitOffsetInput?.step).toBe("0.5");
   await act(async () => {
     if (!triggerInput || !recoveryInput) throw new Error("Line config input not found");
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(triggerInput, "1.25");
@@ -122,6 +122,16 @@ it("saves a 1.25R break-even configuration on an armed line", async () => {
   expect(JSON.parse(String(patchCall?.[1]?.body)).config.partial_trigger_r).toBe(1.25);
   expect(JSON.parse(String(patchCall?.[1]?.body)).config.recovery_ratio).toBe(1.2);
   expect(showToast).toHaveBeenCalledWith("success", "Đã lưu cấu hình Line Reaction.");
+  expect(container.querySelector('input[aria-label="Giá Line"]')).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Sửa giá Line"]')?.click());
+  const priceInput = container.querySelector<HTMLInputElement>('input[aria-label="Giá Line"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(priceInput, "4330.5");
+    priceInput.dispatchEvent(new Event("input", { bubbles:true }));
+  });
+  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Lưu giá Line"]')?.click());
+  const priceCall = vi.mocked(authFetch).mock.calls.filter(([, options]) => options?.method === "PATCH").at(-1);
+  expect(JSON.parse(String(priceCall?.[1]?.body)).price).toBe(4330.5);
 });
 
 it("shows the API error in a toast when saving fails", async () => {
