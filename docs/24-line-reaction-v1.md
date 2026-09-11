@@ -91,7 +91,13 @@ cap. Effective offset is the larger of the manual and automatic offsets. Limit
 expressed in price units, not points/pips, and does not follow the later broker
 quote.
 
-Final distance = min(distance from final entry to wick SL, 1.2 ATR H1).
+Final distance = max(min_stop_price, min(distance from final entry to wick SL, 1.2 ATR H1)).
+The default min_stop_price is 8 price units, applied after the ATR cap and final
+market/limit entry calculation. This floor takes precedence when the ATR cap
+is below 8. TP, wave feasibility, lot sizing and BE thresholds use the widened
+distance; account risk remains unchanged. Metadata records the distance before
+and after the floor and the additional buffer. Existing filled/pending orders
+are not retroactively widened.
 SL can therefore lie inside the trigger wick, recorded as atr_cap metadata.
 Invalid-side limit, crossed structural stop or nonpositive risk: no order.
 Reprice before sizing with this formula; don't use generic adverse-drift SL shifts.

@@ -22,6 +22,7 @@ class LineConfig(BaseModel):
     body_period: int = Field(default=20, ge=5, le=100)
     stop_buffer_atr: float = Field(default=0.1, ge=0, le=1)
     max_stop_h1_atr: float = Field(default=1.2, ge=0.01, le=1.2)
+    min_stop_price: float = Field(default=8.0, ge=0)
     limit_offset: float = Field(default=0, ge=0, le=50)
     limit_ttl_minutes: int = Field(default=120, ge=5, le=1440)
     risk_reward: Literal[1.5, 2.0, 2.5, 3.0] = 2.0
@@ -187,7 +188,8 @@ def price_line(line, signal, broker_price, wave_metrics=None):
     natural_distance = sign * (entry - structural)
     if natural_distance <= 0:
         raise ValueError("Discount entry crosses the reaction wick stop")
-    distance = min(natural_distance, cap)
+    capped_distance = min(natural_distance, cap)
+    distance = max(capped_distance, cfg.min_stop_price)
     stop = entry - sign * distance
     reward = distance * cfg.risk_reward
     target_detail = {"mode": "fixed_rr"}
@@ -214,7 +216,10 @@ def price_line(line, signal, broker_price, wave_metrics=None):
             "order_type": kind, "entry_model": "line_reaction_" + kind,
             "line_id": line["id"], "line_price": line["price"], "line_signal": signal,
             "entry_discount": discount,
-            "stop_source": "atr_cap" if natural_distance > cap else "reaction_wick",
+            "stop_source": "minimum_distance" if distance > capped_distance else "atr_cap" if natural_distance > cap else "reaction_wick",
+            "stop_distance_floor": {"minimum": cfg.min_stop_price,
+                "before": capped_distance, "after": distance,
+                "added_buffer": distance - capped_distance},
             "target_detail": target_detail, "line_config": cfg.model_dump(),
             "partial_take_profit": {"enabled": cfg.partial_enabled,
                 "trigger_r": cfg.partial_trigger_r, "close_fraction": cfg.partial_fraction,

@@ -15,13 +15,31 @@ from semi_bot_trading.trading_sessions import SESSION_NAMES, selected_session_en
 class TestLineReaction(unittest.TestCase):
     def setUp(self):
         self.line = {"id":"line1","price":100,"direction":"long","armed_at":"2026-09-06T00:00:00+00:00",
-                     "expires_at":"2026-09-07T00:00:00+00:00","config":LineConfig().model_dump()}
+                     "expires_at":"2026-09-07T00:00:00+00:00","config":LineConfig(min_stop_price=0).model_dump()}
         self.candles = [{"time":"2026-09-06T00:00:00+00:00","open":100,"high":102,"low":99,"close":101} for _ in range(20)]
         self.candles.append({"time":"2026-09-06T12:00:00+00:00","open":100,"high":103.5,"low":99,"close":103})
         self.now = datetime(2026,9,6,12,15,tzinfo=timezone.utc)
 
     def signal(self):
         return evaluate_line(self.line,self.candles,2,5,self.now)
+
+    def test_default_stop_floor_applies_after_cap_for_both_sides_and_entry_types(self):
+        self.assertEqual(8, LineConfig().min_stop_price)
+        for direction in ("long", "short"):
+            sign = 1 if direction == "long" else -1
+            for offset in (0, 1):
+                for natural, cap in ((5, 20), (12, 6), (8, 20), (12, 20)):
+                    with self.subTest(direction=direction, offset=offset, natural=natural, cap=cap):
+                        self.line.update(direction=direction, config=LineConfig(limit_offset=offset).model_dump())
+                        entry = 100 - sign * offset
+                        signal = {"reference_price":100, "structural_stop":entry-sign*natural,
+                            "max_distance":cap, "recovery_long":2, "recovery_short":2,
+                            "signal_close_time":"2026-09-06T12:15:00+00:00"}
+                        plan = price_line(self.line, signal, 100)
+                        distance = max(8, min(natural, cap))
+                        self.assertEqual(entry-sign*distance, plan["stop_loss"])
+                        self.assertEqual([entry+sign*distance*2], plan["take_profit"])
+                        self.assertEqual(distance, plan["metadata"]["stop_distance_floor"]["after"])
 
     def test_large_recovery_uses_automatic_limit_and_wick_stop(self):
         signal = self.signal()
@@ -412,7 +430,7 @@ class TestLineIntegration(unittest.TestCase):
         self.conn.commit()
         return now
 
-    def test_worker_market_once_and_preserves_wick(self):
+    def test_worker_market_once_applies_stop_floor_and_recomputes_tp(self):
         from semi_bot_trading.line_reaction_worker import process_line_reactions
         from tests.test_live_worker import _make_env,_fake_client,_fake_risk_manager
         now = self._seed_triggered()
@@ -425,7 +443,8 @@ class TestLineIntegration(unittest.TestCase):
         broker.place_market_order.assert_called_once()
         order = self.conn.execute("SELECT * FROM trade_orders").fetchone()
         self.assertIsNotNone(order)
-        self.assertEqual(2995,order["stop_loss"])
+        self.assertEqual(2992,order["stop_loss"])
+        self.assertEqual([3016], json.loads(order["take_profit_json"]))
         self.assertFalse(json.loads(order["metadata_json"])["partial_take_profit"]["enabled"])
         self.assertEqual("open",self.conn.execute("SELECT status FROM line_reaction_plans").fetchone()["status"])
 
