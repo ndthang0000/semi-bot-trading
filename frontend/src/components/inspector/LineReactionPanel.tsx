@@ -8,9 +8,9 @@ import {
 } from "../../api/lineReaction";
 
 const defaults: Config = {
-  recovery_mode: "average_body", recovery_price: 8,
-  recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.2,
-  limit_offset: 0, limit_ttl_minutes: 120, risk_reward: 2, target_mode: "fixed_rr",
+  recovery_mode: "price", recovery_price: 8,
+  recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.0,
+  limit_offset: 0, limit_ttl_minutes: 30, risk_reward: 2, target_mode: "fixed_rr",
   partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0,
   trade_sessions: []
 };

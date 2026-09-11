@@ -24,8 +24,11 @@ class TestLineReaction(unittest.TestCase):
         return evaluate_line(self.line,self.candles,2,5,self.now)
 
     def test_price_recovery_threshold_and_manual_only_discount(self):
+        # Backend fallback stays legacy-safe; the UI sends Price explicitly for new Lines.
         self.assertEqual("average_body", LineConfig().recovery_mode)
         self.assertEqual(8, LineConfig().recovery_price)
+        self.assertEqual(30, LineConfig().limit_ttl_minutes)
+        self.assertEqual(1, LineConfig().max_stop_h1_atr)
         self.line["config"].update(recovery_mode="price", recovery_price=8)
         for direction in ("long", "short"):
             with self.subTest(direction=direction):
@@ -164,8 +167,8 @@ class TestLineReaction(unittest.TestCase):
         plan = price_line(self.line,signal,103)
         self.assertEqual("limit",plan["metadata"]["order_type"])
         self.assertEqual(98,plan["entry"])
-        self.assertEqual(92,plan["stop_loss"])
-        self.assertEqual([110],plan["take_profit"])
+        self.assertEqual(93,plan["stop_loss"])
+        self.assertEqual([108],plan["take_profit"])
 
     def test_short_symmetry(self):
         self.line.update(direction="short")
@@ -179,8 +182,8 @@ class TestLineReaction(unittest.TestCase):
         self.candles[-1]["high"] = 120
         plan = price_line(self.line,self.signal(),97)
         self.assertEqual(107.35,plan["entry"])
-        self.assertEqual(113.35,plan["stop_loss"])
-        self.assertEqual([95.35],plan["take_profit"])
+        self.assertEqual(112.35,plan["stop_loss"])
+        self.assertEqual([97.35],plan["take_profit"])
 
     def test_auto_offset_scales_with_recovery_and_is_capped_at_45_percent(self):
         signal = {

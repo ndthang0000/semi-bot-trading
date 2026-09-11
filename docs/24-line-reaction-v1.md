@@ -50,7 +50,8 @@ Global switch: [strategy.playbooks.line_reaction_v1] enabled = true.
 
 ## Trigger
 
-Each Line selects recovery_mode: average_body (legacy/default) or price via a
+Each Line selects recovery_mode: price (default for new Lines in the UI) or
+average_body (legacy/backend fallback) via a
 sliding switch in Line Detail (cyan Average body, amber Price), with an explicit
 active-mode description. Price mode hides the baseline-period input while
 preserving its value for switching back. Price mode requires close-low (long) or high-close
@@ -102,7 +103,9 @@ cap. Effective offset is the larger of the manual and automatic offsets. Limit
 expressed in price units, not points/pips, and does not follow the later broker
 quote.
 
-Final distance = max(min_stop_price, min(distance from final entry to wick SL, 1.2 ATR H1)).
+Final distance = max(min_stop_price, min(distance from final entry to wick SL,
+configured Max SL / ATR H1)). The default maximum is 1.0 ATR H1; the UI still
+allows adjustment up to 1.2.
 The default min_stop_price is 8 price units, applied after the ATR cap and final
 market/limit entry calculation. This floor takes precedence when the ATR cap
 is below 8. TP, wave feasibility, lot sizing and BE thresholds use the widened
@@ -117,7 +120,7 @@ recovery ratio/size and the retracement fraction for later analysis.
 Recheck the selected session, spread and market SL cap immediately before sending.
 Actual fills can still slip.
 
-TTL = min(line expiry, signal close + pending TTL, default 120 minutes).
+TTL = min(line expiry, signal close + pending TTL, default 30 minutes).
 Unsent signals waiting for spread/news/risk gates expire after 15 minutes.
 Pending orders already sent retain their TTL.
 MAX_SPREAD_PRICE is checked by the executor and again immediately before market send.
