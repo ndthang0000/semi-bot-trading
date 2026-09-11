@@ -768,6 +768,8 @@ def backfill_price_zone_expiry(conn: sqlite3.Connection) -> None:
     for row in rows:
         metadata = json_loads(row["metadata_json"], {})
         if row["source"] == "bot" and row["zone_type"] in {"support", "resistance"}:
+            if metadata.get("human_adjusted") or metadata.get("activation_review"):
+                continue
             base = first_parseable_datetime(row["detected_at"], row["start_time"], row["created_at"], row["updated_at"]) or now
         else:
             base = first_parseable_datetime(row["updated_at"], row["created_at"], row["detected_at"], row["start_time"]) or now
@@ -812,6 +814,8 @@ def repair_bot_sr_default_expiry_backfill(conn: sqlite3.Connection, now: datetim
     for row in rows:
         metadata = json_loads(row["metadata_json"], {})
         if metadata.get("expired_rule") != "default_expiry_backfill":
+            continue
+        if metadata.get("human_adjusted") or metadata.get("activation_review"):
             continue
         base = first_parseable_datetime(row["detected_at"], row["start_time"])
         if base is None:

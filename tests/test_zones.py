@@ -57,6 +57,9 @@ class ZoneDetectorTest(unittest.TestCase):
             with connect(db_path) as conn:
                 init_db(conn)
                 replace_price_zones(conn, "XAUUSD", "H1", "sr_v2", [bot_zone])
+                self.assertEqual("draft", conn.execute(
+                    "SELECT status FROM price_zones WHERE id=?", (bot_zone.id,)
+                ).fetchone()[0])
                 first_created_at = conn.execute(
                     "SELECT created_at FROM price_zones WHERE id = ?", (bot_zone.id,)
                 ).fetchone()["created_at"]

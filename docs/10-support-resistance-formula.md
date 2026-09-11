@@ -27,6 +27,26 @@ config/trading.toml
 
 ## 1. Input
 
+Persisted bot SR candidates are Draft, not directly tradable. Human review uses
+the existing SR confirmation questionnaire before activation. Confirmed/edited
+zones are protected from detector refresh. Live lifecycle also demotes remaining
+unreviewed active bot SR to Draft and supplies expiry/visual end for review;
+expired candidates remain expired. Draft zones do not emit active New-zone alerts.
+Pure detector output for historical research/backtests is unchanged.
+Live SR expiry writes compare the original timestamp, status, metadata, source
+and expiry fields before updating, so a concurrent human review is preserved.
+Default-expiry backfill/repair skips bot SR marked human_adjusted or carrying
+activation_review; restarting the API/worker must not shorten reviewed expiry.
+
+Realtime worker applies the existing 24-hour SR expiry policy after the detector
+cycle and before querying new zones or evaluating strategies. Bot SR without
+valid_until uses detected_at + 24h; explicit expiry is preserved. Historical
+re-created zones are expired immediately, without waiting for init_db backfill.
+Human/mixed zones are not modified by this pass. Historical research remains unchanged.
+New-zone alerts independently require active, unexpired zones whose detected_at
+is not in the future and is younger than the zone-type default validity window
+(24h for SR). A new database ID alone is not sufficient. Lookback is unchanged.
+
 SR detector không đọc trực tiếp từ toàn bộ candle để tạo zone ban đầu. Nó lấy input chính từ các swing đã được market structure detector xác nhận.
 
 - `Swing High` dùng để tạo `resistance`.

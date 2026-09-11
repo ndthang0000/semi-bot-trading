@@ -19,7 +19,7 @@ from .candles import upsert_candles, upsert_live_candle
 from .chart import build_chart_payload
 from .config import AppConfig
 from .context import MarketContext, detect_and_store_bias, detect_and_store_macro_trend, detect_and_store_regime
-from .db import connect, init_db
+from .db import connect, init_db, default_price_zone_expiry, first_parseable_datetime
 from .line_reaction import SESSION_ENDED_BEFORE_EXECUTION
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
 from .news_calendar import active_ftmo_news_window, active_news_blackout, news_calendar_is_fresh, should_notify_news
@@ -1192,6 +1192,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             before_zone_ids = current_zone_ids(conn, config.symbol)
             run_live_detectors(conn, config, config.symbol, env.account_label)
             apply_persisted_fvg_mitigation(conn, config.symbol, config.bias.timeframe)
+            expire_live_bot_sr_zones(conn, config.symbol, now)
             after_zones = new_zone_rows(conn, config.symbol, before_zone_ids)
             queue_zone_alerts(conn, config, env, after_zones)
             state.last_closed_m15 = latest_m15
@@ -1626,9 +1627,13 @@ def run_live_detectors(conn: Connection, config: AppConfig, symbol: str, account
             ob_max_active_days=config.smc_zones.ob_max_active_days_for(timeframe),
             ob_decay_start_days=config.smc_zones.ob_decay_start_days_for(timeframe),
             max_fvg_zones=config.smc_zones.max_fvg_zones,
-            max_order_block_zones=config.smc_zones.max_order_block_zones,
+            # Live OB detection is paused: unused in the current workflow.
+            # Restore config.smc_zones.max_order_block_zones to re-enable.
+            max_order_block_zones=0,
             max_liquidity_zones=config.smc_zones.max_liquidity_zones,
-            max_consolidation_zones=config.smc_zones.max_consolidation_zones,
+            # Live consolidation detection is paused; keep historical data.
+            # Restore config.smc_zones.max_consolidation_zones to re-enable.
+            max_consolidation_zones=0,
         )
     detect_and_store_price_action_patterns(
         conn,
@@ -1646,10 +1651,49 @@ def run_live_detectors(conn: Connection, config: AppConfig, symbol: str, account
     )
 
 
+def expire_live_bot_sr_zones(conn: Connection, symbol: str, now: datetime) -> None:
+    """Apply the existing SR expiry policy before live consumers see detector output."""
+    rows = conn.execute(
+        """SELECT * FROM price_zones WHERE symbol=? AND source='bot'
+        AND detector IN ('sr_v1','sr_v2') AND zone_type IN ('support','resistance')
+        AND status IN ('active','draft')""", (symbol,),
+    ).fetchall()
+    for row in rows:
+        base = first_parseable_datetime(row["detected_at"], row["start_time"])
+        expiry = first_parseable_datetime(row["valid_until"])
+        if expiry is None and base is not None:
+            expiry = base + default_price_zone_expiry(row["zone_type"], row["timeframe"])
+        if expiry is None:
+            continue
+        expired = expiry <= now
+        metadata = json.loads(row["metadata_json"] or "{}")
+        if metadata.get("human_adjusted") or metadata.get("activation_review"):
+            continue
+        if expired:
+            metadata["expired_rule"] = "live_sr_expiry"
+        conn.execute(
+            """UPDATE price_zones SET valid_until=?,status=?,end_time=?,metadata_json=?,updated_at=?
+            WHERE id=? AND updated_at IS ? AND status=? AND metadata_json=?
+              AND source=? AND valid_until IS ? AND end_time IS ?""",
+            (expiry.isoformat(), "expired" if expired else "draft",
+             expiry.isoformat() if expired else row["end_time"] or expiry.isoformat(), json.dumps(metadata), now.isoformat(), row["id"],
+             row["updated_at"], row["status"], row["metadata_json"], row["source"], row["valid_until"], row["end_time"]),
+        )
+    conn.commit()
+
+
 def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zones: list[Any]) -> None:
     if not env.live_run_detectors:
         return
     for zone in zones:
+        # Re-created historical IDs are not newly formed market zones.
+        now = datetime.now(UTC)
+        detected = first_parseable_datetime(zone["detected_at"])
+        expiry = first_parseable_datetime(zone["valid_until"])
+        if (zone["status"] != "active" or detected is None or detected > now
+                or now - detected >= default_price_zone_expiry(zone["zone_type"], zone["timeframe"])
+                or (expiry is not None and expiry <= now)):
+            continue
         weight = float(zone["effective_weight"])
         if zone["zone_type"] not in {"support", "resistance", "fvg", "order_block"} and weight < 0.7:
             continue
@@ -1661,6 +1705,7 @@ def queue_zone_alerts(conn: Connection, config: AppConfig, env: RuntimeEnv, zone
                 "price_low": round(float(zone["price_low"]), 5),
                 "price_high": round(float(zone["price_high"]), 5),
                 "weight": round(weight, 4),
+                "detected_at": zone["detected_at"],
             },
             "reason": [f"Detector {zone['detector']} created a {zone['status']} zone."],
             "action": "Observe reaction on chart.",

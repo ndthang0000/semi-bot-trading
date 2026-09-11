@@ -1111,3 +1111,10 @@ Nên cải tiến theo thứ tự:
 5. Thêm confluence score: SR + OB + FVG + Liquidity + Bias + Regime.
 6. Hiển thị breakdown score trong UI inspector.
 7. Thêm replay debug event log: zone nào được tạo ở candle nào, vì sao bị reject.
+# Live worker scope
+
+Live worker passes max_order_block_zones=0 and max_consolidation_zones=0.
+The existing detector guards skip those computations and persistence entirely;
+existing zones remain stored. FVG/liquidity and explicit research/CLI detection
+retain their configured behavior. Restore the commented config expressions in
+run_live_detectors to re-enable these two live detectors.

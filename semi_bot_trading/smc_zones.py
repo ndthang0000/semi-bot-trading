@@ -1242,7 +1242,13 @@ def detect_and_store_smc_zones(
         max_liquidity_zones=max_liquidity_zones,
         max_consolidation_zones=max_consolidation_zones,
     )
+    enabled = {
+        FVG_DETECTOR: max_fvg_zones > 0,
+        ORDER_BLOCK_DETECTOR: max_order_block_zones > 0,
+        LIQUIDITY_DETECTOR: max_liquidity_zones > 0,
+        CONSOLIDATION_DETECTOR: max_consolidation_zones > 0,
+    }
     return {
-        detector: replace_price_zones(conn, symbol, timeframe, detector, zones)
+        detector: replace_price_zones(conn, symbol, timeframe, detector, zones) if enabled[detector] else 0
         for detector, zones in detected.items()
     }

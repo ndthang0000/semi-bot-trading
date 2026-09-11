@@ -1960,8 +1960,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             row = conn.execute("SELECT * FROM price_zones WHERE id = ?", (zone_id,)).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Zone not found: {zone_id}")
-            if row["detector"] != "human_manual_v1" or row["zone_type"] not in {"support", "resistance"}:
-                raise HTTPException(status_code=422, detail="Only human-created Support/Resistance zones require confirmation")
+            if row["detector"] not in {"human_manual_v1", "sr_v1", "sr_v2"} or row["zone_type"] not in {"support", "resistance"}:
+                raise HTTPException(status_code=422, detail="Only Support/Resistance drafts require confirmation")
             if row["status"] != "draft":
                 raise HTTPException(status_code=409, detail=f"Zone is not draft: {row['status']}")
 

@@ -1070,6 +1070,15 @@ def replace_price_zones(
         for zone in zones
         if zone.id not in protected_ids and not overlaps_protected_human_zone(zone, protected_rows)
     ]
+    # Persisted bot SR are proposals. Only human confirmation may activate them;
+    # pure historical detector output remains unchanged for research/backtests.
+    insert_zones = [
+        replace(zone, status="draft")
+        if zone.source == "bot" and zone.detector in (SR_DETECTOR, *LEGACY_SR_DETECTORS)
+        and zone.zone_type in {"support", "resistance"} and zone.status == "active"
+        else zone
+        for zone in insert_zones
+    ]
     if insert_zones:
         conn.executemany(
             """

@@ -382,3 +382,20 @@ class SmcZoneTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DisabledSmcPersistenceTest(unittest.TestCase):
+    def test_disabled_detectors_skip_computation_and_replacement(self):
+        from unittest.mock import patch
+        from semi_bot_trading.smc_zones import detect_and_store_smc_zones
+        module = 'semi_bot_trading.smc_zones.'
+        with patch(module + 'load_candle_slices', return_value=[]), \
+             patch(module + 'load_recent_swings', return_value=[]), \
+             patch(module + 'detect_order_block_zones') as ob, \
+             patch(module + 'detect_consolidation_zones') as consolidation, \
+             patch(module + 'replace_price_zones', return_value=0) as persist:
+            detect_and_store_smc_zones(None, 'XAUUSD', 'H1',
+                max_order_block_zones=0, max_consolidation_zones=0)
+            ob.assert_not_called()
+            consolidation.assert_not_called()
+            self.assertEqual({FVG_DETECTOR, LIQUIDITY_DETECTOR},
+                {call.args[3] for call in persist.call_args_list})
