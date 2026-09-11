@@ -19,6 +19,8 @@ AUTO_LIMIT_MAX_RETRACE = 0.45
 class LineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     recovery_ratio: float = Field(default=2.0, ge=1, le=10)
+    recovery_mode: Literal["average_body", "price"] = "average_body"
+    recovery_price: float = Field(default=8.0, gt=0)
     body_period: int = Field(default=20, ge=5, le=100)
     stop_buffer_atr: float = Field(default=0.1, ge=0, le=1)
     max_stop_h1_atr: float = Field(default=1.2, ge=0.01, le=1.2)
@@ -104,7 +106,9 @@ def evaluate_line(line, candles, atr, h1_atr, now):
     up = close_extreme_recovery_metrics(candles, "long", cfg.body_period, cfg.recovery_ratio)
     down = close_extreme_recovery_metrics(candles, "short", cfg.body_period, cfg.recovery_ratio)
     # Both ends use the shared baseline and threshold, including equality.
-    if (up.passed and down.passed) or not (up.passed if sign == 1 else down.passed):
+    up_passed = up.size >= cfg.recovery_price if cfg.recovery_mode == "price" else up.passed
+    down_passed = down.size >= cfg.recovery_price if cfg.recovery_mode == "price" else down.passed
+    if (up_passed and down_passed) or not (up_passed if sign == 1 else down_passed):
         return None
     structural = (candle["low"] - cfg.stop_buffer_atr * atr) if sign == 1 else (candle["high"] + cfg.stop_buffer_atr * atr)
     return {
@@ -115,6 +119,8 @@ def evaluate_line(line, candles, atr, h1_atr, now):
         "recovery_long": up.ratio, "recovery_short": down.ratio,
         "recovery_long_size": up.size, "recovery_short_size": down.size,
         "recovery_average_body": up.average_body,
+        "recovery_mode": cfg.recovery_mode,
+        "recovery_price_threshold": cfg.recovery_price if cfg.recovery_mode == "price" else None,
     }
 
 
@@ -140,7 +146,7 @@ def _entry_discount_plan(cfg: LineConfig, signal: dict, direction: str) -> dict:
 
     retracement = 0.0
     auto_offset = 0.0
-    if ratio >= AUTO_LIMIT_RECOVERY_THRESHOLD and recovery_size > 0:
+    if cfg.recovery_mode == "average_body" and ratio >= AUTO_LIMIT_RECOVERY_THRESHOLD and recovery_size > 0:
         retracement = min(
             AUTO_LIMIT_BASE_RETRACE
             + (ratio - AUTO_LIMIT_RECOVERY_THRESHOLD) * AUTO_LIMIT_RETRACE_PER_RATIO,

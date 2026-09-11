@@ -50,6 +50,17 @@ Global switch: [strategy.playbooks.line_reaction_v1] enabled = true.
 
 ## Trigger
 
+Each Line selects recovery_mode: average_body (legacy/default) or price via a
+sliding switch in Line Detail (cyan Average body, amber Price), with an explicit
+active-mode description. Price mode hides the baseline-period input while
+preserving its value for switching back. Price mode requires close-low (long) or high-close
+(short) >= recovery_price, default 8 price units, UI step 0.5. Both directions
+meeting the threshold rejects the candle, including equality. Body baseline
+is informational only in Price mode; ATR and other trigger guards still apply.
+Price mode uses only manual Dis: zero means market, positive means limit.
+Automatic recovery-ratio discounting is disabled in this mode. Existing Lines
+without these fields retain average_body behavior.
+
 M15 closed candles only. Candle close > armed_at; the candle forming when the
 Line is armed may qualify, but only after it closes. Candles closed before or
 exactly at Arm are never eligible, even if still fresh or inside the drawn span.

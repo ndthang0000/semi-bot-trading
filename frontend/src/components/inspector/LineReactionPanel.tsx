@@ -8,6 +8,7 @@ import {
 } from "../../api/lineReaction";
 
 const defaults: Config = {
+  recovery_mode: "average_body", recovery_price: 8,
   recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.2,
   limit_offset: 0, limit_ttl_minutes: 120, risk_reward: 2, target_mode: "fixed_rr",
   partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0,
@@ -175,7 +176,7 @@ export function LineReactionPanel({ symbol, showToast }: {
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2"><strong className={`font-mono text-sm tabular-nums ${isLong ? "text-emerald-200" : "text-rose-200"}`}>{plan.price.toFixed(2)}</strong><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${statusBadgeClass(plan.status)}`}>{plan.status}</span></span>
             <span className="flex flex-wrap gap-x-2 text-[10px] text-slate-400">
-              <span>Rec {plan.config.recovery_ratio}×</span>
+              <span>Rec {plan.config.recovery_mode === "price" ? `${plan.config.recovery_price ?? 8} giá` : `${plan.config.recovery_ratio}×`}</span>
               <span>Dis {plan.config.limit_offset}</span>
               <span>TP {plan.config.risk_reward}R{plan.config.target_mode === "wave_safe" ? " · Wave Safe" : plan.config.target_mode === "wave_base" ? " · Wave Base" : ""}</span>
               <span className="whitespace-nowrap text-slate-500">còn {hoursLabel(plan.expires_at)}</span>
@@ -249,14 +250,29 @@ export function LineReactionPanel({ symbol, showToast }: {
           <p className="mt-1 text-[10px] text-slate-500">{new Date(selected.expires_at).toLocaleString()}</p>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {field("recovery_ratio", "Recovery / body")}
-          {field("body_period", "Số nến baseline")}
+          <div className={`col-span-2 rounded-lg border p-3 ${config.recovery_mode === "price" ? "border-amber-400/60 bg-amber-400/10" : "border-cyan-400/60 bg-cyan-400/10"}`}>
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-300">Chế độ recovery</p>
+            <button type="button" role="switch" aria-label="Recovery theo Price" aria-checked={config.recovery_mode === "price"}
+              className="flex w-full items-center justify-between gap-2 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+              onClick={() => setConfig({ ...config, recovery_mode: config.recovery_mode === "price" ? "average_body" : "price", recovery_price: config.recovery_price ?? 8 })}>
+              <span className={`text-xs font-semibold ${config.recovery_mode !== "price" ? "text-cyan-200" : "text-slate-500"}`}>Average body</span>
+              <span aria-hidden="true" className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${config.recovery_mode === "price" ? "bg-amber-400" : "bg-cyan-400"}`}>
+                <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform motion-reduce:transition-none ${config.recovery_mode === "price" ? "translate-x-5" : "translate-x-0"}`} />
+              </span>
+              <span className={`text-xs font-semibold ${config.recovery_mode === "price" ? "text-amber-200" : "text-slate-500"}`}>Price</span>
+            </button>
+            <p className={`mt-2 text-[11px] ${config.recovery_mode === "price" ? "text-amber-200" : "text-cyan-200"}`}>
+              {config.recovery_mode === "price" ? "Đang dùng số giá cố định" : "Đang dùng hệ số × thân nến trung bình"}
+            </p>
+          </div>
+          {config.recovery_mode === "price" ? <label className="grid gap-1 text-xs">Recovery (giá)<input type="number" required min="0.5" step="0.5" className="rounded bg-ink-950 p-2" value={config.recovery_price ?? 8} onChange={event => setConfig({ ...config, recovery_price: Number(event.target.value) })} /></label> : field("recovery_ratio", "Recovery / body")}
+          {config.recovery_mode !== "price" ? field("body_period", "Số nến baseline") : <div aria-hidden="true" />}
           {field("stop_buffer_atr", "Buffer ATR M15")}
           {field("max_stop_h1_atr", "Max SL / ATR H1")}
           {field("limit_offset", "Trả giá từ close")}
           {field("limit_ttl_minutes", "Limit TTL (phút)")}
         </div>
-        <p className="text-[10px] text-slate-500">Trả giá = 0: market nếu recovery dưới 3x. Từ 3x, hệ thống tự đặt limit sâu dần; số nhập tại đây là mức trả giá tối thiểu.</p>
+        <p className="text-[10px] text-slate-500">{config.recovery_mode === "price" ? "Price: chỉ dùng Dis đã nhập. Dis = 0 vào market; Dis > 0 đặt limit, không tự động trả giá." : "Trả giá = 0: market nếu recovery dưới 3x. Từ 3x, hệ thống tự đặt limit sâu dần; số nhập tại đây là mức trả giá tối thiểu."}</p>
         <label className="grid gap-1 text-xs">TP tối đa<select className="bg-ink-950 p-2" value={config.risk_reward} onChange={event => setConfig({ ...config, risk_reward: Number(event.target.value) })}>
           <option value="1.5">1,5R</option><option value="2">2R</option><option value="2.5">2,5R</option><option value="3">3R</option></select></label>
         <label className="grid gap-1 text-xs">Cách chọn TP<select className="bg-ink-950 p-2" value={config.target_mode} onChange={event => setConfig({ ...config, target_mode: event.target.value })}>

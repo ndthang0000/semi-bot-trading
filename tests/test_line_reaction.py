@@ -23,6 +23,36 @@ class TestLineReaction(unittest.TestCase):
     def signal(self):
         return evaluate_line(self.line,self.candles,2,5,self.now)
 
+    def test_price_recovery_threshold_and_manual_only_discount(self):
+        self.assertEqual("average_body", LineConfig().recovery_mode)
+        self.assertEqual(8, LineConfig().recovery_price)
+        self.line["config"].update(recovery_mode="price", recovery_price=8)
+        for direction in ("long", "short"):
+            with self.subTest(direction=direction):
+                self.line["direction"] = direction
+                candle = self.candles[-1]
+                candle.update(open=100, low=99, close=107, high=108) if direction == "long" else candle.update(open=100, high=101, close=93, low=92)
+                signal = self.signal()
+                self.assertIsNotNone(signal)
+                plan = price_line(self.line, signal, candle["close"])
+                self.assertEqual("market", plan["metadata"]["order_type"])
+                self.line["config"]["limit_offset"] = 1
+                plan = price_line(self.line, signal, candle["close"])
+                self.assertEqual(0, plan["metadata"]["entry_discount"]["auto_offset"])
+                self.assertEqual(1, plan["metadata"]["entry_discount"]["effective_offset"])
+                self.line["config"]["limit_offset"] = 0
+                self.line["config"]["recovery_price"] = 8.5
+                self.assertIsNone(self.signal())
+                self.line["config"]["recovery_price"] = 8
+                candle.update(high=115) if direction == "long" else candle.update(low=85)
+                self.assertIsNone(self.signal())
+
+    def test_price_mode_does_not_require_body_baseline(self):
+        self.line["config"].update(recovery_mode="price", recovery_price=4)
+        self.assertIsNotNone(evaluate_line(self.line, self.candles[-1:], 2, 5, self.now))
+        self.line["config"]["recovery_mode"] = "average_body"
+        self.assertIsNone(evaluate_line(self.line, self.candles[-1:], 2, 5, self.now))
+
     def test_default_stop_floor_applies_after_cap_for_both_sides_and_entry_types(self):
         self.assertEqual(8, LineConfig().min_stop_price)
         for direction in ("long", "short"):
