@@ -2403,6 +2403,23 @@ def maybe_execute_candidates(
         return
     if is_weekend_no_new_trade_window(env, now):
         logger.warning("maybe_execute_candidates: weekend cutoff active — skipping execution")
+        blocked = [candidate for candidate in candidates if candidate.get("status") == "eligible"]
+        if blocked:
+            candidate = sorted(
+                blocked, key=lambda item: float(item.get("score") or 0.0), reverse=True
+            )[0]
+            queue_execution_gate_block(
+                conn,
+                config,
+                env,
+                candidate,
+                reason_code="weekend_no_new_trades",
+                reason=(
+                    "Weekend no-new-trades cutoff is active from "
+                    f"{env.weekend_no_new_trades_time} {env.weekend_flatten_timezone}. "
+                    "No broker order was created."
+                ),
+            )
         return
     # Bug #5: broker_symbol is resolved at startup; if resolution failed the
     # string is empty.  Executing against an empty symbol would query wrong

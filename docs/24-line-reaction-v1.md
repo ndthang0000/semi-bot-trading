@@ -124,7 +124,10 @@ TTL = min(line expiry, signal close + pending TTL, default 30 minutes).
 Unsent signals waiting for spread/news/risk gates expire after 15 minutes.
 Pending orders already sent retain their TTL.
 MAX_SPREAD_PRICE is checked by the executor and again immediately before market send.
-All account, weekend, mandatory news, position and daily-risk gates remain.
+All account, weekend, mandatory news, position and daily-risk gates remain. When
+the weekend no-new-trades cutoff blocks a signal, the executor queues one
+deduplicated Telegram execution alert per account and Line; no broker order is
+created.
 
 ## TP, partial and risk
 

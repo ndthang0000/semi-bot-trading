@@ -2041,6 +2041,24 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
             maybe_execute_candidates(self._conn, self._config, env, client, [_make_candidate()], "XAUUSDm")
         self.assertEqual(0, self._order_count())
         client.place_market_order.assert_not_called()
+        alert = self._conn.execute(
+            "SELECT message_payload_json FROM alert_events WHERE event_type = 'execution_event'"
+        ).fetchone()
+        self.assertIsNotNone(alert)
+        payload = json.loads(alert["message_payload_json"])
+        self.assertEqual("weekend_no_new_trades", payload["reason_code"])
+        self.assertIn("12:00 America/New_York", payload["reason"][0])
+
+        # Repeated worker polls must not send duplicate Telegram alerts.
+        with patch("semi_bot_trading.live_worker.datetime") as dt:
+            dt.now.return_value = cutoff_now
+            maybe_execute_candidates(self._conn, self._config, env, client, [_make_candidate()], "XAUUSDm")
+        self.assertEqual(
+            1,
+            self._conn.execute(
+                "SELECT COUNT(*) AS c FROM alert_events WHERE event_type = 'execution_event'"
+            ).fetchone()["c"],
+        )
 
     def test_empty_broker_symbol_no_trade(self):
         env = _make_env()
