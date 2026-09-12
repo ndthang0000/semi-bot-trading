@@ -22,6 +22,9 @@ flowchart LR
 
 Thành phần:
 
+- Favicon của ứng dụng nằm ở đầu sidebar; desktop header hiển thị gọn `XAUUSD`
+  cùng badge phiên hiện tại và đồng hồ UTC. Badge dùng năm khung giờ cố định của
+  Line Reaction: Asian, London, London–NY, New York và Off-hours.
 - Candlestick chart realtime hoặc replay.
 - Timeframe switch: H1, M15; M5 để sau nếu M15 entry chưa đủ tốt.
 - Symbol selector có thể tồn tại trong UI, nhưng MVP chỉ bật XAUUSD.

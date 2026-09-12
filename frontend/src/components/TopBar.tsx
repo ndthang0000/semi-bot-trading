@@ -4,6 +4,7 @@ import { clearStoredRefreshToken, getStoredRefreshToken, logout } from "../api/a
 import type { NewsResponse } from "../api/chart";
 import { allowedAddEntityKinds, type AddEntityMenuKind } from "../lib/playbookEntities";
 import { accountBadgeClass } from "../lib/accountPresentation";
+import { formatUtcClock, tradingSessionAt } from "../lib/tradingSession";
 import { useAuthStore } from "../store/authStore";
 import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
@@ -43,6 +44,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
     : "Manual";
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>(null);
   const [manualAiOpen, setManualAiOpen] = useState(false);
+  const [clockNow, setClockNow] = useState(() => new Date());
   // H1 is the only zone/context timeframe; manual zones on M15 are rejected by
   // the API (422), so the draw entry point is disabled while viewing M15 to
   // avoid a dead-end UX (draw -> submit -> error).
@@ -58,7 +60,14 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
     }
   }, [canCreateManualAi]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const priceTone = (priceChangePercent ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300";
+  const currentSession = tradingSessionAt(clockNow);
+  const utcClock = formatUtcClock(clockNow);
 
   return (
     <>
@@ -75,8 +84,11 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
             </span>
           ) : null}
         </div>
-        <div className="mt-0.5 text-[10px] text-slate-500">
-          {mode === "replay" ? "Replay" : startIndex === null ? "Realtime · Latest" : `History · ${startIndex}`}
+        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
+          <span>{mode === "replay" ? "Replay" : startIndex === null ? "Realtime · Latest" : `History · ${startIndex}`}</span>
+          <span aria-hidden="true">·</span>
+          <span className={currentSession.textClass}>{currentSession.label}</span>
+          <span>{utcClock} UTC</span>
         </div>
       </div>
       <div className="flex items-center gap-1.5">
@@ -99,11 +111,16 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
     </header>
 
     <header className="relative z-[80] hidden h-14 items-center justify-between gap-4 border-b border-ink-700 bg-ink-900 px-4 lg:flex">
-      <div className="flex items-center gap-3 font-semibold text-slate-100">
-        <span className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-ink-800 text-cyan-300">
-          <Activity size={18} />
+      <div className="flex shrink-0 items-center gap-2.5 text-slate-100">
+        <span className="whitespace-nowrap text-base font-semibold">XAUUSD</span>
+        <span
+          className={`inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-[11px] font-medium ${currentSession.badgeClass}`}
+          title={`${currentSession.label}: ${currentSession.startUtc}–${currentSession.endUtc} UTC`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${currentSession.dotClass}`} aria-hidden="true" />
+          <span>{currentSession.label}</span>
+          <span className="opacity-60">{utcClock} UTC</span>
         </span>
-        <span className="whitespace-nowrap">XAUUSD Control</span>
       </div>
 
       <div className="flex min-w-0 items-center gap-2">

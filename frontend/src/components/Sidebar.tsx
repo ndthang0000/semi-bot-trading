@@ -51,10 +51,7 @@ export function Sidebar({ reviewLocked = false }: { reviewLocked?: boolean }) {
           "md:static md:z-auto md:w-12 md:translate-x-0 md:bg-ink-900 md:py-3 md:shadow-none md:backdrop-blur-none",
         ].join(" ")}
       >
-        {/* Logo mark */}
-        <div className="mb-4 flex h-7 w-7 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
-          B
-        </div>
+        <img className="mb-4 h-8 w-8" src="/favicon.svg" alt="Semi Bot Trading" title="Semi Bot Trading" />
 
         <nav className="flex flex-1 flex-col items-center gap-1">
           {NAV_ITEMS.map(({ page, icon, label }) => {
