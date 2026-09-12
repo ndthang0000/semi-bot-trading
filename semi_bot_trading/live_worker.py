@@ -2697,7 +2697,7 @@ def maybe_weekend_flatten(
     if not is_weekend_flatten_window(env, now):
         return False
 
-    action_date = _local_datetime(env, now).date().isoformat()
+    action_date = _weekend_cycle_start_date(_local_datetime(env, now))
     completed_key = f"weekend-flatten:{env.account_label}:{config.symbol}:{action_date}"
     failed_key = f"weekend-flatten-failed:{env.account_label}:{config.symbol}:{action_date}"
     prior_attempt = conn.execute(
@@ -2818,6 +2818,12 @@ def _is_weekend_risk_window(local_now: datetime, cutoff: tuple[int, int]) -> boo
     if weekday == 6:
         return (local_now.hour, local_now.minute) < (17, 0)
     return False
+
+
+def _weekend_cycle_start_date(local_now: datetime) -> str:
+    """Return the New York Friday that owns the active weekend window."""
+    days_since_friday = (local_now.weekday() - 4) % 7
+    return (local_now.date() - timedelta(days=days_since_friday)).isoformat()
 
 
 def _local_datetime(env: RuntimeEnv, now: datetime) -> datetime:

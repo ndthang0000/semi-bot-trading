@@ -2514,6 +2514,35 @@ class TestWeekendFlatten(unittest.TestCase):
             marker["dedupe_key"],
         )
 
+    def test_weekend_flatten_uses_one_marker_across_new_york_calendar_days(self):
+        env = _make_env(weekend_flatten_enabled=True)
+        client = _fake_client()
+        client.cancel_pending_orders.return_value = []
+        client.close_open_positions.return_value = []
+
+        attempts = [
+            datetime(2026, 6, 26, 19, 30, tzinfo=UTC),  # Friday 15:30 New York
+            datetime(2026, 6, 27, 4, 0, tzinfo=UTC),    # Saturday 00:00 New York
+            datetime(2026, 6, 28, 20, 59, tzinfo=UTC),  # Sunday 16:59 New York
+        ]
+        for now in attempts:
+            self.assertFalse(
+                maybe_weekend_flatten(
+                    self._conn, self._config, env, client, "XAUUSDm", now
+                )
+            )
+
+        client.cancel_pending_orders.assert_called_once()
+        client.close_open_positions.assert_called_once()
+        markers = self._conn.execute(
+            "SELECT dedupe_key FROM alert_events WHERE account_label = ?",
+            (env.account_label,),
+        ).fetchall()
+        self.assertEqual(
+            ["weekend-flatten:Test:XAUUSD:2026-06-26"],
+            [row["dedupe_key"] for row in markers],
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # sync_closed_positions

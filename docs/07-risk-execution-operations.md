@@ -221,12 +221,14 @@ WEEKEND_FLATTEN_TIME=15:30
 ```
 
 Weekend flatten makes at most one broker mutation attempt per account, symbol,
-and New York action date. A failed cancellation or close queues the critical
-`Weekend flatten incomplete` alert and disables automatic retries for that date;
-the operator must inspect MT5 and handle any remaining exposure manually. This
-also records a completed check when there is no exposure, so account-wide MT5
-scans are not repeated every poll. This prevents a closed market or persistent
-broker rejection from generating an FTMO hyperactivity loop.
+and New York weekend cycle. Friday, Saturday and Sunday before reopen share the
+Friday cycle date, so crossing New York midnight cannot trigger another broker
+scan or duplicate Telegram completion message. A failed cancellation or close
+queues the critical `Weekend flatten incomplete` alert and disables automatic
+retries for that weekend; the operator must inspect MT5 and handle any remaining
+exposure manually. This also records a completed check when there is no exposure,
+so account-wide MT5 scans are not repeated every poll. This prevents a closed
+market or persistent broker rejection from generating an FTMO hyperactivity loop.
 
 Dung timezone New York de tu dong dung khi DST doi gio; tranh hard-code gio Viet Nam.
 
