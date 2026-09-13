@@ -56,6 +56,37 @@ class TestLineReaction(unittest.TestCase):
         self.line["config"]["recovery_mode"] = "average_body"
         self.assertIsNone(evaluate_line(self.line, self.candles[-1:], 2, 5, self.now))
 
+    def test_session_price_uses_candle_session_and_snapshots_threshold(self):
+        thresholds = {
+            "2026-09-06T03:00:00+00:00": ("asian", 8),
+            "2026-09-06T08:00:00+00:00": ("london", 7),
+            "2026-09-06T12:00:00+00:00": ("london_ny", 12),
+            "2026-09-06T18:00:00+00:00": ("new_york", 10),
+        }
+        self.line["config"].update(recovery_mode="session_price")
+        for candle_time, (expected_session, threshold) in thresholds.items():
+            with self.subTest(session=expected_session):
+                candle = self.candles[-1]
+                candle.update(time=candle_time, open=100, low=99, close=99 + threshold, high=100 + threshold)
+                now = datetime.fromisoformat(candle_time) + timedelta(minutes=15)
+                signal = evaluate_line(self.line, self.candles, 2, 5, now)
+                self.assertIsNotNone(signal)
+                self.assertEqual(expected_session, signal["recovery_session"])
+                self.assertEqual(threshold, signal["recovery_price_threshold"])
+                self.assertEqual("market", price_line(self.line, signal, candle["close"])["metadata"]["order_type"])
+                candle["close"] -= 0.01
+                self.assertIsNone(evaluate_line(self.line, self.candles, 2, 5, now))
+
+    def test_session_price_never_trades_off_hours_without_a_profile(self):
+        self.line["config"].update(recovery_mode="session_price")
+        self.candles[-1].update(
+            time="2026-09-06T22:00:00+00:00", open=100, low=99, close=119, high=120,
+        )
+        self.assertIsNone(evaluate_line(
+            self.line, self.candles, 2, 5,
+            datetime(2026, 9, 6, 22, 15, tzinfo=timezone.utc),
+        ))
+
     def test_default_stop_floor_applies_after_cap_for_both_sides_and_entry_types(self):
         self.assertEqual(8, LineConfig().min_stop_price)
         for direction in ("long", "short"):
@@ -273,7 +304,11 @@ class TestLineReaction(unittest.TestCase):
         self.assertEqual(1.2, LineConfig(recovery_ratio=1.2).recovery_ratio)
         self.assertEqual(0, LineConfig().limit_offset)
         self.assertEqual(0, LineConfig(partial_fraction=0).partial_fraction)
-        self.assertEqual(["asian", "london", "london_ny", "new_york", "off_hours"], LineConfig().trade_sessions)
+        self.assertEqual(["asian", "london", "london_ny", "new_york"], LineConfig().trade_sessions)
+        self.assertEqual(
+            {"asian": 8, "london": 7, "london_ny": 12, "new_york": 10},
+            LineConfig().recovery_price_by_session,
+        )
         self.assertEqual(["london", "new_york"], LineConfig(trade_sessions=["london", "new_york", "london"]).trade_sessions)
         for change in ({"recovery_ratio":0.9},{"max_stop_h1_atr":2},{"limit_offset":-0.01},{"limit_offset":float("nan")}):
             with self.assertRaises(ValueError):
@@ -282,6 +317,12 @@ class TestLineReaction(unittest.TestCase):
             LineConfig(risk_reward=1.75)
         with self.assertRaises(ValueError):
             LineConfig(trade_sessions=["unknown"])
+        with self.assertRaises(ValueError):
+            LineConfig(recovery_price_by_session={"unknown": 8})
+        with self.assertRaises(ValueError):
+            LineConfig(recovery_price_by_session={"asian": 0})
+        with self.assertRaises(ValueError):
+            LineConfig(recovery_mode="session_price", trade_sessions=["off_hours"])
         with self.assertRaises(ValueError):
             LineConfig(partial_fraction=-0.01)
 

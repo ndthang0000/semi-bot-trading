@@ -50,16 +50,19 @@ Global switch: [strategy.playbooks.line_reaction_v1] enabled = true.
 
 ## Trigger
 
-Each Line selects recovery_mode: price (default for new Lines in the UI) or
-average_body (legacy/backend fallback) via a
-sliding switch in Line Detail (cyan Average body, amber Price), with an explicit
-active-mode description. Price mode hides the baseline-period input while
-preserving its value for switching back. Price mode requires close-low (long) or high-close
-(short) >= recovery_price, default 8 price units, UI step 0.5. Both directions
+Each Line selects recovery_mode: session_price (default for new Lines in the UI),
+price (fixed-price option) or average_body (legacy/backend fallback). Line Detail
+keeps the sliding Average body/Price switch and provides Fixed/By session choices
+inside Price. Both price modes hide the baseline-period input while preserving its
+value for switching back. Fixed Price requires close-low (long) or high-close
+(short) >= recovery_price, default 8 price units, UI step 0.5. Session Price resolves
+the threshold from the signal M15 candle open time: Asian 8, London 7, London-NY 12
+and New York 10. The resolved session and threshold are frozen in signal_json so a
+later session transition cannot reinterpret an executing or pending setup. Both directions
 meeting the threshold rejects the candle, including equality. Body baseline
-is informational only in Price mode; ATR and other trigger guards still apply.
-Price mode uses only manual Dis: zero means market, positive means limit.
-Automatic recovery-ratio discounting is disabled in this mode. Existing Lines
+is informational only in either Price mode; ATR and other trigger guards still apply.
+Price modes use only manual Dis: zero means market, positive means limit.
+Automatic recovery-ratio discounting is disabled in these modes. Existing Lines
 without these fields retain average_body behavior.
 
 M15 closed candles only. Candle close > armed_at; the candle forming when the
@@ -75,9 +78,9 @@ the trader-configurable range is 1.0–10.0;
 configurable period. If BOTH directions pass the threshold, reject the candle,
 including equality. Missing/zero baseline, missing ATR, doji and stale signals fail closed.
 
-Each Line stores its own multi-select `trade_sessions`. The default selects all
-five fixed UTC windows: Asian 00:00–07:00, London 07:00–12:00, London–NY
-12:00–17:00, New York 17:00–21:00 and Off-hours 21:00–24:00. The worker only
+Each Line stores its own multi-select `trade_sessions`. New Lines default to Asian
+00:00–07:00, London 07:00–12:00, London–NY 12:00–17:00 and New York 17:00–21:00.
+Off-hours 21:00–24:00 is disabled in the default Session Price profile. The worker only
 accepts a recovery and sends a new order inside a selected session. An unsubmitted
 signal is cleared when its session ends; a confirmed pending limit is cancelled so
 it cannot fill in an unselected session. Filled positions keep normal management.

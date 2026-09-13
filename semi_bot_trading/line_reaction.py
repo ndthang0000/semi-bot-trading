@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator, model_valida
 
 from .strategy.helpers import close_extreme_recovery_metrics
 from .strategy.h1_impulse_retest_v1 import apply_h1_impulse_target_mode
-from .trading_sessions import SESSION_NAMES
+from .trading_sessions import SESSION_NAMES, session_name
 
 PLAYBOOK = "line_reaction_v1"
 SESSION_ENDED_BEFORE_EXECUTION = "Selected Line trading session ended before broker execution"
@@ -14,13 +14,23 @@ AUTO_LIMIT_RECOVERY_THRESHOLD = 3.0
 AUTO_LIMIT_BASE_RETRACE = 0.20
 AUTO_LIMIT_RETRACE_PER_RATIO = 0.10
 AUTO_LIMIT_MAX_RETRACE = 0.45
+DEFAULT_SESSION_RECOVERY_PRICES = {
+    "asian": 8.0,
+    "london": 7.0,
+    "london_ny": 12.0,
+    "new_york": 10.0,
+}
+DEFAULT_LINE_TRADE_SESSIONS = tuple(DEFAULT_SESSION_RECOVERY_PRICES)
 
 
 class LineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     recovery_ratio: float = Field(default=2.0, ge=1, le=10)
-    recovery_mode: Literal["average_body", "price"] = "average_body"
+    recovery_mode: Literal["average_body", "price", "session_price"] = "average_body"
     recovery_price: float = Field(default=8.0, gt=0)
+    recovery_price_by_session: dict[str, float] = Field(
+        default_factory=lambda: dict(DEFAULT_SESSION_RECOVERY_PRICES)
+    )
     body_period: int = Field(default=20, ge=5, le=100)
     stop_buffer_atr: float = Field(default=0.1, ge=0, le=1)
     max_stop_h1_atr: float = Field(default=1.0, ge=0.01, le=1.2)
@@ -33,8 +43,29 @@ class LineConfig(BaseModel):
     partial_trigger_r: float = Field(default=1, ge=0.5, le=1.5)
     partial_fraction: float = Field(default=0, ge=0, le=0.5)
     trade_sessions: list[str] = Field(
-        default_factory=lambda: list(SESSION_NAMES), min_length=1, max_length=5
+        default_factory=lambda: list(DEFAULT_LINE_TRADE_SESSIONS), min_length=1, max_length=5
     )
+
+    @field_validator("recovery_price_by_session")
+    @classmethod
+    def valid_session_recovery_prices(cls, value):
+        invalid = [name for name in value if name not in DEFAULT_LINE_TRADE_SESSIONS]
+        if invalid:
+            raise ValueError("Unknown recovery session: " + ", ".join(invalid))
+        if any(not math.isfinite(price) or price <= 0 for price in value.values()):
+            raise ValueError("Session recovery prices must be finite and greater than zero")
+        return value
+
+    @model_validator(mode="after")
+    def validate_session_price_profile(self):
+        if self.recovery_mode != "session_price":
+            return self
+        if "off_hours" in self.trade_sessions:
+            raise ValueError("Off-hours is disabled for Session Price recovery")
+        missing = [name for name in self.trade_sessions if name not in self.recovery_price_by_session]
+        if missing:
+            raise ValueError("Missing recovery price for session: " + ", ".join(missing))
+        return self
 
     @field_validator("trade_sessions")
     @classmethod
@@ -106,8 +137,22 @@ def evaluate_line(line, candles, atr, h1_atr, now):
     up = close_extreme_recovery_metrics(candles, "long", cfg.body_period, cfg.recovery_ratio)
     down = close_extreme_recovery_metrics(candles, "short", cfg.body_period, cfg.recovery_ratio)
     # Both ends use the shared baseline and threshold, including equality.
-    up_passed = up.size >= cfg.recovery_price if cfg.recovery_mode == "price" else up.passed
-    down_passed = down.size >= cfg.recovery_price if cfg.recovery_mode == "price" else down.passed
+    recovery_session = None
+    recovery_price_threshold = None
+    if cfg.recovery_mode == "session_price":
+        recovery_session = session_name(candle["time"])
+        if recovery_session not in cfg.trade_sessions:
+            return None
+        recovery_price_threshold = cfg.recovery_price_by_session.get(recovery_session)
+        if recovery_price_threshold is None:
+            return None
+    elif cfg.recovery_mode == "price":
+        recovery_price_threshold = cfg.recovery_price
+    if recovery_price_threshold is not None:
+        up_passed = up.size >= recovery_price_threshold
+        down_passed = down.size >= recovery_price_threshold
+    else:
+        up_passed, down_passed = up.passed, down.passed
     if (up_passed and down_passed) or not (up_passed if sign == 1 else down_passed):
         return None
     structural = (candle["low"] - cfg.stop_buffer_atr * atr) if sign == 1 else (candle["high"] + cfg.stop_buffer_atr * atr)
@@ -120,7 +165,8 @@ def evaluate_line(line, candles, atr, h1_atr, now):
         "recovery_long_size": up.size, "recovery_short_size": down.size,
         "recovery_average_body": up.average_body,
         "recovery_mode": cfg.recovery_mode,
-        "recovery_price_threshold": cfg.recovery_price if cfg.recovery_mode == "price" else None,
+        "recovery_session": recovery_session,
+        "recovery_price_threshold": recovery_price_threshold,
     }
 
 

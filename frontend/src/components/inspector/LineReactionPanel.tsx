@@ -7,12 +7,19 @@ import {
   fetchLineReactions, updateLineReaction, updateLinePrice, type LineAccount, type LineSession,
 } from "../../api/lineReaction";
 
+const sessionRecoveryDefaults: Record<string, number> = {
+  asian: 8,
+  london: 7,
+  london_ny: 12,
+  new_york: 10,
+};
 const defaults: Config = {
-  recovery_mode: "price", recovery_price: 8,
+  recovery_mode: "session_price", recovery_price: 8,
+  recovery_price_by_session: sessionRecoveryDefaults,
   recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.0,
   limit_offset: 0, limit_ttl_minutes: 30, risk_reward: 2, target_mode: "fixed_rr",
   partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0,
-  trade_sessions: []
+  trade_sessions: Object.keys(sessionRecoveryDefaults),
 };
 
 const planAccounts = (plan: Plan) => plan.account_labels ?? [plan.account_label];
@@ -102,7 +109,15 @@ export function LineReactionPanel({ symbol, showToast }: {
   useEffect(() => {
     if (!selected) return;
     setSelectedAccounts(planAccounts(selected));
-    setConfig(selected.config);
+    setConfig({
+      ...defaults,
+      ...selected.config,
+      recovery_mode: selected.config.recovery_mode ?? "average_body",
+      recovery_price_by_session: {
+        ...sessionRecoveryDefaults,
+        ...selected.config.recovery_price_by_session,
+      },
+    });
   }, [selectedId, selected?.status, selected?.updated_at]);
 
   useEffect(() => {
@@ -112,7 +127,7 @@ export function LineReactionPanel({ symbol, showToast }: {
     setBusy(true); setError("");
     void createLineReaction({
       symbol, ...draft, account_labels: availableAccounts,
-      config: { ...defaults, trade_sessions: sessions.map(session => session.value) },
+      config: defaults,
     }).then((created: Plan) => {
       upsertPlan(created);
       useLineReactionStore.getState().select(created.id);
@@ -145,11 +160,31 @@ export function LineReactionPanel({ symbol, showToast }: {
     current.includes(label) ? current.filter(value => value !== label) : [...current, label]
   );
   const toggleSession = (value: string) => setConfig(current => {
+    if (current.recovery_mode === "session_price" && value === "off_hours") return current;
     const selected = current.trade_sessions.includes(value)
       ? current.trade_sessions.filter(session => session !== value)
       : [...current.trade_sessions, value];
     return selected.length ? { ...current, trade_sessions: selected } : current;
   });
+  const setRecoveryMode = (mode: "average_body" | "price" | "session_price") => setConfig(current => ({
+    ...current,
+    recovery_mode: mode,
+    trade_sessions: mode === "session_price"
+      ? current.trade_sessions.filter(session => session !== "off_hours")
+      : current.trade_sessions,
+    recovery_price_by_session: {
+      ...sessionRecoveryDefaults,
+      ...current.recovery_price_by_session,
+    },
+  }));
+  const setSessionRecovery = (session: string, price: number) => setConfig(current => ({
+    ...current,
+    recovery_price_by_session: {
+      ...sessionRecoveryDefaults,
+      ...current.recovery_price_by_session,
+      [session]: price,
+    },
+  }));
   const canCancelSelected = Boolean(selected && Object.values(
     selected.account_statuses ?? Object.fromEntries(planAccounts(selected).map(label => [label, selected.status]))
   ).some(status => ["draft", "armed", "executing", "pending", "cancel_requested"].includes(status)));
@@ -176,7 +211,7 @@ export function LineReactionPanel({ symbol, showToast }: {
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2"><strong className={`font-mono text-sm tabular-nums ${isLong ? "text-emerald-200" : "text-rose-200"}`}>{plan.price.toFixed(2)}</strong><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${statusBadgeClass(plan.status)}`}>{plan.status}</span></span>
             <span className="flex flex-wrap gap-x-2 text-[10px] text-slate-400">
-              <span>Rec {plan.config.recovery_mode === "price" ? `${plan.config.recovery_price ?? 8} giá` : `${plan.config.recovery_ratio}×`}</span>
+              <span>Rec {plan.config.recovery_mode === "session_price" ? "theo phiên" : plan.config.recovery_mode === "price" ? `${plan.config.recovery_price ?? 8} giá` : `${plan.config.recovery_ratio}×`}</span>
               <span>Dis {plan.config.limit_offset}</span>
               <span>TP {plan.config.risk_reward}R{plan.config.target_mode === "wave_safe" ? " · Wave Safe" : plan.config.target_mode === "wave_base" ? " · Wave Base" : ""}</span>
               <span className="whitespace-nowrap text-slate-500">còn {hoursLabel(plan.expires_at)}</span>
@@ -238,41 +273,54 @@ export function LineReactionPanel({ symbol, showToast }: {
         <fieldset className="grid gap-1.5">
           <legend className="mb-1 text-xs text-slate-300">Phiên giao dịch <span className="text-slate-500">· {config.trade_sessions.length}/{sessions.length} đã chọn</span></legend>
           <div className="grid grid-cols-2 gap-1 rounded-md border border-ink-700 bg-ink-950 p-2">
-            {sessions.map(session => <label key={session.value} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-white/5">
-              <input type="checkbox" checked={config.trade_sessions.includes(session.value)} onChange={() => toggleSession(session.value)} />
-              <span><span className="block">{session.label}</span><span className="text-[9px] text-slate-500">{session.start_utc}–{session.end_utc} UTC</span></span>
-            </label>)}
+            {sessions.map(session => {
+              const disabled = config.recovery_mode === "session_price" && session.value === "off_hours";
+              return <label key={session.value} className={`flex items-center gap-2 rounded px-1.5 py-1 text-xs ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-white/5"}`}>
+                <input type="checkbox" disabled={disabled} checked={!disabled && config.trade_sessions.includes(session.value)} onChange={() => toggleSession(session.value)} />
+                <span><span className="block">{session.label}</span><span className="text-[9px] text-slate-500">{disabled ? "Tắt theo profile" : `${session.start_utc}–${session.end_utc} UTC`}</span></span>
+              </label>;
+            })}
           </div>
-          <p className="text-[10px] text-slate-500">Mặc định tất cả phiên · giờ cố định UTC.</p>
+          <p className="text-[10px] text-slate-500">Giờ cố định UTC · profile theo phiên luôn tắt Off-hours.</p>
         </fieldset>
         <div className="rounded-md border border-ink-700 bg-ink-950/70 px-3 py-2">
           <div className="flex items-center justify-between gap-2 text-xs"><span className="text-slate-400">Hết hạn</span><strong>{hoursLabel(selected.expires_at)}</strong></div>
           <p className="mt-1 text-[10px] text-slate-500">{new Date(selected.expires_at).toLocaleString()}</p>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <div className={`col-span-2 rounded-lg border p-3 ${config.recovery_mode === "price" ? "border-amber-400/60 bg-amber-400/10" : "border-cyan-400/60 bg-cyan-400/10"}`}>
+          <div className={`col-span-2 rounded-lg border p-3 ${config.recovery_mode !== "average_body" ? "border-amber-400/60 bg-amber-400/10" : "border-cyan-400/60 bg-cyan-400/10"}`}>
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-300">Chế độ recovery</p>
-            <button type="button" role="switch" aria-label="Recovery theo Price" aria-checked={config.recovery_mode === "price"}
+            <button type="button" role="switch" aria-label="Recovery theo Price" aria-checked={config.recovery_mode !== "average_body"}
               className="flex w-full items-center justify-between gap-2 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-              onClick={() => setConfig({ ...config, recovery_mode: config.recovery_mode === "price" ? "average_body" : "price", recovery_price: config.recovery_price ?? 8 })}>
-              <span className={`text-xs font-semibold ${config.recovery_mode !== "price" ? "text-cyan-200" : "text-slate-500"}`}>Average body</span>
-              <span aria-hidden="true" className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${config.recovery_mode === "price" ? "bg-amber-400" : "bg-cyan-400"}`}>
-                <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform motion-reduce:transition-none ${config.recovery_mode === "price" ? "translate-x-5" : "translate-x-0"}`} />
+              onClick={() => setRecoveryMode(config.recovery_mode === "average_body" ? "session_price" : "average_body")}>
+              <span className={`text-xs font-semibold ${config.recovery_mode === "average_body" ? "text-cyan-200" : "text-slate-500"}`}>Average body</span>
+              <span aria-hidden="true" className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${config.recovery_mode !== "average_body" ? "bg-amber-400" : "bg-cyan-400"}`}>
+                <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform motion-reduce:transition-none ${config.recovery_mode !== "average_body" ? "translate-x-5" : "translate-x-0"}`} />
               </span>
-              <span className={`text-xs font-semibold ${config.recovery_mode === "price" ? "text-amber-200" : "text-slate-500"}`}>Price</span>
+              <span className={`text-xs font-semibold ${config.recovery_mode !== "average_body" ? "text-amber-200" : "text-slate-500"}`}>Price</span>
             </button>
-            <p className={`mt-2 text-[11px] ${config.recovery_mode === "price" ? "text-amber-200" : "text-cyan-200"}`}>
-              {config.recovery_mode === "price" ? "Đang dùng số giá cố định" : "Đang dùng hệ số × thân nến trung bình"}
+            {config.recovery_mode !== "average_body" ? <div className="mt-3 grid grid-cols-2 rounded-md bg-ink-950/70 p-1 text-[11px]">
+              <button type="button" className={`rounded px-2 py-1.5 ${config.recovery_mode === "price" ? "bg-amber-400/20 font-semibold text-amber-200" : "text-slate-500"}`} onClick={() => setRecoveryMode("price")}>Cố định</button>
+              <button type="button" className={`rounded px-2 py-1.5 ${config.recovery_mode === "session_price" ? "bg-amber-400/20 font-semibold text-amber-200" : "text-slate-500"}`} onClick={() => setRecoveryMode("session_price")}>Theo phiên</button>
+            </div> : null}
+            <p className={`mt-2 text-[11px] ${config.recovery_mode !== "average_body" ? "text-amber-200" : "text-cyan-200"}`}>
+              {config.recovery_mode === "session_price" ? "Ngưỡng lấy theo phiên của cây M15" : config.recovery_mode === "price" ? "Đang dùng số giá cố định" : "Đang dùng hệ số × thân nến trung bình"}
             </p>
           </div>
-          {config.recovery_mode === "price" ? <label className="grid gap-1 text-xs">Recovery (giá)<input type="number" required min="0.5" step="0.5" className="rounded bg-ink-950 p-2" value={config.recovery_price ?? 8} onChange={event => setConfig({ ...config, recovery_price: Number(event.target.value) })} /></label> : field("recovery_ratio", "Recovery / body")}
-          {config.recovery_mode !== "price" ? field("body_period", "Số nến baseline") : <div aria-hidden="true" />}
+          {config.recovery_mode === "session_price" ? <div className="col-span-2 grid grid-cols-2 gap-2 rounded-md border border-amber-400/20 bg-ink-950/60 p-2">
+            {sessions.filter(session => session.value !== "off_hours").map(session => <label key={session.value} className="grid gap-1 text-[11px] text-slate-300">{session.label}
+              <input type="number" required min="0.5" max="50" step="0.5" className="rounded bg-ink-950 p-2" value={config.recovery_price_by_session?.[session.value] ?? sessionRecoveryDefaults[session.value]}
+                onChange={event => setSessionRecovery(session.value, Number(event.target.value))} />
+            </label>)}
+            <div className="col-span-2 flex items-center justify-between rounded bg-rose-400/5 px-2 py-1.5 text-[11px]"><span className="text-slate-400">Off-hours</span><strong className="text-rose-300">Tắt · không trade</strong></div>
+          </div> : config.recovery_mode === "price" ? <label className="grid gap-1 text-xs">Recovery (giá)<input type="number" required min="0.5" max="50" step="0.5" className="rounded bg-ink-950 p-2" value={config.recovery_price ?? 8} onChange={event => setConfig({ ...config, recovery_price: Number(event.target.value) })} /></label> : field("recovery_ratio", "Recovery / body")}
+          {config.recovery_mode === "average_body" ? field("body_period", "Số nến baseline") : config.recovery_mode === "price" ? <div aria-hidden="true" /> : null}
           {field("stop_buffer_atr", "Buffer ATR M15")}
           {field("max_stop_h1_atr", "Max SL / ATR H1")}
           {field("limit_offset", "Trả giá từ close")}
           {field("limit_ttl_minutes", "Limit TTL (phút)")}
         </div>
-        <p className="text-[10px] text-slate-500">{config.recovery_mode === "price" ? "Price: chỉ dùng Dis đã nhập. Dis = 0 vào market; Dis > 0 đặt limit, không tự động trả giá." : "Trả giá = 0: market nếu recovery dưới 3x. Từ 3x, hệ thống tự đặt limit sâu dần; số nhập tại đây là mức trả giá tối thiểu."}</p>
+        <p className="text-[10px] text-slate-500">{config.recovery_mode !== "average_body" ? "Price: chỉ dùng Dis đã nhập. Dis = 0 vào market; Dis > 0 đặt limit, không tự động trả giá." : "Trả giá = 0: market nếu recovery dưới 3x. Từ 3x, hệ thống tự đặt limit sâu dần; số nhập tại đây là mức trả giá tối thiểu."}</p>
         <label className="grid gap-1 text-xs">TP tối đa<select className="bg-ink-950 p-2" value={config.risk_reward} onChange={event => setConfig({ ...config, risk_reward: Number(event.target.value) })}>
           <option value="1.5">1,5R</option><option value="2">2R</option><option value="2.5">2,5R</option><option value="3">3R</option></select></label>
         <label className="grid gap-1 text-xs">Cách chọn TP<select className="bg-ink-950 p-2" value={config.target_mode} onChange={event => setConfig({ ...config, target_mode: event.target.value })}>

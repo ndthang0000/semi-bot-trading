@@ -19,6 +19,28 @@ def session_catalog_api() -> list[dict[str, str]]:
     ]
 
 
+def session_name(timestamp: str) -> str:
+    """Return the fixed UTC session containing a candle open timestamp."""
+    moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        raise ValueError("Timestamp requires timezone")
+    minute = moment.astimezone(timezone.utc).hour * 60 + moment.minute
+    for name, _label, start, end in SESSION_CATALOG:
+        sh, sm = map(int, start.split(":"))
+        eh, em = map(int, end.split(":"))
+        begin_minute, finish_minute = sh * 60 + sm, eh * 60 + em
+        if begin_minute <= minute < finish_minute:
+            return name
+    raise ValueError(f"No trading session for timestamp: {timestamp}")
+
+
+def session_label(name: str) -> str:
+    for value, label, _start, _end in SESSION_CATALOG:
+        if value == name:
+            return label
+    return name
+
+
 def session_end(config, timestamp: str) -> datetime | None:
     return sessions_end(config.zone_reaction_v2_sessions, timestamp)
 

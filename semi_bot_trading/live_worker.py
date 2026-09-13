@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .trading_sessions import selected_session_end, session_end
+from .trading_sessions import selected_session_end, session_end, session_label
 
 import json
 import logging
@@ -3267,6 +3267,16 @@ def execute_candidate(
                 f"{float(entry_discount.get('recovery_ratio') or 0):g}x recovery, "
                 f"{float(entry_discount.get('effective_offset') or 0):g} price offset "
                 f"({entry_discount.get('source')})",
+            )
+        line_signal = candidate_metadata.get("line_signal")
+        if isinstance(line_signal, dict) and line_signal.get("recovery_price_threshold") is not None:
+            recovery_key = "recovery_long_size" if direction == "long" else "recovery_short_size"
+            recovery_session = str(line_signal.get("recovery_session") or "")
+            session_suffix = f" · {session_label(recovery_session)}" if recovery_session else ""
+            alert_reasons.insert(
+                0,
+                f"Recovery: {float(line_signal.get(recovery_key) or 0):g} / "
+                f"{float(line_signal['recovery_price_threshold']):g}{session_suffix}",
             )
         queue_alert(
             conn,
