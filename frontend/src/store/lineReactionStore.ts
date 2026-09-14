@@ -3,6 +3,7 @@ export type LineConfig = {
   recovery_mode?: "average_body" | "price" | "session_price"; recovery_price?: number;
   recovery_price_by_session?: Record<string, number>;
   recovery_ratio: number; body_period: number; stop_buffer_atr: number; max_stop_h1_atr: number;
+  min_stop_price?: number;
   limit_offset: number; limit_ttl_minutes: number; risk_reward: number; target_mode: string;
   partial_enabled: boolean; partial_trigger_r: number; partial_fraction: number;
   trade_sessions: string[];
