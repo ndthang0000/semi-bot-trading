@@ -11,9 +11,7 @@ import type { ChartPayload, TradeHistoryResponse, TradeOrder, TradeReview, Trade
 
 type ToastKind = "success" | "error";
 
-// Temporary discipline guard: keep the execution path intact so manual trade
-// management can be restored later without changing the worker/API contract.
-const MANUAL_TRADE_MANAGEMENT_ENABLED = false;
+const MANUAL_TRADE_MANAGEMENT_ENABLED = true;
 
 type StateMachineStep = {
   key: string;
