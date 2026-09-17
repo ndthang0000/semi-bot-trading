@@ -400,7 +400,9 @@ export function playbookControlledLayers(
 }
 
 function uniquePlaybooks(playbooks: PlaybookKey[]): PlaybookKey[] {
-  const filtered = Array.from(new Set(playbooks)).filter((playbook): playbook is PlaybookKey => playbook in playbookLayerRequirements);
+  const filtered = Array.from(new Set(playbooks)).filter(
+    (playbook): playbook is PlaybookKey => playbook in playbookLayerRequirements && playbook !== "manual_ai_v1",
+  );
   return filtered.length > 0 ? filtered : defaultSelectedPlaybooks;
 }
 

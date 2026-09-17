@@ -218,6 +218,11 @@ timeout_minutes = 15
 max_sweep_atr = 1.0
 sl_buffer_atr = 0.2
 
+[strategy.playbooks.manual_ai_v1]
+# Temporarily paused: new Manual AI drafts/approvals are rejected and the live
+# worker cancels any unfilled Manual AI pending orders safely by broker ticket.
+enabled = false
+
 [strategy.playbooks.h1_impulse_retest_v1]
 # Human-approved limit execution reuses the guarded Manual AI worker lifecycle.
 # Automatic generation and backtest execution remain out of scope.

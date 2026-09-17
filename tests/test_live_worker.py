@@ -1402,7 +1402,12 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()
         self._db_path, self._conn = _setup_db(self._tmp.name)
-        self._config = replace(load_config(), database=self._db_path)
+        loaded = load_config()
+        self._config = replace(
+            loaded,
+            database=self._db_path,
+            strategy=replace(loaded.strategy, manual_ai_v1_enabled=True),
+        )
         self._env = _make_env()
 
     def tearDown(self):
@@ -1469,6 +1474,52 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
             ["order-lifecycle:Test:manual-order:filled"],
             [row["dedupe_key"] for row in alerts],
         )
+
+    def test_disabled_manual_ai_cancels_an_unfilled_pending_order(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        disabled_config = replace(
+            self._config,
+            strategy=replace(self._config.strategy, manual_ai_v1_enabled=False),
+        )
+        client = _fake_client()
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, disabled_config, self._env, client, "XAUUSDm", now)
+
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders WHERE id = 'manual-order'").fetchone()
+        self.assertEqual("cancelled", plan["status"])
+        self.assertEqual("cancelled", order["status"])
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm",
+            order_ticket="33333",
+            comment="Manual AI cancel",
+        )
+
+    def test_disabling_manual_ai_does_not_cancel_h1_impulse(self):
+        now = datetime.now(UTC)
+        self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
+        self._conn.execute(
+            "UPDATE trade_ideas SET playbook = 'h1_impulse_retest_v1' WHERE id = 'manual-idea'"
+        )
+        self._conn.execute(
+            "UPDATE manual_ai_plans SET raw_payload_json = ? WHERE id = 'manual-plan'",
+            (json.dumps({"playbook": "h1_impulse_retest_v1", "candidates": [{"client_id": "manual-client"}]}),),
+        )
+        self._conn.commit()
+        disabled_config = replace(
+            self._config,
+            strategy=replace(self._config.strategy, manual_ai_v1_enabled=False),
+        )
+        client = _fake_client()
+        client.get_pending_order_state.return_value = "pending"
+
+        process_manual_ai_plans(self._conn, disabled_config, self._env, client, "XAUUSDm", now)
+
+        plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'manual-plan'").fetchone()
+        self.assertEqual("armed", plan["status"])
+        client.cancel_pending_order.assert_not_called()
 
     def test_h1_fill_sync_updates_plan_and_queues_one_alert_before_plan_poll(self):
         now = datetime.now(UTC)

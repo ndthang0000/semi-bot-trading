@@ -85,6 +85,27 @@ def prepare_h1_payload(payload: dict, db_path: Path) -> None:
 
 
 class ManualAiApiTest(unittest.TestCase):
+    def test_disabled_manual_ai_rejects_new_plan_without_writing_a_draft(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            with config_path.open("a", encoding="utf-8") as config_file:
+                config_file.write("\n[strategy.playbooks.manual_ai_v1]\nenabled = false\n")
+            client = authenticated_test_client(root, config_path)
+            try:
+                response = client.post("/api/manual-ai/plans", json=envelope())
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+            self.assertEqual(409, response.status_code, response.text)
+            self.assertEqual("Manual AI V1 is temporarily disabled", response.json()["detail"])
+            with connect(db_path) as conn:
+                init_db(conn)
+                count = conn.execute("SELECT COUNT(*) AS count FROM manual_ai_plans").fetchone()["count"]
+            self.assertEqual(0, count)
+
     def test_h1_partial_trigger_must_be_below_final_target(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

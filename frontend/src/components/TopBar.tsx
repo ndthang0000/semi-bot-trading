@@ -25,6 +25,8 @@ type TopBarProps = {
 
 type MobilePanel = "layers" | "draw" | "more" | null;
 
+const MANUAL_AI_V1_ENABLED = false;
+
 export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onOpenInspector, onRefresh, priceChangePercent, newsData }: TopBarProps) {
   const timeframe = useChartStore((state) => state.timeframe);
   const limit = useChartStore((state) => state.limit);
@@ -52,7 +54,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
   const zoneEntityOptions = ADD_ENTITY_OPTIONS.filter((option) => allowedEntityKinds.has(option.kind));
   const canAddEntity = timeframe === "H1";
   const canCreateManualAi =
-    allowedEntityKinds.has("manual_ai") && mode === "dashboard" && startIndex === null;
+    MANUAL_AI_V1_ENABLED && allowedEntityKinds.has("manual_ai") && mode === "dashboard" && startIndex === null;
 
   useEffect(() => {
     if (!canCreateManualAi) {
@@ -132,7 +134,9 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
           </span>
           <select
             className="h-full min-w-[150px] bg-transparent pr-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed"
-            title={canCreateManualAi ? "Add a chart zone or create a Manual AI trade plan" : "Manual AI is only available in Realtime · Latest"}
+            title={MANUAL_AI_V1_ENABLED
+              ? (canCreateManualAi ? "Add a chart zone or create a Manual AI trade plan" : "Manual AI is only available in Realtime · Latest")
+              : "Manual AI V1 is temporarily paused"}
             value={addEntityKind ?? ""}
             onChange={(event) => {
               if (event.target.value === "manual_ai") {
@@ -630,7 +634,8 @@ function MobileMorePanel({
           <MobileToggleRow
             key={item.key}
             checked={selectedPlaybooks.includes(item.key)}
-            label={item.label}
+            disabled={item.disabled}
+            label={`${item.label}${item.disabled ? " · Paused" : ""}`}
             onChange={(checked) => toggleSelectedPlaybook(item.key, checked)}
           />
         ))}
@@ -824,15 +829,16 @@ function PlaybookMenu() {
 
           <div className="grid gap-1">
             {PLAYBOOK_ITEMS.map((item) => (
-              <label key={item.key} className="grid cursor-pointer gap-0.5 rounded px-1.5 py-1.5 hover:bg-ink-800/70">
+              <label key={item.key} className={`grid gap-0.5 rounded px-1.5 py-1.5 ${item.disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer hover:bg-ink-800/70"}`}>
                 <span className="flex items-center gap-2">
                   <input
                     checked={selectedPlaybooks.includes(item.key)}
                     className="accent-cyan-400"
+                    disabled={item.disabled}
                     onChange={(event) => toggleSelectedPlaybook(item.key, event.target.checked)}
                     type="checkbox"
                   />
-                  <span className="font-medium text-slate-100">{item.label}</span>
+                  <span className="font-medium text-slate-100">{item.label}{item.disabled ? " · Paused" : ""}</span>
                 </span>
                 <span className="pl-6 text-[11px] text-slate-500">{playbookRequirementLabel(item.key)}</span>
               </label>
@@ -1057,10 +1063,10 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
   { key: "consolidation", label: "Consolidation", colorClass: "bg-sky-300" },
 ];
 
-const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string }> = [
+const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string; disabled?: boolean }> = [
   { key: "zone_reaction_v2", label: "Zone Reaction V2" },
   { key: "sr_breakout_v1", label: "SR Breakout V1" },
-  { key: "manual_ai_v1", label: "Manual AI" },
+  { key: "manual_ai_v1", label: "Manual AI", disabled: !MANUAL_AI_V1_ENABLED },
   { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1" },
   { key: "h1_impulse_retest_v1", label: "H1 Impulse Retest V1" },
   { key: "line_reaction_v1", label: "Line Reaction V1" },

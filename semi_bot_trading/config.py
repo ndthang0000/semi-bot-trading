@@ -230,6 +230,7 @@ class StrategyConfig:
     h1_impulse_retest_v1_min_order_ttl_hours: int = 1
     h1_impulse_retest_v1_max_order_ttl_hours: int = 48
     h1_impulse_retest_v1_max_signal_age_hours: int = 48
+    manual_ai_v1_enabled: bool = True
     line_reaction_v1_enabled: bool = True
     line_reaction_v1_pending_intent_grace_minutes: int = 5
     zone_reaction_v2_session_filter_enabled: bool = False
@@ -429,6 +430,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             min_risk_reward=float(strategy.get("min_risk_reward", 2.0)),
             max_eligible=int(strategy.get("max_eligible", 3)),
             max_waiting=int(strategy.get("max_waiting", 5)),
+            manual_ai_v1_enabled=bool(strategy_playbooks.get("manual_ai_v1", {}).get("enabled", True)),
             line_reaction_v1_enabled=bool(strategy_playbooks.get("line_reaction_v1", {}).get("enabled", True)),
             line_reaction_v1_pending_intent_grace_minutes=max(
                 1,

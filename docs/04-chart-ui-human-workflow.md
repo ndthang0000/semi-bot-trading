@@ -190,6 +190,13 @@ questionnaire trước khi bot có thể sử dụng.
 
 ## Manual AI V1
 
+Manual AI V1 đang được tạm dừng bằng
+`[strategy.playbooks.manual_ai_v1].enabled = false`. UI không cho chọn playbook
+hoặc mở form tạo lệnh mới, API từ chối create/import/approve Manual AI, và worker
+chủ động hủy các pending Manual AI chưa fill bằng đúng broker ticket. Dữ liệu và
+lịch sử cũ vẫn được giữ nguyên. H1 Impulse Retest tiếp tục hoạt động dù dùng chung
+broker lifecycle.
+
 `Add entity → Manual AI trade` mở workflow limit-order có hướng dẫn. Human phải
 đọc entry discipline, sau đó paste JSON do `plan-xauusd-manual-ai` tạo hoặc nhập
 giá thủ công. Hai đường đều normalize về cùng contract API và luôn tạo `draft`.

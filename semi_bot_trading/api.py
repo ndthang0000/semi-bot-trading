@@ -2251,6 +2251,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         return conflicts
 
     def insert_manual_ai_envelope(request: ManualAiPlanImportRequest, source: str) -> dict[str, Any]:
+        if request.playbook == "manual_ai_v1" and not config.strategy.manual_ai_v1_enabled:
+            raise HTTPException(status_code=409, detail="Manual AI V1 is temporarily disabled")
         preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
         validated = validate_manual_ai_envelope(
             request,
@@ -2439,6 +2441,10 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             row = conn.execute("SELECT * FROM manual_ai_plans WHERE id = ?", (plan_id,)).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Manual AI plan not found: {plan_id}")
+            raw_payload = json_loads(row["raw_payload_json"], {})
+            plan_playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
+            if plan_playbook == "manual_ai_v1" and not config.strategy.manual_ai_v1_enabled:
+                raise HTTPException(status_code=409, detail="Manual AI V1 is temporarily disabled")
             if row["status"] != "draft":
                 raise HTTPException(status_code=409, detail=f"Only draft plans can be approved; current status={row['status']}")
             if row["execution_state"] != "primary":

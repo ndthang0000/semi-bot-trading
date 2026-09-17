@@ -93,7 +93,6 @@ export function AppHotkeys({ activePage, reviewLocked }: AppHotkeysProps) {
         const order: PlaybookKey[] = [
           "zone_reaction_v2",
           "sr_breakout_v1",
-          "manual_ai_v1",
           "liquidity_sweep_reclaim_v1",
           "h1_impulse_retest_v1",
         ];
