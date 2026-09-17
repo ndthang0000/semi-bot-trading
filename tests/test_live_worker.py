@@ -1480,7 +1480,11 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self._insert_armed_plan(expires_at=now + timedelta(minutes=30))
         disabled_config = replace(
             self._config,
-            strategy=replace(self._config.strategy, manual_ai_v1_enabled=False),
+            strategy=replace(
+                self._config.strategy,
+                manual_ai_v1_enabled=False,
+                h1_impulse_retest_v1_enabled=True,
+            ),
         )
         client = _fake_client()
         client.get_pending_order_state.return_value = "pending"
@@ -1510,7 +1514,11 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self._conn.commit()
         disabled_config = replace(
             self._config,
-            strategy=replace(self._config.strategy, manual_ai_v1_enabled=False),
+            strategy=replace(
+                self._config.strategy,
+                manual_ai_v1_enabled=False,
+                h1_impulse_retest_v1_enabled=True,
+            ),
         )
         client = _fake_client()
         client.get_pending_order_state.return_value = "pending"
@@ -1754,9 +1762,13 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
         self._conn.commit()
         client = _fake_client(current_price=4620.0)
         client.bot_order_counts.return_value = (0, 0)
+        enabled_config = replace(
+            self._config,
+            strategy=replace(self._config.strategy, h1_impulse_retest_v1_enabled=True),
+        )
 
         with patch("semi_bot_trading.live_worker.maybe_execute_candidates") as execute:
-            process_manual_ai_plans(self._conn, self._config, self._env, client, "XAUUSDm", now)
+            process_manual_ai_plans(self._conn, enabled_config, self._env, client, "XAUUSDm", now)
 
         execute.assert_called_once()
         plan = self._conn.execute("SELECT status FROM manual_ai_plans WHERE id = 'h1-approved-plan'").fetchone()

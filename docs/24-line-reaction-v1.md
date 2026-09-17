@@ -48,6 +48,16 @@ Legacy lines without visual endpoints retain the original arm/expiry span. Draft
 zone/bias/macro/structure entry filters or London-NY restriction.
 Global switch: [strategy.playbooks.line_reaction_v1] enabled = true.
 
+## Temporary sole-playbook focus
+
+Line Reaction V1 is currently the only enabled playbook. Zone Reaction V2,
+SR Breakout V1, Liquidity Sweep V1, Manual AI V1 and H1 Impulse Retest V1 are
+paused through their `enabled = false` switches in `config/trading.toml`. The
+dashboard normalizes saved playbook selections back to Line Reaction V1 and
+shows the paused playbooks as disabled, so an older browser selection cannot
+silently reactivate them. Existing filled positions keep their normal management;
+unfilled Manual AI/H1 Impulse plans follow the verified cancellation lifecycle.
+
 ## Trigger
 
 Each Line selects recovery_mode: session_price (default for new Lines in the UI),

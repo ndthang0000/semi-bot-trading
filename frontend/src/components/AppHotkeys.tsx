@@ -3,7 +3,7 @@ import { Keyboard, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { isEditableHotkeyTarget, resolveAppHotkey } from "../lib/appHotkeys";
-import { useChartStore } from "../store/chartStore";
+import { enabledPlaybookKeys, useChartStore } from "../store/chartStore";
 import type { PlaybookKey } from "../types";
 import { type AppPage, useNavigationStore } from "../store/navigationStore";
 
@@ -90,12 +90,7 @@ export function AppHotkeys({ activePage, reviewLocked }: AppHotkeysProps) {
       } else if (action.kind === "toggle-trades") {
         setTradeVisibilityMode(tradeVisibilityMode === "off" ? "visible" : "off");
       } else if (action.kind === "cycle-playbook") {
-        const order: PlaybookKey[] = [
-          "zone_reaction_v2",
-          "sr_breakout_v1",
-          "liquidity_sweep_reclaim_v1",
-          "h1_impulse_retest_v1",
-        ];
+        const order: PlaybookKey[] = Array.from(enabledPlaybookKeys);
         const currentIndex = selectedPlaybooks.length === 1 ? order.indexOf(selectedPlaybooks[0]) : -1;
         const nextIndex = action.direction === 1
           ? (currentIndex + 1 + order.length) % order.length

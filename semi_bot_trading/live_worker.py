@@ -2098,11 +2098,16 @@ def process_manual_ai_plans(
                 plan_status = mapped
                 conn.commit()
 
-        # Manual AI can be paused independently from H1 Impulse even though the
-        # two playbooks share this broker-safe lifecycle. Existing fills remain
-        # untouched; every unfilled Manual AI ticket is driven through the same
-        # verified cancellation path used by a human cancel request.
-        if plan_playbook == "manual_ai_v1" and not config.strategy.manual_ai_v1_enabled:
+        # The two human-approved playbooks share this broker-safe pause lifecycle.
+        # Existing fills remain untouched; every unfilled ticket is driven through
+        # the same verified cancellation path used by a human cancel request.
+        plan_playbook_disabled = (
+            plan_playbook == "manual_ai_v1" and not config.strategy.manual_ai_v1_enabled
+        ) or (
+            plan_playbook == "h1_impulse_retest_v1"
+            and not config.strategy.h1_impulse_retest_v1_enabled
+        )
+        if plan_playbook_disabled:
             if plan_status == "approved" and not ticket and linked_order is None:
                 conn.execute(
                     "UPDATE manual_ai_plans SET status = 'cancelled', updated_at = ? WHERE id = ?",

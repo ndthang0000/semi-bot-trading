@@ -6,7 +6,7 @@ import { allowedAddEntityKinds, type AddEntityMenuKind } from "../lib/playbookEn
 import { accountBadgeClass } from "../lib/accountPresentation";
 import { formatUtcClock, tradingSessionAt } from "../lib/tradingSession";
 import { useAuthStore } from "../store/authStore";
-import { playbookLayerRequirements, useChartStore } from "../store/chartStore";
+import { enabledPlaybookKeys, playbookLayerRequirements, useChartStore } from "../store/chartStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
 import { MobileBottomSheet } from "./mobile/MobileBottomSheet";
 import { ManualAiModal } from "./ManualAiModal";
@@ -1064,12 +1064,12 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 ];
 
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string; disabled?: boolean }> = [
-  { key: "zone_reaction_v2", label: "Zone Reaction V2" },
-  { key: "sr_breakout_v1", label: "SR Breakout V1" },
-  { key: "manual_ai_v1", label: "Manual AI", disabled: !MANUAL_AI_V1_ENABLED },
-  { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1" },
-  { key: "h1_impulse_retest_v1", label: "H1 Impulse Retest V1" },
-  { key: "line_reaction_v1", label: "Line Reaction V1" },
+  { key: "zone_reaction_v2", label: "Zone Reaction V2", disabled: !enabledPlaybookKeys.has("zone_reaction_v2") },
+  { key: "sr_breakout_v1", label: "SR Breakout V1", disabled: !enabledPlaybookKeys.has("sr_breakout_v1") },
+  { key: "manual_ai_v1", label: "Manual AI", disabled: !MANUAL_AI_V1_ENABLED || !enabledPlaybookKeys.has("manual_ai_v1") },
+  { key: "liquidity_sweep_reclaim_v1", label: "Liquidity Sweep V1", disabled: !enabledPlaybookKeys.has("liquidity_sweep_reclaim_v1") },
+  { key: "h1_impulse_retest_v1", label: "H1 Impulse Retest V1", disabled: !enabledPlaybookKeys.has("h1_impulse_retest_v1") },
+  { key: "line_reaction_v1", label: "Line Reaction V1", disabled: !enabledPlaybookKeys.has("line_reaction_v1") },
 ];
 
 const ADD_ENTITY_OPTIONS: Array<{ kind: AddEntityKind; label: string }> = [

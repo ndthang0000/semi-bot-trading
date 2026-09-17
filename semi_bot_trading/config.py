@@ -210,6 +210,7 @@ class StrategyConfig:
     liquidity_sweep_reclaim_v1_timeout_minutes: int = 15
     liquidity_sweep_reclaim_v1_max_sweep_atr: float = 1.0
     liquidity_sweep_reclaim_v1_sl_buffer_atr: float = 0.2
+    h1_impulse_retest_v1_enabled: bool = True
     h1_impulse_retest_v1_atr_period: int = 14
     h1_impulse_retest_v1_stop_buffer_atr: float = 0.1
     h1_impulse_retest_v1_min_stop_atr: float = 0.5
@@ -536,6 +537,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> AppConfig:
             liquidity_sweep_reclaim_v1_sl_buffer_atr=float(
                 liquidity_sweep_reclaim_v1.get("sl_buffer_atr", 0.2)
             ),
+            h1_impulse_retest_v1_enabled=bool(h1_impulse_retest_v1.get("enabled", True)),
             h1_impulse_retest_v1_atr_period=int(h1_impulse_retest_v1.get("atr_period", 14)),
             h1_impulse_retest_v1_stop_buffer_atr=float(h1_impulse_retest_v1.get("stop_buffer_atr", 0.1)),
             h1_impulse_retest_v1_min_stop_atr=float(h1_impulse_retest_v1.get("min_stop_atr", 0.5)),

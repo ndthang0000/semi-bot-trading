@@ -14,6 +14,12 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(720, config.macro_trend.lookback_candles)
         self.assertEqual(2.0, config.strategy.zone_reaction_v2_rr_minimum)
         self.assertEqual(2.0, config.strategy.sr_breakout_v1_rr)
+        self.assertFalse(config.strategy.zone_reaction_v2_enabled)
+        self.assertFalse(config.strategy.sr_breakout_v1_enabled)
+        self.assertFalse(config.strategy.liquidity_sweep_reclaim_v1_enabled)
+        self.assertFalse(config.strategy.manual_ai_v1_enabled)
+        self.assertFalse(config.strategy.h1_impulse_retest_v1_enabled)
+        self.assertTrue(config.strategy.line_reaction_v1_enabled)
 
     def test_loads_swing_timeframe_config(self) -> None:
         with TemporaryDirectory() as temp_dir:

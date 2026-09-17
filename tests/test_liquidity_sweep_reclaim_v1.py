@@ -201,7 +201,10 @@ class LiquiditySweepPersistenceTests(unittest.TestCase):
             ),
         )
         self.conn.commit()
-        self.config = load_config().strategy
+        self.config = replace(
+            load_config().strategy,
+            liquidity_sweep_reclaim_v1_enabled=True,
+        )
 
     def tearDown(self) -> None:
         self.conn.close()

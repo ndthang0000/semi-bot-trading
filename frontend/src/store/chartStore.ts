@@ -25,7 +25,10 @@ export const defaultZoneTypeVisibility: ZoneTypeVisibility = {
   consolidation: true,
 };
 
-export const defaultSelectedPlaybooks: PlaybookKey[] = ["zone_reaction_v2"];
+// Temporary focus mode: keep this single source in sync with backend playbook
+// switches. Persisted selections are normalized through this set on startup.
+export const enabledPlaybookKeys = new Set<PlaybookKey>(["line_reaction_v1"]);
+export const defaultSelectedPlaybooks: PlaybookKey[] = ["line_reaction_v1"];
 
 export type InspectorTab = "zones" | "setups" | "trades";
 
@@ -401,7 +404,8 @@ export function playbookControlledLayers(
 
 function uniquePlaybooks(playbooks: PlaybookKey[]): PlaybookKey[] {
   const filtered = Array.from(new Set(playbooks)).filter(
-    (playbook): playbook is PlaybookKey => playbook in playbookLayerRequirements && playbook !== "manual_ai_v1",
+    (playbook): playbook is PlaybookKey =>
+      playbook in playbookLayerRequirements && enabledPlaybookKeys.has(playbook),
   );
   return filtered.length > 0 ? filtered : defaultSelectedPlaybooks;
 }

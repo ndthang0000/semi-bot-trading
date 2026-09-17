@@ -694,6 +694,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         body: H1ImpulsePreviewRequest = Body(...),
         _: str = Depends(require_auth),
     ) -> dict[str, Any]:
+        if not config.strategy.h1_impulse_retest_v1_enabled:
+            raise HTTPException(status_code=409, detail="H1 Impulse Retest V1 is temporarily disabled")
         signal_time = require_timezone_aware_iso(body.signal_candle_time, "signal_candle_time")
         as_of = require_timezone_aware_iso(body.as_of, "as_of") if body.as_of else datetime.now(UTC)
         if signal_time > as_of:
@@ -796,6 +798,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         body: H1ImpulseRevalidateRequest = Body(...),
         _: str = Depends(require_auth),
     ) -> dict[str, Any]:
+        if not config.strategy.h1_impulse_retest_v1_enabled:
+            raise HTTPException(status_code=409, detail="H1 Impulse Retest V1 is temporarily disabled")
         symbol = body.symbol.strip().upper()
         validate_manual_ai_levels(
             "buy" if body.direction == "long" else "sell",
@@ -2253,6 +2257,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
     def insert_manual_ai_envelope(request: ManualAiPlanImportRequest, source: str) -> dict[str, Any]:
         if request.playbook == "manual_ai_v1" and not config.strategy.manual_ai_v1_enabled:
             raise HTTPException(status_code=409, detail="Manual AI V1 is temporarily disabled")
+        if request.playbook == "h1_impulse_retest_v1" and not config.strategy.h1_impulse_retest_v1_enabled:
+            raise HTTPException(status_code=409, detail="H1 Impulse Retest V1 is temporarily disabled")
         preview_config = h1_impulse_preview_config_from_strategy(config.strategy)
         validated = validate_manual_ai_envelope(
             request,
@@ -2445,6 +2451,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             plan_playbook = str(raw_payload.get("playbook") or "manual_ai_v1")
             if plan_playbook == "manual_ai_v1" and not config.strategy.manual_ai_v1_enabled:
                 raise HTTPException(status_code=409, detail="Manual AI V1 is temporarily disabled")
+            if plan_playbook == "h1_impulse_retest_v1" and not config.strategy.h1_impulse_retest_v1_enabled:
+                raise HTTPException(status_code=409, detail="H1 Impulse Retest V1 is temporarily disabled")
             if row["status"] != "draft":
                 raise HTTPException(status_code=409, detail=f"Only draft plans can be approved; current status={row['status']}")
             if row["execution_state"] != "primary":

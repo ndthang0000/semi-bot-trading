@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { playbookControlledLayers, playbookLayerRequirements, setupSelectionState } from "./chartStore";
+import { defaultSelectedPlaybooks, enabledPlaybookKeys, playbookControlledLayers, playbookLayerRequirements, setupSelectionState } from "./chartStore";
 import { isZoneVisibleForPlaybooks, zoneDisplayName } from "../components/chart/chartCore";
 import type { PriceZone } from "../types";
 
 describe("playbook-controlled chart layers", () => {
+  it("temporarily enables only Line Reaction V1", () => {
+    expect(defaultSelectedPlaybooks).toEqual(["line_reaction_v1"]);
+    expect(Array.from(enabledPlaybookKeys)).toEqual(["line_reaction_v1"]);
+  });
+
   it("selects only Liquidity Pools and Structure for Liquidity Sweep V1", () => {
     const layers = playbookControlledLayers(["liquidity_sweep_reclaim_v1"]);
 
