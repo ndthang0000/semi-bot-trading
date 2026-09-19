@@ -199,5 +199,9 @@ Executing/Pending/Open, geometry and config are locked to avoid changing a plan
 during broker submission.
 Authenticated API, registered accounts and configured symbol only.
 Trades carry playbook line_reaction_v1 and appear in trade filters/inspector.
+FTMO and Exness executions from the same logical Line expose the shared
+`client_group_id` as their review `execution_group_id`. Review Queue therefore
+shows one setup, prefers FTMO as its representative, and one FTMO review completes
+the setup while retaining separate per-account execution and P&L details.
 This version supports live execution and pure evaluator tests. Historical backtest
 engine does not simulate human-created line histories. Replay hides live creation.

@@ -686,6 +686,71 @@ class ApiTest(unittest.TestCase):
             "candidate-shared",
         )
 
+    def test_line_reaction_account_executions_share_review_group(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.executemany(
+                    """
+                    INSERT INTO line_reaction_plans (
+                        id, client_group_id, symbol, account_label, direction, price,
+                        status, config_json, expires_at, created_at, updated_at
+                    ) VALUES (?, 'line-group-1', 'XAUUSD', ?, 'long', 2000,
+                              'closed', '{}', '2026-01-02T00:00:00+00:00',
+                              '2026-01-01T00:00:00+00:00', '2026-01-01T01:00:00+00:00')
+                    """,
+                    [
+                        ("line-ftmo", "FTMO 100K 2-Step"),
+                        ("line-exness", "Exness Personal"),
+                    ],
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO trade_ideas (
+                        id, symbol, direction, playbook, status, related_zone_ids_json,
+                        context_snapshot_json, suggested_entry, suggested_stop_loss,
+                        suggested_take_profit_json, risk_reward, created_at
+                    ) VALUES (?, 'XAUUSD', 'long', 'line_reaction_v1', 'closed', '[]',
+                              '{}', 2000, 1990, '[2020]', 2.0, '2026-01-01T00:00:00+00:00')
+                    """,
+                    [("idea-ftmo",), ("idea-exness",)],
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO trade_orders (
+                        id, trade_idea_id, account_label, symbol, side, order_type, status,
+                        entry_price, stop_loss, take_profit_json, quantity, opened_at,
+                        closed_at, close_price, pnl, pnl_r, source, metadata_json, created_at
+                    ) VALUES (?, ?, ?, 'XAUUSD', 'buy', 'market', 'closed', 2000, 1990,
+                              '[2020]', 0.01, '2026-01-01T00:15:00+00:00',
+                              '2026-01-01T01:00:00+00:00', 2020, 20, 2, 'live', ?,
+                              '2026-01-01T00:15:00+00:00')
+                    """,
+                    [
+                        ("order-ftmo", "idea-ftmo", "FTMO 100K 2-Step", json.dumps({"candidate_id": "line-ftmo"})),
+                        ("order-exness", "idea-exness", "Exness Personal", json.dumps({"candidate_id": "line-exness"})),
+                    ],
+                )
+                conn.commit()
+
+            client = authenticated_test_client(root, config_path)
+            history_response = client.get(
+                "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10&backtest=false"
+            )
+
+        self.assertEqual(history_response.status_code, 200)
+        trades = history_response.json()["trades"]
+        self.assertEqual(2, len(trades))
+        self.assertEqual(
+            {"line-group-1"},
+            {trade["metadata"]["execution_group_id"] for trade in trades},
+        )
+
     def test_trade_visibility_can_be_hidden_and_restored(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

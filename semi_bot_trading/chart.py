@@ -1115,12 +1115,21 @@ def load_chart_trades(
                trade_orders.close_price, trade_orders.pnl, trade_orders.pnl_r,
                trade_orders.hidden_on_chart, trade_orders.source, trade_orders.metadata_json,
                trade_ideas.playbook, trade_ideas.direction,
-               (
-                   SELECT manual_ai_plans.client_id
-                   FROM manual_ai_plans
-                   WHERE manual_ai_plans.trade_idea_id = trade_orders.trade_idea_id
-                   ORDER BY manual_ai_plans.created_at DESC
-                   LIMIT 1
+               COALESCE(
+                   (
+                       SELECT manual_ai_plans.client_id
+                       FROM manual_ai_plans
+                       WHERE manual_ai_plans.trade_idea_id = trade_orders.trade_idea_id
+                       ORDER BY manual_ai_plans.created_at DESC
+                       LIMIT 1
+                   ),
+                   (
+                       SELECT COALESCE(line_reaction_plans.client_group_id, line_reaction_plans.id)
+                       FROM line_reaction_plans
+                       WHERE trade_ideas.playbook = 'line_reaction_v1'
+                         AND line_reaction_plans.id = json_extract(trade_orders.metadata_json, '$.candidate_id')
+                       LIMIT 1
+                   )
                ) AS execution_group_id,
                trade_reviews.id AS review_id,
                trade_reviews.grade AS review_grade,
