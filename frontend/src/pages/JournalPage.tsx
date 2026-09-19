@@ -733,8 +733,8 @@ function FilterBar({
         </button>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(240px,0.7fr)_minmax(260px,0.8fr)_minmax(620px,1.6fr)]">
-        <div>
+      <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(0,0.7fr)_minmax(0,0.8fr)_minmax(0,1.6fr)]">
+        <div className="min-w-0">
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Account</div>
           <div className="flex flex-wrap gap-1.5">
             <button className={btnCls(filters.account === "all")} onClick={() => set("account", "all")} type="button">All accounts</button>
@@ -751,7 +751,7 @@ function FilterBar({
             ))}
           </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Playbook</div>
           <div className="flex flex-wrap gap-1.5">
             <button className={btnCls(filters.playbook === "all")} onClick={() => set("playbook", "all")} type="button">All playbooks</button>
@@ -768,7 +768,7 @@ function FilterBar({
             ))}
           </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Order lifecycle</div>
           <div className="flex flex-wrap gap-1.5">
             {STATUS_FILTERS.map(({ value, label }) => {
@@ -777,7 +777,7 @@ function FilterBar({
               return (
                 <button
                   key={value}
-                  className={`rounded border px-2 py-1 text-xs transition ${value === "all" ? "border-ink-600" : tradeLifecycleBadgeClass(value)} ${active ? "ring-1 ring-cyan-300 brightness-125" : "opacity-60 hover:opacity-100"}`}
+                  className={`whitespace-nowrap rounded border px-2 py-1 text-xs transition ${value === "all" ? "border-ink-600" : tradeLifecycleBadgeClass(value)} ${active ? "ring-1 ring-cyan-300 brightness-125" : "opacity-60 hover:opacity-100"}`}
                   onClick={() => set("status", value)}
                   type="button"
                 >

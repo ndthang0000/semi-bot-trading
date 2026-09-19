@@ -398,7 +398,9 @@ worker, risk manager hoặc execution:
 
 - Filter chinh gom Account va lifecycle cua order, kem cac filter phu Outcome,
   Direction va Reviewed. Filter duoc luu trong local storage va co the reset mot
-  lan ve mac dinh.
+  lan ve mac dinh. Cac nhom filter dung cot co the co ve `0` va lifecycle button
+  tu wrap trong panel Journal, ke ca khi panel chi tiet dang mo, de khong tran de
+  len noi dung review ben phai.
 - Lifecycle khong duoc suy ra tu `pnl_r`: `pending_fill` la `Pending limit`,
   `filled` chua dong la `Open position`, order da dong la `Closed`.
 - Live limit xuat hien trong Journal ngay khi broker chap nhan, du
