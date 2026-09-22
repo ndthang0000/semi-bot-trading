@@ -27,7 +27,7 @@ class TestLineReaction(unittest.TestCase):
         # Backend fallback stays legacy-safe; the UI sends Price explicitly for new Lines.
         self.assertEqual("average_body", LineConfig().recovery_mode)
         self.assertEqual(8, LineConfig().recovery_price)
-        self.assertEqual(30, LineConfig().limit_ttl_minutes)
+        self.assertEqual(60, LineConfig().limit_ttl_minutes)
         self.assertEqual(1, LineConfig().max_stop_h1_atr)
         self.line["config"].update(recovery_mode="price", recovery_price=8)
         for direction in ("long", "short"):
@@ -200,6 +200,10 @@ class TestLineReaction(unittest.TestCase):
         self.assertEqual(98,plan["entry"])
         self.assertEqual(93,plan["stop_loss"])
         self.assertEqual([108],plan["take_profit"])
+        self.assertEqual(
+            datetime.fromisoformat(signal["signal_close_time"]) + timedelta(minutes=60),
+            datetime.fromisoformat(plan["expires_at"]),
+        )
 
     def test_short_symmetry(self):
         self.line.update(direction="short")
@@ -363,8 +367,14 @@ class TestLineIntegration(unittest.TestCase):
         self.assertEqual(200,created.status_code)
         plan = created.json()
         self.assertEqual("draft",plan["status"])
+        self.assertEqual(60, plan["config"]["limit_ttl_minutes"])
         self.assertEqual(["Second", "Test"], plan["account_labels"])
         self.assertEqual(2, self.conn.execute("SELECT COUNT(*) FROM line_reaction_plans").fetchone()[0])
+        stored_configs = {
+            json.loads(row[0])["limit_ttl_minutes"]
+            for row in self.conn.execute("SELECT config_json FROM line_reaction_plans")
+        }
+        self.assertEqual({60}, stored_configs)
         self.assertIsNone(plan["armed_at"])
         now = datetime.now(timezone.utc)
         visual_start = (now + timedelta(hours=1)).isoformat()

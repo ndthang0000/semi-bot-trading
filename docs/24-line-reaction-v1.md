@@ -133,7 +133,7 @@ recovery ratio/size and the retracement fraction for later analysis.
 Recheck the selected session, spread and market SL cap immediately before sending.
 Actual fills can still slip.
 
-TTL = min(line expiry, signal close + pending TTL, default 30 minutes).
+TTL = min(line expiry, signal close + pending TTL, default 60 minutes).
 Unsent signals waiting for spread/news/risk gates expire after 15 minutes.
 Pending orders already sent retain their TTL.
 MAX_SPREAD_PRICE is checked by the executor and again immediately before market send.

@@ -18,7 +18,7 @@ const defaults: Config = {
   recovery_price_by_session: sessionRecoveryDefaults,
   recovery_ratio: 2, body_period: 20, stop_buffer_atr: 0.1, max_stop_h1_atr: 1.0,
   min_stop_price: 8,
-  limit_offset: 0, limit_ttl_minutes: 30, risk_reward: 2, target_mode: "fixed_rr",
+  limit_offset: 0, limit_ttl_minutes: 60, risk_reward: 2, target_mode: "fixed_rr",
   partial_enabled: false, partial_trigger_r: 1, partial_fraction: 0,
   trade_sessions: Object.keys(sessionRecoveryDefaults),
 };

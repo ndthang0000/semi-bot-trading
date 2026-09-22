@@ -36,7 +36,7 @@ class LineConfig(BaseModel):
     max_stop_h1_atr: float = Field(default=1.0, ge=0.01, le=1.2)
     min_stop_price: float = Field(default=8.0, ge=0)
     limit_offset: float = Field(default=0, ge=0, le=50)
-    limit_ttl_minutes: int = Field(default=30, ge=5, le=1440)
+    limit_ttl_minutes: int = Field(default=60, ge=5, le=1440)
     risk_reward: Literal[1.5, 2.0, 2.5, 3.0] = 2.0
     target_mode: Literal["fixed_rr", "wave_safe", "wave_base"] = "fixed_rr"
     partial_enabled: bool = False
