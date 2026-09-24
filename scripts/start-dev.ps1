@@ -24,7 +24,7 @@ Write-Host "Press Ctrl+C to stop all started processes."
 $backendJob = Start-Job -Name "reaction-zone-backend" -ScriptBlock {
   param($RootPath, $Port, $EnvPath)
   Set-Location $RootPath
-  python -m semi_bot_trading.cli serve-api --port $Port --env $EnvPath
+  python -m semi_bot_trading.cli serve-api --port $Port --env $EnvPath --reload
 } -ArgumentList $Root, $BackendPort, $ApiEnv
 
 $frontendJob = Start-Job -Name "reaction-zone-frontend" -ScriptBlock {

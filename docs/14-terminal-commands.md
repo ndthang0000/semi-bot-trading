@@ -863,8 +863,10 @@ cd C:\workspace\semi-bot-trading-dev
 
 Open `http://127.0.0.1:5174`. The script points the Vite `/api` proxy at the DEV
 backend port supplied above. It does not touch LIVE port `8000` or the LIVE
-database. `-WithWorker` forces execution off unless `-EnableExecution` is also
-passed explicitly; do not use `-EnableExecution` for normal development.
+database. Vite hot-reloads frontend changes and Uvicorn reloads backend Python
+changes. `-WithWorker` forces execution off unless `-EnableExecution` is also
+passed explicitly; do not use `-EnableExecution` for normal development. Restart
+the DEV command when testing changes to the worker process itself.
 
 The installer refuses to register tasks when `PRAGMA quick_check` reports a
 damaged database. Restore the database from a clean SQLite backup before retrying;
