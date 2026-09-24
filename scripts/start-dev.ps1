@@ -48,10 +48,12 @@ if ($WithWorker) {
 
 try {
   while ($true) {
-    Receive-Job -Job $jobs
+    # Uvicorn writes normal INFO logs to stderr. Keep displaying that stream
+    # without letting PowerShell's Stop preference tear down healthy jobs.
+    Receive-Job -Job $jobs -ErrorAction Continue
     $failed = @($jobs | Where-Object { $_.State -in @("Failed", "Stopped", "Completed") })
     if ($failed.Count -gt 0) {
-      Receive-Job -Job $jobs
+      Receive-Job -Job $jobs -ErrorAction Continue
       throw "One of the dev servers exited: $($failed.Name -join ', ')"
     }
     Start-Sleep -Milliseconds 500
