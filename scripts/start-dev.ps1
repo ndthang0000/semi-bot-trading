@@ -16,7 +16,7 @@ Write-Host "Starting frontend on http://127.0.0.1:$FrontendPort"
 $resolvedWorkerEnv = if ($WorkerEnv) { $WorkerEnv } elseif ($Env) { $Env } else { ".env.exness" }
 Write-Host "Backend env: $ApiEnv"
 if ($WithWorker) {
-  $executionText = if ($EnableExecution) { "enabled" } else { "from .env" }
+  $executionText = if ($EnableExecution) { "enabled" } else { "forced disabled" }
   Write-Host "Starting MT5/Telegram live worker, env=$resolvedWorkerEnv, execution=$executionText"
 }
 Write-Host "Press Ctrl+C to stop all started processes."
@@ -28,10 +28,11 @@ $backendJob = Start-Job -Name "reaction-zone-backend" -ScriptBlock {
 } -ArgumentList $Root, $BackendPort, $ApiEnv
 
 $frontendJob = Start-Job -Name "reaction-zone-frontend" -ScriptBlock {
-  param($RootPath, $Port)
+  param($RootPath, $Port, $BackendPort)
   Set-Location (Join-Path $RootPath "frontend")
+  $env:VITE_API_PROXY_TARGET = "http://127.0.0.1:$BackendPort"
   npm run dev -- --port $Port
-} -ArgumentList $Root, $FrontendPort
+} -ArgumentList $Root, $FrontendPort, $BackendPort
 
 $jobs = @($backendJob, $frontendJob)
 
@@ -39,9 +40,7 @@ if ($WithWorker) {
   $workerJob = Start-Job -Name "reaction-zone-live-worker" -ScriptBlock {
     param($RootPath, $ExecutionEnabled, $EnvPath)
     Set-Location $RootPath
-    if ($ExecutionEnabled) {
-      $env:EXECUTION_ENABLED = "true"
-    }
+    $env:EXECUTION_ENABLED = if ($ExecutionEnabled) { "true" } else { "false" }
     python -m semi_bot_trading.cli live-worker --env $EnvPath
   } -ArgumentList $Root, [bool]$EnableExecution, $resolvedWorkerEnv
   $jobs += $workerJob

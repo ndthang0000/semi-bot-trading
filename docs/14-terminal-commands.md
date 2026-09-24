@@ -846,6 +846,26 @@ Frontend source changes require `npm run build` first because FastAPI serves the
 compiled files in `frontend/dist`. Backend and worker Python changes only require
 restarting their corresponding tasks.
 
+### Isolated DEV checkout beside the LIVE checkout
+
+Keep the LIVE Scheduled Tasks pointed at `C:\workspace\semi-bot-trading` and do
+development in a separate Git worktree such as
+`C:\workspace\semi-bot-trading-dev`. Give the DEV checkout its own `var` database
+and `.env.api`; neither path is tracked by Git.
+
+Start DEV on separate ports:
+
+```powershell
+cd C:\workspace\semi-bot-trading-dev
+.\.venv\Scripts\Activate.ps1
+.\scripts\start-dev.ps1 -BackendPort 8001 -FrontendPort 5174 -ApiEnv .env.api
+```
+
+Open `http://127.0.0.1:5174`. The script points the Vite `/api` proxy at the DEV
+backend port supplied above. It does not touch LIVE port `8000` or the LIVE
+database. `-WithWorker` forces execution off unless `-EnableExecution` is also
+passed explicitly; do not use `-EnableExecution` for normal development.
+
 The installer refuses to register tasks when `PRAGMA quick_check` reports a
 damaged database. Restore the database from a clean SQLite backup before retrying;
 do not run live workers against a partially copied database.
