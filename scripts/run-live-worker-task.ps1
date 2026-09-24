@@ -7,7 +7,10 @@ param(
     [string]$EnvFile,
 
     [Parameter(Mandatory=$true)]
-    [string]$PythonPath
+    [string]$PythonPath,
+
+    [ValidateRange(0, 300)]
+    [int]$StartupDelaySeconds = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +56,9 @@ try {
     Add-Content -LiteralPath $StdoutPath -Value "[$StartedAt] Starting $WorkerName worker in Windows Session $CurrentSessionId"
 
     Set-Location $Root
+    if ($StartupDelaySeconds -gt 0) {
+        Start-Sleep -Seconds $StartupDelaySeconds
+    }
     $env:PYTHONUNBUFFERED = "1"
     $env:PYTHONUTF8 = "1"
     $Utf8Encoding = New-Object System.Text.UTF8Encoding($false)

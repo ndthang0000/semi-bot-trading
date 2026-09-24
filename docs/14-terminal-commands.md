@@ -788,7 +788,69 @@ Chạy thủ công khi cần:
 python -m semi_bot_trading.cli fetch-news
 ```
 
-## 12. VPS update script
+## 12. Home Windows PC auto-start
+
+The FastAPI server hosts both the API and the built React frontend from
+`frontend/dist`. Exness and FTMO workers run separately, so the home PC uses
+three interactive Scheduled Tasks. The installer validates the SQLite database,
+env files, built frontend, and both configured MT5 paths before registering
+anything:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\install-home-startup-tasks.ps1
+```
+
+If either worker env has `EXECUTION_ENABLED=true`, the installer requires an
+explicit acknowledgement because the workers can manage or place real orders:
+
+```powershell
+.\scripts\install-home-startup-tasks.ps1 -AllowLiveExecution
+```
+
+The tasks are named `SemiBotTrading-API`, `SemiBotTrading-ExnessWorker`, and
+`SemiBotTrading-FTMOWorker`. The API and frontend are available together at
+`http://127.0.0.1:8000`; workers start after twenty seconds so database startup
+work finishes first. Every task starts at interactive logon, ignores duplicate
+starts, and retries up to three times after an unexpected exit.
+Use `-SkipStart` to register the tasks without starting them in the current session.
+Logs are written under `var` with the `BotAPI.home`, `BotWorker.task`, and
+`BotWorkerFTMO.task` prefixes.
+
+After changing frontend code, rebuild the static bundle before restarting the API:
+
+```powershell
+cd frontend
+npm run build
+cd ..
+```
+
+Source changes are not watched in the home startup setup. Restart the affected
+Scheduled Task after updating code:
+
+```powershell
+# Backend or rebuilt frontend
+Stop-ScheduledTask -TaskName SemiBotTrading-API
+Start-ScheduledTask -TaskName SemiBotTrading-API
+
+# Exness worker
+Stop-ScheduledTask -TaskName SemiBotTrading-ExnessWorker
+Start-ScheduledTask -TaskName SemiBotTrading-ExnessWorker
+
+# FTMO worker
+Stop-ScheduledTask -TaskName SemiBotTrading-FTMOWorker
+Start-ScheduledTask -TaskName SemiBotTrading-FTMOWorker
+```
+
+Frontend source changes require `npm run build` first because FastAPI serves the
+compiled files in `frontend/dist`. Backend and worker Python changes only require
+restarting their corresponding tasks.
+
+The installer refuses to register tasks when `PRAGMA quick_check` reports a
+damaged database. Restore the database from a clean SQLite backup before retrying;
+do not run live workers against a partially copied database.
+
+## 13. VPS update script
 
 ### Cleanup legacy account labels and remove FTMO Demo
 
