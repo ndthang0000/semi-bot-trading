@@ -868,6 +868,19 @@ changes. `-WithWorker` forces execution off unless `-EnableExecution` is also
 passed explicitly; do not use `-EnableExecution` for normal development. Restart
 the DEV command when testing changes to the worker process itself.
 
+After testing, commit the changes in the DEV worktree. Then open an elevated
+PowerShell in the LIVE checkout and run the deployment script:
+
+```powershell
+cd C:\workspace\semi-bot-trading
+.\scripts\deploy-dev-to-live.ps1
+```
+
+The script fast-forwards `main` from `codex/dev-local`, installs Python and Node
+dependencies, builds the frontend, runs Python tests, pushes `main`, restarts the
+API, waits for `/api/health`, and only then starts both LIVE workers. Use
+`-SkipTests` or `-SkipPush` only when intentionally bypassing those steps.
+
 The installer refuses to register tasks when `PRAGMA quick_check` reports a
 damaged database. Restore the database from a clean SQLite backup before retrying;
 do not run live workers against a partially copied database.
