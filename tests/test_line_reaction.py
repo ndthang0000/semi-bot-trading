@@ -706,6 +706,65 @@ class TestLineIntegration(unittest.TestCase):
             "armed", self.conn.execute("SELECT status FROM line_reaction_plans").fetchone()[0]
         )
 
+    def _production_cap_candidate(self):
+        from semi_bot_trading.line_reaction_api import row_api
+
+        self._seed_triggered()
+        signal = json.loads(
+            self.conn.execute("SELECT signal_json FROM line_reaction_plans").fetchone()[0]
+        )
+        signal.update(
+            structural_stop=4242.989257142857,
+            max_distance=14.967785714285842,
+            reference_price=4258.519,
+        )
+        self.conn.execute(
+            "UPDATE line_reaction_plans SET signal_json=?",
+            (json.dumps(signal),),
+        )
+        self.conn.commit()
+        line = row_api(self.conn.execute("SELECT * FROM line_reaction_plans").fetchone())
+        levels = price_line(line, line["signal"], 4258.52)
+        return {"id": line["id"], "direction": "long", "playbook": "line_reaction_v1", **levels}
+
+    def test_market_cap_allows_float_roundoff_at_validated_distance(self):
+        from semi_bot_trading.live_worker import build_execution_pricing_plan, execute_candidate
+        from tests.test_live_worker import _fake_client, _make_env
+
+        candidate = self._production_cap_candidate()
+        broker = _fake_client(current_price=4258.52)
+        pricing = build_execution_pricing_plan(broker, "XAUUSDm", candidate, 2)
+
+        execute_candidate(
+            self.conn, self.config, _make_env(), broker, candidate, "XAUUSDm",
+            lot_size=0.46, pricing_plan=pricing,
+        )
+
+        broker.place_market_order.assert_called_once()
+        request = self.conn.execute("SELECT status,failure_reason FROM execution_requests").fetchone()
+        self.assertEqual("sent", request["status"])
+        self.assertIsNone(request["failure_reason"])
+
+    def test_market_cap_still_rejects_real_price_move(self):
+        from semi_bot_trading.live_worker import build_execution_pricing_plan, execute_candidate
+        from tests.test_live_worker import _fake_client, _make_env
+
+        candidate = self._production_cap_candidate()
+        broker = _fake_client(current_price=4258.52)
+        broker.current_price_for_side.side_effect = [4258.52, 4258.53]
+        pricing = build_execution_pricing_plan(broker, "XAUUSDm", candidate, 2)
+
+        execute_candidate(
+            self.conn, self.config, _make_env(), broker, candidate, "XAUUSDm",
+            lot_size=0.46, pricing_plan=pricing,
+        )
+
+        broker.place_market_order.assert_not_called()
+        request = self.conn.execute("SELECT status,failure_reason FROM execution_requests").fetchone()
+        self.assertEqual("failed", request["status"])
+        self.assertIn("distance=14.9777857143", request["failure_reason"])
+        self.assertIn("max=14.9677857143", request["failure_reason"])
+
     def _seed_stale_pending_intent(self):
         from semi_bot_trading.live_worker import live_trade_idea_id
 

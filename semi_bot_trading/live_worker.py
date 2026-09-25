@@ -39,6 +39,8 @@ from .zones import CandleSlice, apply_and_store_zone_lifecycle, detect_and_store
 
 logger = logging.getLogger(__name__)
 
+LINE_MARKET_DISTANCE_EPSILON = 1e-8
+
 
 @dataclass
 class LiveWorkerState:
@@ -3192,8 +3194,13 @@ def execute_candidate(
             if exec_order_type == "market":
                 quote_entry = client.current_price_for_side(broker_symbol, side)
                 actual_distance = (quote_entry-exec_stop) * (1 if side == "buy" else -1)
-                if actual_distance <= 0 or actual_distance > signal["max_distance"]:
-                    raise ValueError("Line market moved outside validated SL geometry")
+                max_distance = float(signal["max_distance"])
+                if actual_distance <= 0 or actual_distance > max_distance + LINE_MARKET_DISTANCE_EPSILON:
+                    raise ValueError(
+                        "Line market moved outside validated SL geometry "
+                        f"(quote={quote_entry:.5f}, stop={exec_stop:.5f}, "
+                        f"distance={actual_distance:.10f}, max={max_distance:.10f})"
+                    )
         if candidate.get("playbook") == "line_reaction_v1" and exec_order_type == "market":
             if env.max_spread_price > 0 and client.get_current_spread(broker_symbol) > env.max_spread_price:
                 raise ValueError("Line Reaction market spread exceeds MAX_SPREAD_PRICE")
