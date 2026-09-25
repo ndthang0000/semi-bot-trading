@@ -333,6 +333,40 @@ CREATE TABLE IF NOT EXISTS execution_requests (
 CREATE INDEX IF NOT EXISTS idx_execution_requests_lookup
 ON execution_requests(symbol, status, created_at);
 
+CREATE TABLE IF NOT EXISTS quick_order_requests (
+    id TEXT PRIMARY KEY,
+    client_group_id TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    account_label TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    requested_entry REAL,
+    requested_stop REAL,
+    effective_entry REAL NOT NULL,
+    effective_stop REAL NOT NULL,
+    take_profit REAL NOT NULL,
+    risk_reward REAL NOT NULL DEFAULT 1.5,
+    atr_h1 REAL NOT NULL,
+    atr_candle_time TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    expires_at TEXT NOT NULL,
+    trade_idea_id TEXT,
+    execution_request_id TEXT,
+    failure_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(client_request_id, account_label),
+    FOREIGN KEY(trade_idea_id) REFERENCES trade_ideas(id),
+    FOREIGN KEY(execution_request_id) REFERENCES execution_requests(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quick_orders_worker
+ON quick_order_requests(account_label, status, expires_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_quick_orders_group
+ON quick_order_requests(client_group_id, created_at);
+
 CREATE TABLE IF NOT EXISTS manual_ai_plans (
     id TEXT PRIMARY KEY,
     client_id TEXT NOT NULL,

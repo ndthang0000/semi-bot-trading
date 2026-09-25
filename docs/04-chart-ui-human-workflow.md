@@ -752,3 +752,23 @@ Line Prices, line overlay và Add line buy/sell chỉ hiện khi Line Reaction V
 chọn. Playbook này đồng thời bắt buộc bật layer Structure + ZigZag.
 Không còn form/nút quản lý Line Reaction nổi trên chart hoặc tool vẽ line cũ.
 Xem docs/24-line-reaction-v1.md.
+
+### Quick Order
+
+Quick Order là luồng đặt lệnh thủ công độc lập với playbook. Nút `Quick order`
+chỉ mở tại `Realtime · Latest`; Replay và cửa sổ lịch sử không được tạo lệnh
+LIVE. Trader chọn BUY/SELL, Market/Limit và một hoặc nhiều account ngay trên
+chart. Ba đường Entry, SL và TP hiển thị trực tiếp trên chart: Entry chỉ kéo
+được với Limit, còn SL/TP kéo theo chiều dọc.
+
+SL hiệu lực luôn cách Entry tối thiểu `1 ATR(14) H1` từ nến H1 đã đóng gần nhất.
+Nếu trader nhập hoặc kéo SL ngắn hơn, UI kẹp tại biên và backend tính lại lần
+nữa. R:R mặc định là `1.5R`, cho phép chỉnh từ `1.0R` tới `4.0R`; TP được suy ra
+từ Entry, SL hiệu lực và R:R. Bước `Review` dùng quote theo từng account và hiển
+thị trạng thái worker trước khi `Place order`.
+
+Backend fan-out một request/account dưới cùng `client_group_id`. Market request
+chỉ có TTL 10 giây và worker tính lại toàn bộ geometry từ bid/ask thật ngay
+trước khi gửi MT5. Limit giữ Entry đã xác nhận và có expiry. Client request id
+được lưu unique theo account để double click hoặc retry HTTP không tạo lệnh
+trùng. Quick Order không thêm, sửa hoặc dùng state của Line Reaction.

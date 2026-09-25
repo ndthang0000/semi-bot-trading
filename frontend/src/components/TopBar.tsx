@@ -7,6 +7,7 @@ import { accountBadgeClass } from "../lib/accountPresentation";
 import { formatUtcClock, tradingSessionAt } from "../lib/tradingSession";
 import { useAuthStore } from "../store/authStore";
 import { enabledPlaybookKeys, playbookLayerRequirements, useChartStore } from "../store/chartStore";
+import { useQuickOrderStore } from "../store/quickOrderStore";
 import type { AddEntityKind, PlaybookKey, Timeframe, TradeVisibilityMode, ZoneVisibilityKey } from "../types";
 import { MobileBottomSheet } from "./mobile/MobileBottomSheet";
 import { ManualAiModal } from "./ManualAiModal";
@@ -40,6 +41,7 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
   const shiftStartIndex = useChartStore((state) => state.shiftStartIndex);
   const setAutoRefreshEnabled = useChartStore((state) => state.setAutoRefreshEnabled);
   const setAddEntityKind = useChartStore((state) => state.setAddEntityKind);
+  const setQuickOrderOpen = useQuickOrderStore((state) => state.setOpen);
   const autoRefreshActive = mode === "dashboard" && autoRefreshEnabled && startIndex === null;
   const autoRefreshLabel = autoRefreshEnabled
     ? startIndex === null ? "Auto" : "Paused"
@@ -95,6 +97,14 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
       </div>
       <div className="flex items-center gap-1.5">
         <button
+          className="h-10 rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 text-xs font-black text-amber-100 active:bg-amber-400/20 disabled:opacity-40"
+          disabled={mode !== "dashboard" || startIndex !== null}
+          type="button"
+          onClick={() => setQuickOrderOpen(true)}
+        >
+          ORDER
+        </button>
+        <button
           className="h-10 min-w-12 rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 text-sm font-bold text-cyan-100 active:bg-cyan-400/20"
           type="button"
           onClick={() => setTimeframe(timeframe === "H1" ? "M15" : "H1")}
@@ -126,6 +136,15 @@ export function TopBar({ accountLabels = [], currentPrice, isFetching, mode, onO
       </div>
 
       <div className="flex min-w-0 items-center gap-2">
+        <button
+          className="flex h-9 items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-400/10 px-3 text-sm font-bold text-amber-100 transition hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={mode !== "dashboard" || startIndex !== null}
+          title="Place a Market or Limit order from the chart"
+          type="button"
+          onClick={() => setQuickOrderOpen(true)}
+        >
+          <Target size={15} /> Quick order
+        </button>
         <div
           className="flex h-9 items-center overflow-hidden rounded-md border border-ink-700 bg-ink-850"
         >

@@ -50,6 +50,13 @@ risk_policy:
   require_human_confirmation: true
 ```
 
+Quick Order là ngoại lệ có chủ đích cho rule RR chung: trader có thể chọn
+`1.0R–4.0R`, mặc định `1.5R`, nhưng SL không được ngắn hơn `1 ATR(14) H1`.
+Frontend chỉ là preview; backend và worker đều dựng lại geometry. Market order
+dùng quote broker ngay trước execution nên Entry, SL, TP và lot đều được tính
+lại cùng một thời điểm. Quick Order dùng reduced risk profile giống Manual AI:
+0.75% cho account quỹ và 1.5% cho account cá nhân.
+
 ## Execution Request
 
 ```yaml
@@ -469,7 +476,9 @@ cancelled and new manual positions are closed at market; bot magic and other
 non-zero EA magic numbers are untouched. MT5 cannot intercept a human click
 before broker acceptance, so a manual market position may incur spread/slippage
 before the guard closes it. The fast guard and 15-second strategy cycle share
-one MT5 client and run sequentially to avoid concurrent terminal calls.
+one MT5 client and run sequentially to avoid concurrent terminal calls. Quick
+Order queue cũng chạy trong fast cadence này để Market request không phải đợi
+vòng strategy 15 giây; nó vẫn dùng cùng MT5 client theo thứ tự tuần tự.
 Each manual ticket receives at most one automatic cancel/close attempt. If MT5
 rejects that mutation, the lock keeps the error visible and alerts the operator
 to close the exposure manually; it does not retry on every one-second guard

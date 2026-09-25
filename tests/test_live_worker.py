@@ -53,6 +53,7 @@ from semi_bot_trading.live_worker import (
     process_manual_trading_lock,
     process_account_execution_commands,
     process_manual_ai_plans,
+    process_quick_orders,
     queue_m15_recovery_alert,
     run_live_iteration,
     sync_closed_positions,
@@ -818,6 +819,38 @@ class TestBuildExecutionPricingPlan(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "BUY LIMIT entry"):
             build_execution_pricing_plan(client, "XAUUSDm", candidate, 2.0)
 
+    def test_quick_market_rebuilds_one_atr_geometry_from_live_quote(self):
+        candidate = _make_candidate(
+            playbook="quick_order_v1",
+            risk_reward=1.5,
+            metadata={"order_type": "market", "requested_stop": 2995.0, "atr_h1": 20.0},
+        )
+        plan = build_execution_pricing_plan(_fake_client(current_price=3010.0), "XAUUSDm", candidate, 2.0)
+
+        self.assertEqual("market", plan.order_type)
+        self.assertEqual(3010.0, plan.entry_price)
+        self.assertEqual(2990.0, plan.stop_loss)
+        self.assertEqual([3040.0], plan.take_profit)
+        self.assertEqual("quick_order_live_geometry", plan.drift_action)
+
+    def test_quick_limit_keeps_entry_and_expands_short_stop(self):
+        candidate = _make_candidate(
+            playbook="quick_order_v1",
+            direction="short",
+            entry=3020.0,
+            stop_loss=3025.0,
+            take_profit=[3012.5],
+            risk_reward=1.5,
+            expires_at="2026-12-01T00:00:00+00:00",
+            metadata={"order_type": "limit", "requested_stop": 3025.0, "atr_h1": 10.0},
+        )
+        plan = build_execution_pricing_plan(_fake_client(current_price=3000.0), "XAUUSDm", candidate, 2.0)
+
+        self.assertEqual("limit", plan.order_type)
+        self.assertEqual(3020.0, plan.entry_price)
+        self.assertEqual(3030.0, plan.stop_loss)
+        self.assertEqual([3005.0], plan.take_profit)
+
     # ── max_entry_drift_price = 0 disables all drift logic ───────────────────
     def test_drift_disabled_when_max_zero(self):
         """max_entry_drift_price=0 → always market at signal, no reprice."""
@@ -844,6 +877,56 @@ class TestBuildExecutionPricingPlan(unittest.TestCase):
         client = _fake_client()
         with self.assertRaises(ValueError):
             build_execution_pricing_plan(client, "XAUUSDm", candidate, 2.0)
+
+
+class TestProcessQuickOrders(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._tmp.name)
+        self._config = replace(load_config(), database=self._db_path)
+        self._config = replace(self._config, strategy=replace(
+            self._config.strategy, zone_reaction_v2_session_filter_enabled=False))
+        self._env = _make_env(account_label="Test", max_spread_price=2.0)
+        start = datetime.now(UTC) - timedelta(hours=16)
+        for index in range(15):
+            opened = start + timedelta(hours=index)
+            self._conn.execute(
+                """INSERT INTO candles
+                   (id,symbol,timeframe,open_time,close_time,open,high,low,close,volume,source)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (f"quick-worker-{index}", "XAUUSD", "H1", opened.isoformat(),
+                 (opened + timedelta(hours=1)).isoformat(), 4300, 4310, 4290, 4300, 1, "test"),
+            )
+        now = datetime.now(UTC)
+        self._conn.execute(
+            """INSERT INTO quick_order_requests
+               (id,client_group_id,client_request_id,account_label,symbol,side,order_type,
+                requested_entry,requested_stop,effective_entry,effective_stop,take_profit,
+                risk_reward,atr_h1,atr_candle_time,status,expires_at,created_at,updated_at)
+               VALUES ('quick-1','group-1','request-1','Test','XAUUSD','buy','market',
+                       NULL,4295,4300,4280,4330,1.5,20,?,'queued',?,?,?)""",
+            ((start + timedelta(hours=15)).isoformat(), (now + timedelta(minutes=1)).isoformat(), now.isoformat(), now.isoformat()),
+        )
+        self._conn.commit()
+
+    def tearDown(self):
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def test_market_order_executes_once_with_live_atr_geometry(self):
+        client = _fake_client(current_price=4300.0)
+        with patch("semi_bot_trading.live_worker.build_risk_manager", return_value=_fake_risk_manager(lot_size=0.12)):
+            process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+            process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+
+        quick = self._conn.execute("SELECT * FROM quick_order_requests WHERE id='quick-1'").fetchone()
+        execution = self._conn.execute("SELECT * FROM execution_requests").fetchone()
+        order = self._conn.execute("SELECT * FROM trade_orders").fetchone()
+        self.assertEqual("filled", quick["status"])
+        self.assertEqual("quick_order", execution["requested_by"])
+        self.assertEqual(4280.0, order["stop_loss"])
+        self.assertEqual(0.12, order["quantity"])
+        client.place_market_order.assert_called_once()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

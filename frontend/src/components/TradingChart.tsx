@@ -70,6 +70,7 @@ import { CandleInfoCard } from "./chart/CandleInfoCard";
 import { isCandleShapeHit } from "./chart/candleInfo";
 import { ManualAiLevelEditDialog, type ManualAiEditableLevels } from "./chart/ManualAiLevelEditDialog";
 import { IntradayMapPanel } from "./chart/IntradayMapPanel";
+import { QuickOrderOverlay } from "./chart/QuickOrderOverlay";
 import { WaveStrengthBadge } from "./chart/WaveStrengthBadge";
 import { levelStatusLabel, selectIntradayLevels } from "./chart/intradayMap";
 import { formatWaveDuration, formatWaveLegLabel } from "./chart/waveMetrics";
@@ -1964,6 +1965,15 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         />
       ) : null}
       {!payload.replay && lineReactionSelected ? <LineReactionLayer chartRef={chartRef} seriesRef={candleSeriesRef} candles={payload.layers.candles} /> : null}
+      {!payload.replay ? (
+        <QuickOrderOverlay
+          symbol={payload.symbol}
+          chartPrice={payload.layers.candles.at(-1)?.close ?? 0}
+          plotWidth={drawingPlotWidth}
+          priceToY={(price) => candleSeriesRef.current?.priceToCoordinate(price) ?? null}
+          clientYToPrice={priceFromClientY}
+        />
+      ) : null}
       <ChartDrawingControls
         drawings={renderedDrawings}
         measure={measurePreview}

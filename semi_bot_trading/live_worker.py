@@ -24,6 +24,7 @@ from .line_reaction import SESSION_ENDED_BEFORE_EXECUTION
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
 from .news_calendar import active_ftmo_news_window, active_news_blackout, news_calendar_is_fresh, should_notify_news
 from .price_action import detect_and_store_price_action_patterns
+from .quick_order import build_quick_order_geometry, latest_closed_h1_atr
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
 from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zones
@@ -157,6 +158,16 @@ def _wait_with_manual_trade_guard(
             run_manual_trade_guard_iteration(config, env, client, broker_symbol)
         except Exception as exc:
             logger.exception("Manual trading lock guard failed for %s", env.account_label)
+            if _is_recoverable_mt5_session_error(exc):
+                try:
+                    broker_symbol = _recover_mt5_session(client, env, config)
+                except Exception:
+                    logger.exception("MT5 session recovery failed for %s", env.account_label)
+        try:
+            with closing(connect(config.database)) as conn:
+                process_quick_orders(conn, config, env, client, broker_symbol, datetime.now(UTC))
+        except Exception as exc:
+            logger.exception("Quick Order fast queue failed for %s", env.account_label)
             if _is_recoverable_mt5_session_error(exc):
                 try:
                     broker_symbol = _recover_mt5_session(client, env, config)
@@ -1153,6 +1164,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             if ftmo_news_guard is None:
                 cancel_zone_reaction_session_orders(conn, config, env, client, broker_symbol)
             process_manual_ai_plans(conn, config, env, client, broker_symbol, now)
+            process_quick_orders(conn, config, env, client, broker_symbol, now)
         if broker_symbol:
             sync_closed_positions(conn, config, env, client, broker_symbol)
             if ftmo_news_guard is None:
@@ -2026,6 +2038,153 @@ def payload_with_plan_entry_source(row: Any, entry_source: str, target_mode: str
     if target_mode and isinstance(market_context, dict):
         market_context["target_mode"] = target_mode
     return json.dumps(raw_payload, sort_keys=True)
+
+
+def process_quick_orders(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    now: datetime,
+) -> None:
+    """Execute chart-created Quick Orders through the normal live guardrails."""
+    rows = conn.execute(
+        """SELECT * FROM quick_order_requests
+           WHERE account_label=? AND symbol=?
+             AND status IN ('queued','executing','pending','cancel_requested')
+           ORDER BY created_at""",
+        (env.account_label, config.symbol),
+    ).fetchall()
+    for row in rows:
+        order_id = str(row["id"])
+        status = str(row["status"])
+        now_iso = now.isoformat()
+        expires_at = datetime.fromisoformat(str(row["expires_at"]))
+        idea_id = str(row["trade_idea_id"] or live_trade_idea_id(order_id, account_label=env.account_label))
+        linked = conn.execute(
+            "SELECT id,status FROM trade_orders WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id, env.account_label),
+        ).fetchone()
+        execution = conn.execute(
+            "SELECT id,broker_order_id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id, env.account_label),
+        ).fetchone()
+
+        if linked is not None:
+            mapped = {"pending_fill": "pending", "filled": "filled", "closed": "closed", "cancelled": "cancelled"}.get(str(linked["status"]))
+            if mapped and status != "cancel_requested":
+                conn.execute(
+                    "UPDATE quick_order_requests SET status=?,trade_idea_id=?,execution_request_id=?,updated_at=? WHERE id=?",
+                    (mapped, idea_id, execution["id"] if execution else row["execution_request_id"], now_iso, order_id),
+                )
+                conn.commit()
+                status = mapped
+        elif execution is not None and str(execution["status"]) == "failed":
+            conn.execute(
+                "UPDATE quick_order_requests SET status='failed',trade_idea_id=?,execution_request_id=?,failure_reason=?,updated_at=? WHERE id=?",
+                (idea_id, execution["id"], execution["failure_reason"], now_iso, order_id),
+            )
+            conn.commit()
+            continue
+
+        if status in {"filled", "closed", "cancelled", "failed", "expired"}:
+            continue
+
+        ticket = str(execution["broker_order_id"] or "") if execution else ""
+        if status in {"pending", "cancel_requested"}:
+            broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
+            if broker_state == "filled":
+                # sync_filled_pending_orders owns the trade-order transition; the
+                # next fast pass maps it to Quick Order status=filled.
+                continue
+            should_cancel = status == "cancel_requested" or expires_at <= now
+            if should_cancel and broker_state == "pending":
+                try:
+                    client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Quick Order cancel")
+                except Exception as exc:
+                    logger.warning("Quick Order cancellation failed id=%s: %s", order_id, exc)
+                    continue
+                broker_state = "cancelled"
+            if should_cancel and broker_state == "cancelled":
+                final_status = "expired" if expires_at <= now and status != "cancel_requested" else "cancelled"
+                conn.execute(
+                    "UPDATE trade_orders SET status='cancelled',closed_at=?,updated_at=? WHERE trade_idea_id=? AND status='pending_fill'",
+                    (now_iso, now_iso, idea_id),
+                )
+                conn.execute(
+                    "UPDATE quick_order_requests SET status=?,updated_at=? WHERE id=?",
+                    (final_status, now_iso, order_id),
+                )
+                conn.commit()
+            continue
+
+        if expires_at <= now:
+            conn.execute("UPDATE quick_order_requests SET status='expired',updated_at=? WHERE id=?", (now_iso, order_id))
+            conn.commit()
+            continue
+
+        claimed = conn.execute(
+            "UPDATE quick_order_requests SET status='executing',updated_at=? WHERE id=? AND status IN ('queued','executing')",
+            (now_iso, order_id),
+        ).rowcount
+        conn.commit()
+        if not claimed:
+            continue
+        current_atr, current_atr_candle = latest_closed_h1_atr(conn, config.symbol)
+        conn.execute(
+            "UPDATE quick_order_requests SET atr_h1=?,atr_candle_time=?,updated_at=? WHERE id=?",
+            (current_atr, current_atr_candle, now_iso, order_id),
+        )
+        conn.commit()
+        candidate = {
+            "id": order_id,
+            "playbook": "quick_order_v1",
+            "status": "eligible",
+            "score": 100.0,
+            "direction": "long" if row["side"] == "buy" else "short",
+            "entry": float(row["effective_entry"]),
+            "stop_loss": float(row["effective_stop"]),
+            "take_profit": [float(row["take_profit"])],
+            "risk_reward": float(row["risk_reward"]),
+            "expires_at": str(row["expires_at"]),
+            "metadata": {
+                "order_type": str(row["order_type"]),
+                "requested_stop": float(row["requested_stop"]) if row["requested_stop"] is not None else None,
+                "atr_h1": current_atr,
+                "atr_candle_time": current_atr_candle,
+                "minimum_stop_atr": 1.0,
+                "quick_order_group_id": str(row["client_group_id"]),
+            },
+        }
+        maybe_execute_candidates(
+            conn, config, env, client, [candidate], broker_symbol,
+            risk_pct_override=manual_ai_risk_pct(env.account_profile),
+        )
+        execution = conn.execute(
+            "SELECT id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id, env.account_label),
+        ).fetchone()
+        linked = conn.execute(
+            "SELECT status FROM trade_orders WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            (idea_id, env.account_label),
+        ).fetchone()
+        if linked is not None:
+            mapped = "pending" if linked["status"] == "pending_fill" else str(linked["status"])
+            conn.execute(
+                "UPDATE quick_order_requests SET status=?,trade_idea_id=?,execution_request_id=?,updated_at=? WHERE id=?",
+                (mapped, idea_id, execution["id"] if execution else None, now_iso, order_id),
+            )
+        elif execution is not None and execution["status"] == "failed":
+            conn.execute(
+                "UPDATE quick_order_requests SET status='failed',trade_idea_id=?,execution_request_id=?,failure_reason=?,updated_at=? WHERE id=?",
+                (idea_id, execution["id"], execution["failure_reason"], now_iso, order_id),
+            )
+        else:
+            # A guard deferred execution. Keep the request retryable until its
+            # short market TTL or user-selected limit expiry elapses.
+            conn.execute("UPDATE quick_order_requests SET status='queued',updated_at=? WHERE id=?", (now_iso, order_id))
+        conn.commit()
 
 
 def process_manual_ai_plans(
@@ -2919,6 +3078,37 @@ def build_execution_pricing_plan(
     direction = str(candidate["direction"])
     side = "buy" if direction == "long" else "sell"
     current_price = client.current_price_for_side(broker_symbol, side)
+    if candidate.get("playbook") == "quick_order_v1":
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        requested_order_type = str(metadata.get("order_type") or "market").lower()
+        entry_price = signal_entry if requested_order_type == "limit" else current_price
+        if requested_order_type == "limit":
+            valid_limit_side = signal_entry < current_price if direction == "long" else signal_entry > current_price
+            if not valid_limit_side:
+                relation = "below" if direction == "long" else "above"
+                raise ValueError(f"{side.upper()} LIMIT entry must be {relation} current broker price {current_price:.2f}")
+        geometry = build_quick_order_geometry(
+            side=side,
+            entry=entry_price,
+            requested_stop=metadata.get("requested_stop"),
+            atr_h1=float(metadata["atr_h1"]),
+            risk_reward=float(candidate.get("risk_reward") or 1.5),
+        )
+        candidate.update({"entry": geometry.entry, "stop_loss": geometry.stop_loss, "take_profit": [geometry.take_profit]})
+        return ExecutionPricingPlan(
+            order_type=requested_order_type,
+            entry_price=geometry.entry,
+            stop_loss=geometry.stop_loss,
+            take_profit=[geometry.take_profit],
+            expires_at=str(candidate.get("expires_at")) if candidate.get("expires_at") else None,
+            current_price=current_price,
+            signal_entry=signal_entry,
+            signal_stop_loss=signal_stop,
+            signal_take_profit=signal_take_profit,
+            drift=current_price - signal_entry,
+            adverse_drift=0.0,
+            drift_action="quick_order_live_geometry",
+        )
     if candidate.get("playbook") == "line_reaction_v1":
         from .line_reaction import price_line
         meta = candidate["metadata"]
@@ -3130,7 +3320,7 @@ def execute_candidate(
             entry_price, stop_loss, take_profit_json, risk_snapshot_json,
             context_snapshot_json, requested_by, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'strategy', 'pending', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         """,
         (
             request_id,
@@ -3155,6 +3345,7 @@ def execute_candidate(
                 sort_keys=True,
             ),
             json.dumps(context_snapshot, sort_keys=True),
+            "quick_order" if candidate.get("playbook") == "quick_order_v1" else "strategy",
             now,
             now,
         ),

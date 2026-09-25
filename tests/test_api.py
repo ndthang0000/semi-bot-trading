@@ -38,6 +38,66 @@ def authenticated_test_client(root: Path, config_path: Path) -> TestClient:
 
 
 class ApiTest(unittest.TestCase):
+    def test_quick_order_preview_and_create_are_server_validated_and_idempotent(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            now = datetime.now(UTC) - timedelta(hours=16)
+            with connect(db_path) as conn:
+                init_db(conn)
+                for index in range(15):
+                    opened = now + timedelta(hours=index)
+                    conn.execute(
+                        """INSERT INTO candles
+                           (id,symbol,timeframe,open_time,close_time,open,high,low,close,volume,source)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (f"quick-{index}", "XAUUSD", "H1", opened.isoformat(),
+                         (opened + timedelta(hours=1)).isoformat(), 4300, 4310, 4290, 4300, 1, "test"),
+                    )
+                conn.execute(
+                    """INSERT INTO account_execution_controls
+                       (account_label,requested_enabled,effective_enabled,hard_enabled,worker_status,broker_symbol,heartbeat_at,updated_at)
+                       VALUES ('FTMO',1,1,1,'online','XAUUSDm',?,?)""",
+                    (datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+                )
+                conn.execute(
+                    """INSERT INTO spread_snapshots
+                       (id,account_label,symbol,broker_symbol,bid,ask,spread,snapshot_at)
+                       VALUES ('quote','FTMO','XAUUSD','XAUUSDm',4299.7,4300.0,0.3,?)""",
+                    (datetime.now(UTC).isoformat(),),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+            body = {
+                "client_request_id": "quick-idempotency-1",
+                "symbol": "XAUUSD",
+                "account_labels": ["FTMO"],
+                "side": "buy",
+                "order_type": "market",
+                "entry_price": None,
+                "stop_loss": 4295,
+                "risk_reward": 1.5,
+                "expires_in_minutes": 60,
+            }
+            try:
+                preview = client.post("/api/quick-orders/preview", json={key: value for key, value in body.items() if key not in {"client_request_id", "expires_in_minutes"}})
+                created = client.post("/api/quick-orders", json=body)
+                duplicate = client.post("/api/quick-orders", json=body)
+            finally:
+                client.close()
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+            self.assertEqual(200, preview.status_code)
+            self.assertEqual(20.0, preview.json()["atr_h1"])
+            self.assertEqual(4280.0, preview.json()["accounts"][0]["stop_loss"])
+            self.assertEqual(4330.0, preview.json()["accounts"][0]["take_profit"])
+            self.assertEqual(200, created.status_code)
+            self.assertEqual(created.json()["id"], duplicate.json()["id"])
+            with connect(db_path) as conn:
+                self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM quick_order_requests").fetchone()[0])
+
     def test_h1_wave_target_accepts_rr_below_fixed_rr_floor(self) -> None:
         rr = validate_manual_ai_levels(
             "sell",

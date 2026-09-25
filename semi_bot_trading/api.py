@@ -3169,6 +3169,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
 
     from .line_reaction_api import register_line_routes
     register_line_routes(app, config, require_auth)
+    from .quick_order_api import register_quick_order_routes
+    register_quick_order_routes(app, config, require_auth)
 
     # ------------------------------------------------------------------
     # Static file serving — production VPS (frontend/dist built by Vite)
