@@ -77,7 +77,7 @@ class ApiTest(unittest.TestCase):
                 "side": "buy",
                 "order_type": "market",
                 "entry_price": None,
-                "stop_loss": 4295,
+                "stop_loss": None,
                 "risk_reward": 1.5,
                 "expires_in_minutes": 60,
             }

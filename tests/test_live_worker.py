@@ -819,7 +819,7 @@ class TestBuildExecutionPricingPlan(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "BUY LIMIT entry"):
             build_execution_pricing_plan(client, "XAUUSDm", candidate, 2.0)
 
-    def test_quick_market_rebuilds_one_atr_geometry_from_live_quote(self):
+    def test_quick_market_keeps_valid_requested_stop_from_live_quote(self):
         candidate = _make_candidate(
             playbook="quick_order_v1",
             risk_reward=1.5,
@@ -829,27 +829,27 @@ class TestBuildExecutionPricingPlan(unittest.TestCase):
 
         self.assertEqual("market", plan.order_type)
         self.assertEqual(3010.0, plan.entry_price)
-        self.assertEqual(2990.0, plan.stop_loss)
-        self.assertEqual([3040.0], plan.take_profit)
+        self.assertEqual(2995.0, plan.stop_loss)
+        self.assertEqual([3032.5], plan.take_profit)
         self.assertEqual("quick_order_live_geometry", plan.drift_action)
 
-    def test_quick_limit_keeps_entry_and_expands_short_stop(self):
+    def test_quick_limit_keeps_entry_and_minimum_stop(self):
         candidate = _make_candidate(
             playbook="quick_order_v1",
             direction="short",
             entry=3020.0,
-            stop_loss=3025.0,
-            take_profit=[3012.5],
+            stop_loss=3026.18,
+            take_profit=[3010.73],
             risk_reward=1.5,
             expires_at="2026-12-01T00:00:00+00:00",
-            metadata={"order_type": "limit", "requested_stop": 3025.0, "atr_h1": 10.0},
+            metadata={"order_type": "limit", "requested_stop": 3026.18, "atr_h1": 10.0},
         )
         plan = build_execution_pricing_plan(_fake_client(current_price=3000.0), "XAUUSDm", candidate, 2.0)
 
         self.assertEqual("limit", plan.order_type)
         self.assertEqual(3020.0, plan.entry_price)
-        self.assertEqual(3030.0, plan.stop_loss)
-        self.assertEqual([3005.0], plan.take_profit)
+        self.assertEqual(3026.18, plan.stop_loss)
+        self.assertEqual([3010.73], plan.take_profit)
 
     # ── max_entry_drift_price = 0 disables all drift logic ───────────────────
     def test_drift_disabled_when_max_zero(self):
@@ -904,7 +904,7 @@ class TestProcessQuickOrders(unittest.TestCase):
                 requested_entry,requested_stop,effective_entry,effective_stop,take_profit,
                 risk_reward,atr_h1,atr_candle_time,status,expires_at,created_at,updated_at)
                VALUES ('quick-1','group-1','request-1','Test','XAUUSD','buy','market',
-                       NULL,4295,4300,4280,4330,1.5,20,?,'queued',?,?,?)""",
+                       NULL,NULL,4300,4280,4330,1.5,20,?,'queued',?,?,?)""",
             ((start + timedelta(hours=15)).isoformat(), (now + timedelta(minutes=1)).isoformat(), now.isoformat(), now.isoformat()),
         )
         self._conn.commit()

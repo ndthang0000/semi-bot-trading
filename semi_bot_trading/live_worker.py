@@ -24,7 +24,7 @@ from .line_reaction import SESSION_ENDED_BEFORE_EXECUTION
 from .mt5_client import MT5BrokerClient, MT5Credentials, MT5OrderRequest
 from .news_calendar import active_ftmo_news_window, active_news_blackout, news_calendar_is_fresh, should_notify_news
 from .price_action import detect_and_store_price_action_patterns
-from .quick_order import build_quick_order_geometry, latest_closed_h1_atr
+from .quick_order import MIN_STOP_ATR, build_quick_order_geometry, latest_closed_h1_atr
 from .risk_manager import build_risk_manager
 from .runtime_env import RuntimeEnv
 from .smc_zones import apply_persisted_fvg_mitigation, detect_and_store_smc_zones
@@ -2153,7 +2153,7 @@ def process_quick_orders(
                 "requested_stop": float(row["requested_stop"]) if row["requested_stop"] is not None else None,
                 "atr_h1": current_atr,
                 "atr_candle_time": current_atr_candle,
-                "minimum_stop_atr": 1.0,
+                "minimum_stop_atr": MIN_STOP_ATR,
                 "quick_order_group_id": str(row["client_group_id"]),
             },
         }

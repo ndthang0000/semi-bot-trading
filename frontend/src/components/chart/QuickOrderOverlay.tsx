@@ -16,6 +16,11 @@ type Props = {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const round = (value: number) => Math.round(value * 100) / 100;
+const DEFAULT_STOP_ATR = 1;
+const MIN_STOP_ATR = 0.618;
+const minimumStopPrice = (entry: number, side: QuickOrderSide, atr: number) => side === "buy"
+  ? Math.floor((entry - atr * MIN_STOP_ATR) * 100) / 100
+  : Math.ceil((entry + atr * MIN_STOP_ATR) * 100) / 100;
 const RR_OPTIONS = Array.from({ length: 13 }, (_, index) => 1 + index * 0.25);
 const EXPIRY_OPTIONS = [
   { value: 15, label: "15 phút" },
@@ -48,21 +53,34 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
   const dragging = useRef<Level | null>(null);
 
   const geometry = useMemo(() => {
-    const minimum = atr ?? 0;
-    const effectiveStop = side === "buy" ? Math.min(stop, entry - minimum) : Math.max(stop, entry + minimum);
-    const distance = Math.abs(entry - effectiveStop);
+    const distance = Math.abs(entry - stop);
     const target = side === "buy" ? entry + distance * rr : entry - distance * rr;
-    return { stop: round(effectiveStop), target: round(target), distance };
-  }, [atr, entry, rr, side, stop]);
+    return { stop: round(stop), target: round(target), distance };
+  }, [entry, rr, side, stop]);
+  const stopDirectionValid = side === "buy" ? stop < entry : stop > entry;
+  const stopAtr = atr !== null && atr > 0 ? geometry.distance / atr : null;
+  const stopMeetsMinimum = stopAtr === null || stopAtr + 1e-9 >= MIN_STOP_ATR;
+  const geometryValid = stopDirectionValid && stopMeetsMinimum;
+  const geometryError = !stopDirectionValid
+    ? `SL của lệnh ${side.toUpperCase()} phải nằm ${side === "buy" ? "dưới" : "trên"} Entry.`
+    : !stopMeetsMinimum
+      ? `SL tối thiểu ${MIN_STOP_ATR} ATR H1. Hiện tại ${stopAtr?.toFixed(3)} ATR.`
+      : null;
+  const atrSummaryColor = stopAtr !== null && stopAtr >= 0.786 && stopAtr <= 1.2
+    ? "text-emerald-300"
+    : "text-amber-300";
 
-  const loadPreview = async (nextAccounts = selectedAccounts) => {
+  const loadPreview = async (
+    nextAccounts = selectedAccounts,
+    requestedStop: number | null = atr === null ? null : stop,
+  ) => {
     if (nextAccounts.length === 0) return null;
     setLoading(true);
     setError(null);
     try {
       const result = await previewQuickOrder({
         symbol, account_labels: nextAccounts, side, order_type: orderType,
-        entry_price: orderType === "limit" ? entry : null, stop_loss: atr === null ? null : stop, risk_reward: rr,
+        entry_price: orderType === "limit" ? entry : null, stop_loss: requestedStop, risk_reward: rr,
       });
       const first = result.accounts[0];
       setAtr(result.atr_h1);
@@ -87,7 +105,7 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
     void fetchAccountLabels().then((labels) => {
       setAccounts(labels);
       setSelectedAccounts(labels);
-      if (labels.length > 0) void loadPreview(labels);
+      if (labels.length > 0) void loadPreview(labels, null);
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "Không thể tải account."));
     // Initial quote/ATR load only; later changes require an explicit Review.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,7 +122,7 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
     const nextEntry = orderType === "market" ? quoteEntry(nextSide) : entry;
     setSide(nextSide);
     setEntry(round(nextEntry));
-    if (atr !== null) setStop(round(nextSide === "buy" ? nextEntry - atr : nextEntry + atr));
+    if (atr !== null) setStop(round(nextSide === "buy" ? nextEntry - atr * DEFAULT_STOP_ATR : nextEntry + atr * DEFAULT_STOP_ATR));
     setPreview(null);
   };
 
@@ -116,7 +134,7 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
       : side === "buy" ? marketEntry - (atr ?? 0) * 0.25 : marketEntry + (atr ?? 0) * 0.25;
     setOrderType(nextType);
     setEntry(round(nextEntry));
-    if (atr !== null) setStop(round(side === "buy" ? nextEntry - atr : nextEntry + atr));
+    if (atr !== null) setStop(round(side === "buy" ? nextEntry - atr * DEFAULT_STOP_ATR : nextEntry + atr * DEFAULT_STOP_ATR));
     setPreview(null);
   };
 
@@ -132,9 +150,11 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
         const next = round(price);
         if (orderType === "market") setOrderType("limit");
         setEntry(next);
-        setStop((current) => round(side === "buy" ? Math.min(current, next - atr) : Math.max(current, next + atr)));
+        const boundary = minimumStopPrice(next, side, atr);
+        setStop((current) => round(side === "buy" ? Math.min(current, boundary) : Math.max(current, boundary)));
       } else if (level === "stop") {
-        setStop(round(side === "buy" ? Math.min(price, entry - atr) : Math.max(price, entry + atr)));
+        const boundary = minimumStopPrice(entry, side, atr);
+        setStop(round(side === "buy" ? Math.min(price, boundary) : Math.max(price, boundary)));
       } else if (level === "target" && geometry.distance > 0) {
         const nextRr = side === "buy" ? (price - entry) / geometry.distance : (entry - price) / geometry.distance;
         setRr(Math.round(clamp(nextRr, 1, 4) * 100) / 100);
@@ -164,6 +184,11 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
   ];
 
   const place = async () => {
+    if (!geometryValid) {
+      setPreview(null);
+      setError(geometryError);
+      return;
+    }
     if (!preview) {
       await loadPreview();
       return;
@@ -205,7 +230,7 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
       })}
       <aside className="pointer-events-auto absolute right-3 top-3 w-[min(28rem,calc(100%-1.5rem))] rounded-xl border border-cyan-400/35 bg-ink-950/95 p-3 shadow-2xl backdrop-blur">
         <div className="flex items-center justify-between">
-          <div><div className="font-bold text-cyan-100">Quick Order</div><div className="text-[10px] text-slate-400">Min SL 1 ATR H1 · risk do worker tính</div></div>
+          <div><div className="font-bold text-cyan-100">Quick Order</div><div className="text-[10px] text-slate-400">SL mặc định 1 ATR H1 · tối thiểu 0.618 ATR</div></div>
           <button className="rounded p-1 text-slate-400 hover:bg-ink-800 hover:text-white" type="button" onClick={() => setOpen(false)}><X size={17} /></button>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -229,11 +254,12 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
           })}
           {accounts.length === 0 ? <span className="text-xs text-slate-500">Chưa có worker account.</span> : null}
         </div>
-        {atr !== null ? <div className="mt-2 text-[10px] text-slate-400">ATR H1 {atr.toFixed(2)} · SL hiệu lực {geometry.stop.toFixed(2)} · TP {geometry.target.toFixed(2)}</div> : null}
+        {atr !== null ? <div className={`mt-2 text-[10px] font-medium ${atrSummaryColor}`}>ATR H1 {atr.toFixed(2)} · SL {stopAtr?.toFixed(3)} ATR · TP {geometry.target.toFixed(2)}</div> : null}
+        {geometryError ? <div className="mt-2 rounded border border-rose-400/30 bg-rose-500/10 px-2 py-2 text-xs text-rose-200">{geometryError}</div> : null}
         {preview ? <div className="mt-2 rounded border border-emerald-400/25 bg-emerald-500/10 px-2 py-1.5 text-[10px] text-emerald-100"><Check className="mr-1 inline" size={12} />Server validated {preview.accounts.length} account · quote/ATR mới nhất</div> : null}
         {placed ? <div className="mt-2 rounded border border-cyan-400/30 bg-cyan-400/10 px-2 py-2 text-xs text-cyan-100">Đã xếp lệnh vào worker. Có thể đóng bảng này.</div> : null}
         {error ? <div className="mt-2 rounded border border-rose-400/30 bg-rose-500/10 px-2 py-2 text-xs text-rose-200">{error}</div> : null}
-        <button disabled={loading || selectedAccounts.length === 0 || placed} className="mt-3 flex w-full items-center justify-center rounded-lg border border-cyan-300/50 bg-cyan-400/20 py-2.5 text-xs font-black text-cyan-100 disabled:opacity-40" type="button" onClick={() => void place()}>{loading ? <LoaderCircle className="animate-spin" size={15} /> : placed ? "SENT" : preview ? "PLACE ORDER" : "REVIEW ORDER"}</button>
+        <button disabled={loading || selectedAccounts.length === 0 || placed || !geometryValid} className="mt-3 flex w-full items-center justify-center rounded-lg border border-cyan-300/50 bg-cyan-400/20 py-2.5 text-xs font-black text-cyan-100 disabled:opacity-40" type="button" onClick={() => void place()}>{loading ? <LoaderCircle className="animate-spin" size={15} /> : placed ? "SENT" : preview ? "PLACE ORDER" : "REVIEW ORDER"}</button>
       </aside>
     </div>
   );

@@ -51,7 +51,8 @@ risk_policy:
 ```
 
 Quick Order là ngoại lệ có chủ đích cho rule RR chung: trader có thể chọn
-`1.0R–4.0R`, mặc định `1.5R`, nhưng SL không được ngắn hơn `1 ATR(14) H1`.
+`1.0R–4.0R`, mặc định `1.5R`. SL mặc định là `1 ATR(14) H1` và không được ngắn
+hơn `0.618 ATR H1`.
 Frontend chỉ là preview; backend và worker đều dựng lại geometry. Market order
 dùng quote broker ngay trước execution nên Entry, SL, TP và lot đều được tính
 lại cùng một thời điểm. Quick Order dùng reduced risk profile giống Manual AI:

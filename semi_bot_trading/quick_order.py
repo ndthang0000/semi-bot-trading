@@ -7,7 +7,8 @@ from sqlite3 import Connection
 from .zones import CandleSlice, latest_atr
 
 
-MIN_STOP_ATR = 1.0
+DEFAULT_STOP_ATR = 1.0
+MIN_STOP_ATR = 0.618
 DEFAULT_RISK_REWARD = 1.5
 MIN_RISK_REWARD = 1.0
 MAX_RISK_REWARD = 4.0
@@ -46,6 +47,7 @@ def build_quick_order_geometry(
     if not MIN_RISK_REWARD <= risk_reward <= MAX_RISK_REWARD:
         raise ValueError(f"risk_reward must be between {MIN_RISK_REWARD:g} and {MAX_RISK_REWARD:g}")
 
+    default_distance = atr_h1 * DEFAULT_STOP_ATR
     minimum_distance = atr_h1 * MIN_STOP_ATR
     requested = float(requested_stop) if requested_stop is not None else None
     if requested is not None and requested <= 0:
@@ -54,15 +56,20 @@ def build_quick_order_geometry(
     if side == "buy":
         if requested is not None and requested >= entry:
             raise ValueError("BUY stop loss must be below entry")
-        stop_loss = min(requested if requested is not None else entry - minimum_distance, entry - minimum_distance)
+        stop_loss = requested if requested is not None else entry - default_distance
         take_profit = entry + (entry - stop_loss) * risk_reward
     else:
         if requested is not None and requested <= entry:
             raise ValueError("SELL stop loss must be above entry")
-        stop_loss = max(requested if requested is not None else entry + minimum_distance, entry + minimum_distance)
+        stop_loss = requested if requested is not None else entry + default_distance
         take_profit = entry - (stop_loss - entry) * risk_reward
 
     distance = abs(entry - stop_loss)
+    if distance + 1e-9 < minimum_distance:
+        raise ValueError(
+            f"SL must be at least {MIN_STOP_ATR:g} H1 ATR from entry; "
+            f"calculated={distance / atr_h1:.3f} H1 ATR"
+        )
     return QuickOrderGeometry(
         side=side,
         entry=round(entry, 5),
@@ -73,7 +80,7 @@ def build_quick_order_geometry(
         stop_atr=distance / atr_h1,
         risk_reward=risk_reward,
         atr_h1=atr_h1,
-        stop_was_adjusted=requested is None or abs(stop_loss - requested) > 1e-8,
+        stop_was_adjusted=requested is None,
     )
 
 

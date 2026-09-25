@@ -761,11 +761,12 @@ LIVE. Trader chọn BUY/SELL, Market/Limit và một hoặc nhiều account ngay
 chart. Ba đường Entry, SL và TP hiển thị trực tiếp trên chart: Entry chỉ kéo
 được với Limit, còn SL/TP kéo theo chiều dọc.
 
-SL hiệu lực luôn cách Entry tối thiểu `1 ATR(14) H1` từ nến H1 đã đóng gần nhất.
-Nếu trader nhập hoặc kéo SL ngắn hơn, UI kẹp tại biên và backend tính lại lần
-nữa. R:R mặc định là `1.5R`, cho phép chỉnh từ `1.0R` tới `4.0R`; TP được suy ra
-từ Entry, SL hiệu lực và R:R. Bước `Review` dùng quote theo từng account và hiển
-thị trạng thái worker trước khi `Place order`.
+SL mặc định cách Entry `1 ATR(14) H1` từ nến H1 đã đóng gần nhất. Trader có thể
+nhập hoặc kéo SL gần hơn, nhưng không được ngắn hơn `0.618 ATR H1`; UI chặn tại
+biên khi kéo và backend từ chối request thấp hơn ngưỡng này. R:R mặc định là
+`1.5R`, cho phép chỉnh từ `1.0R` tới `4.0R`; TP được suy ra từ Entry, SL hiệu lực
+và R:R. Bước `Review` dùng quote theo từng account và hiển thị trạng thái worker
+trước khi `Place order`.
 
 Backend fan-out một request/account dưới cùng `client_group_id`. Market request
 chỉ có TTL 10 giây và worker tính lại toàn bộ geometry từ bid/ask thật ngay
