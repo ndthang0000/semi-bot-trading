@@ -20,8 +20,9 @@ Risk Engine kiểm tra trước khi executor nhận request.
 Rule MVP:
 
 - Risk mặc định theo account profile: tài khoản quỹ 1%, tài khoản thường 2%.
-- Manual AI, H1 Impulse và Zone Reaction V2 dùng mức thấp hơn: tài khoản quỹ
-  0.75%, tài khoản thường 1.5%.
+- Manual AI, H1 Impulse, Quick Order, Line Reaction và Zone Reaction V2 dùng
+  0.75% cho tài khoản quỹ; tài khoản thường dùng `RISK_PER_TRADE_PCT` (Exness
+  hiện là 2%).
 - Max total open risk.
 - Max daily loss: 5%.
 - Max trades per day: 10.
@@ -41,7 +42,7 @@ risk_policy:
   prop_firm_risk_per_trade_pct: 1.0
   personal_risk_per_trade_pct: 2.0
   reduced_playbook_prop_firm_risk_per_trade_pct: 0.75
-  reduced_playbook_personal_risk_per_trade_pct: 1.5
+  reduced_playbook_personal_risk_per_trade_pct: 2.0
   max_daily_loss_pct: 5.0
   max_trades_per_day: 10
   max_open_positions_per_symbol: 1
@@ -55,8 +56,8 @@ Quick Order là ngoại lệ có chủ đích cho rule RR chung: trader có th�
 hơn `0.618 ATR H1`.
 Frontend chỉ là preview; backend và worker đều dựng lại geometry. Market order
 dùng quote broker ngay trước execution nên Entry, SL, TP và lot đều được tính
-lại cùng một thời điểm. Quick Order dùng reduced risk profile giống Manual AI:
-0.75% cho account quỹ và 1.5% cho account cá nhân.
+lại cùng một thời điểm. Quick Order dùng risk profile giống Manual AI: 0.75%
+cho account quỹ và `RISK_PER_TRADE_PCT` cho account cá nhân.
 
 ## Execution Request
 

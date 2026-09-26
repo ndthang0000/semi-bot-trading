@@ -2162,7 +2162,10 @@ def process_quick_orders(
         }
         maybe_execute_candidates(
             conn, config, env, client, [candidate], broker_symbol,
-            risk_pct_override=manual_ai_risk_pct(env.account_profile),
+            risk_pct_override=manual_ai_risk_pct(
+                env.account_profile,
+                env.risk_per_trade_pct,
+            ),
         )
         execution = conn.execute(
             "SELECT id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
@@ -2550,7 +2553,10 @@ def process_manual_ai_plans(
             client,
             [candidate],
             broker_symbol,
-            risk_pct_override=manual_ai_risk_pct(env.account_profile),
+            risk_pct_override=manual_ai_risk_pct(
+                env.account_profile,
+                env.risk_per_trade_pct,
+            ),
         )
         idea_id = live_trade_idea_id(plan_id, account_label=env.account_label)
         execution = conn.execute(
@@ -2704,7 +2710,10 @@ def maybe_execute_candidates(
     selected_risk_pct = risk_pct_override
     if selected_risk_pct is None:
         selected_risk_pct = (
-            zone_reaction_v2_risk_pct(env.account_profile)
+            zone_reaction_v2_risk_pct(
+                env.account_profile,
+                env.risk_per_trade_pct,
+            )
             if str(candidate.get("playbook") or "") == "zone_reaction_v2"
             else env.risk_per_trade_pct
         )
@@ -2788,16 +2797,22 @@ def queue_execution_gate_block(
     )
 
 
-def manual_ai_risk_pct(account_profile: str) -> float:
-    """Return the playbook-specific risk for a Manual AI order."""
+def manual_ai_risk_pct(
+    account_profile: str,
+    configured_risk_pct: float | None = None,
+) -> float:
+    """Return reduced prop risk or the configured personal-account risk."""
     if account_profile in {"ftmo_challenge", "the5ers"}:
         return 0.75
-    return 1.5
+    return configured_risk_pct if configured_risk_pct is not None else 2.0
 
 
-def zone_reaction_v2_risk_pct(account_profile: str) -> float:
-    """Return the reduced profile risk reserved for Zone Reaction V2."""
-    return manual_ai_risk_pct(account_profile)
+def zone_reaction_v2_risk_pct(
+    account_profile: str,
+    configured_risk_pct: float | None = None,
+) -> float:
+    """Return the profile risk reserved for Zone Reaction V2."""
+    return manual_ai_risk_pct(account_profile, configured_risk_pct)
 
 
 def maybe_ftmo_news_flatten(

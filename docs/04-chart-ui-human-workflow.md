@@ -206,7 +206,7 @@ và không nhận lot từ browser hay AI JSON. Approval yêu cầu questionnair
 account/symbol có thể giữ nhiều primary limit plan đang active. UI lấy
 account label từ `/api/accounts`, mặc định chọn toàn bộ worker đã được dashboard
 phát hiện; backend fan-out thành một plan riêng cho từng account để mỗi worker tự
-tính mức risk riêng của Manual AI (quỹ 0.75%, tài khoản thường 1.5%), thấp hơn
+tính mức risk riêng của Manual AI (quỹ 0.75%, tài khoản thường theo cấu hình),
 risk mặc định của các playbook khác (quỹ 1%, tài khoản thường 2%). Các pending limit có
 thể cùng tồn tại; khi đã có position bot đang mở, worker không arm thêm limit mới.
 Live worker yêu cầu M5 fresh, kiểm tra lại

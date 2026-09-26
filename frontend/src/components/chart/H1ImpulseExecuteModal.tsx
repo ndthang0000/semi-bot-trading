@@ -322,7 +322,7 @@ export function H1ImpulseExecuteModal({ candidate, onClose, onSubmitted }: Props
         </div>
         <div className="mt-4 grid gap-2 text-sm text-slate-200">
           <Check checked={calm} label="Tôi đang bình tĩnh và quyết định cuối cùng là gửi signal này." onChange={setCalm} />
-          <Check checked={acceptRisk} label="Tôi chấp nhận risk theo account profile (quỹ 0.75%, thường 1.5%)." onChange={setAcceptRisk} />
+          <Check checked={acceptRisk} label="Tôi chấp nhận risk theo account profile (quỹ 0.75%, Exness 2%)." onChange={setAcceptRisk} />
           <Check checked={dynamicLot} label="Tôi không cố định lot; worker tính lot theo SL hiện tại." onChange={setDynamicLot} />
           <Check checked={competingExposure} label="Đang có exposure XAUUSD cạnh tranh (phải bỏ chọn để gửi)." onChange={setCompetingExposure} danger />
         </div>

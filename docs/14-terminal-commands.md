@@ -720,9 +720,9 @@ EXECUTION_ENABLED=false
 RISK_PER_TRADE_PCT=1.0
 ```
 
-`RISK_PER_TRADE_PCT` là mức mặc định cho các playbook thông thường. Manual AI
-luôn dùng policy riêng thấp hơn: `0.75%` cho account quỹ và `1.5%` cho account
-cá nhân.
+`RISK_PER_TRADE_PCT` là mức dùng cho account cá nhân ở tất cả playbook, bao gồm
+Manual AI, H1 Impulse, Quick Order, Line Reaction và Zone Reaction V2. Account
+quỹ vẫn dùng policy riêng `0.75%` cho các playbook này.
 
 `MT5_SERVER_UTC_OFFSET_HOURS` normalizes broker-server wall-clock timestamps
 before candles and closed deals are stored as UTC, and converts UTC history

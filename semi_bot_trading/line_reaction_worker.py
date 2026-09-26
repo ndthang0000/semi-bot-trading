@@ -82,7 +82,8 @@ def process_line_reactions(conn, config, env, client, broker_symbol, now):
 
         _submit_line_candidate(
             conn, config, env, client, broker_symbol, line, signal, session_close,
-            idea_id, now, maybe_execute_candidates, manual_ai_risk_pct(env.account_profile),
+            idea_id, now, maybe_execute_candidates,
+            manual_ai_risk_pct(env.account_profile, env.risk_per_trade_pct),
         )
 
 

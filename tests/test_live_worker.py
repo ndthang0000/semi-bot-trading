@@ -1907,7 +1907,7 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
 
         self.assertEqual(2, execute.call_count)
         for call_args in execute.call_args_list:
-            self.assertEqual({"risk_pct_override": 1.5}, call_args.kwargs)
+            self.assertEqual({"risk_pct_override": 2.0}, call_args.kwargs)
 
     def test_approved_plan_respects_configured_open_position_capacity(self):
         now = datetime.now(UTC).replace(microsecond=0)
@@ -1956,13 +1956,15 @@ class TestManualAiPendingOrderLifecycle(unittest.TestCase):
             process_manual_ai_plans(self._conn, self._config, env_with_two_slots, client, "XAUUSDm", now)
             execute.assert_called_once()
 
-    def test_manual_ai_uses_lower_risk_by_account_type(self):
+    def test_manual_ai_uses_prop_cap_and_configured_personal_risk(self):
         self.assertEqual(0.75, manual_ai_risk_pct("ftmo_challenge"))
         self.assertEqual(0.75, manual_ai_risk_pct("the5ers"))
-        self.assertEqual(1.5, manual_ai_risk_pct("personal"))
-        self.assertEqual(1.5, manual_ai_risk_pct("personal_cent"))
+        self.assertEqual(2.0, manual_ai_risk_pct("personal"))
+        self.assertEqual(2.0, manual_ai_risk_pct("personal_cent"))
+        self.assertEqual(1.25, manual_ai_risk_pct("personal", 1.25))
         self.assertEqual(0.75, zone_reaction_v2_risk_pct("ftmo_challenge"))
-        self.assertEqual(1.5, zone_reaction_v2_risk_pct("personal"))
+        self.assertEqual(2.0, zone_reaction_v2_risk_pct("personal"))
+        self.assertEqual(1.25, zone_reaction_v2_risk_pct("personal", 1.25))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2271,12 +2273,12 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
         self._run(candidates)
         self.assertEqual(0, self._order_count())
 
-    def test_zone_reaction_v2_uses_reduced_profile_risk(self):
+    def test_zone_reaction_v2_uses_prop_cap_and_configured_personal_risk(self):
         cases = (
             ("ftmo_challenge", 0.75),
             ("the5ers", 0.75),
-            ("personal", 1.5),
-            ("personal_cent", 1.5),
+            ("personal", 0.25),
+            ("personal_cent", 0.25),
         )
         for index, (profile, expected_risk) in enumerate(cases):
             with self.subTest(profile=profile):
