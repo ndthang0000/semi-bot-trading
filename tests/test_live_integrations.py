@@ -973,6 +973,84 @@ class LiveIntegrationTest(unittest.TestCase):
             build_payload.assert_called_once()
             self.assertEqual([[{"id": "candidate-ftmo", "status": "eligible"}]], execute_calls)
 
+    def test_live_worker_refreshes_detectors_when_h1_advances_without_new_m15(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            config = replace(load_config(), database=db_path)
+            m15_open = datetime(2026, 9, 25, 19, 0, tzinfo=UTC)
+            previous_h1_open = datetime(2026, 9, 25, 18, 0, tzinfo=UTC)
+            latest_h1_open = datetime(2026, 9, 25, 19, 0, tzinfo=UTC)
+            conn = connect(db_path)
+            try:
+                init_db(conn)
+                upsert_candles(
+                    conn,
+                    [
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe=config.strategy.timeframe,
+                            open_time=m15_open,
+                            close_time=m15_open + timedelta(minutes=15),
+                            open=4280,
+                            high=4290,
+                            low=4275,
+                            close=4285,
+                            volume=1,
+                            source="test",
+                        ),
+                        Candle(
+                            symbol=config.symbol,
+                            timeframe=config.bias.timeframe,
+                            open_time=latest_h1_open,
+                            close_time=latest_h1_open + timedelta(hours=1),
+                            open=4280,
+                            high=4300,
+                            low=4270,
+                            close=4290,
+                            volume=1,
+                            source="test",
+                        ),
+                    ],
+                )
+            finally:
+                conn.close()
+
+            env = replace(
+                load_runtime_env(),
+                execution_enabled=False,
+                live_sync_candles=False,
+                live_run_detectors=True,
+                telegram_token=None,
+                telegram_chat_id=None,
+                account_label="Test",
+            )
+            state = LiveWorkerState(
+                broker_symbol=None,
+                last_closed_m15=m15_open.isoformat(),
+                last_closed_h1=previous_h1_open.isoformat(),
+            )
+
+            class FakeClient:
+                pass
+
+            with (
+                patch("semi_bot_trading.live_worker.snapshot_account"),
+                patch("semi_bot_trading.live_worker.refresh_account_execution_control"),
+                patch("semi_bot_trading.live_worker.run_live_detectors") as detectors,
+                patch("semi_bot_trading.live_worker.queue_new_h1_impulse_alert"),
+                patch(
+                    "semi_bot_trading.live_worker.build_chart_payload",
+                    return_value={"layers": {"setup_candidates": []}},
+                ),
+                patch("semi_bot_trading.live_worker.queue_setup_alerts"),
+                patch("semi_bot_trading.live_worker.maybe_execute_candidates"),
+                patch("semi_bot_trading.live_worker.send_pending_telegram_alerts"),
+            ):
+                run_live_iteration(config, env, FakeClient(), state)
+
+            detectors.assert_called_once()
+            self.assertEqual(m15_open.isoformat(), state.last_closed_m15)
+
     def test_live_worker_passes_intrabar_flag_to_setup_evaluation(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "test.sqlite3"

@@ -1201,8 +1201,11 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
                 queue_setup_alerts(conn, config, env, liquidity_candidates)
                 maybe_execute_candidates(conn, config, env, client, liquidity_candidates, broker_symbol)
         latest_m15 = latest_closed_candle_time(conn, config.symbol, config.strategy.timeframe)
+        latest_h1 = latest_closed_candle_time(conn, config.symbol, config.bias.timeframe)
         has_new_closed_m15 = latest_m15 is not None and latest_m15 != state.last_closed_m15
-        if env.live_run_detectors and has_new_closed_m15:
+        has_new_closed_h1 = latest_h1 is not None and latest_h1 != state.last_closed_h1
+        has_new_detector_candle = has_new_closed_m15 or has_new_closed_h1
+        if env.live_run_detectors and has_new_detector_candle:
             before_zone_ids = current_zone_ids(conn, config.symbol)
             run_live_detectors(conn, config, config.symbol, env.account_label)
             apply_persisted_fvg_mitigation(conn, config.symbol, config.bias.timeframe)
@@ -1223,7 +1226,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             _upsert_news_regime(conn, config, blackout)
 
         if latest_m15 is not None:
-            # Closed M15 updates drive detectors, but setup evaluation must run
+            # Closed H1/M15 updates drive detectors, but setup evaluation must run
             # every poll. Otherwise a worker that has already processed the
             # latest closed candle can miss a setup that becomes eligible after
             # a human zone edit or a delayed DB sync; restarting the worker would

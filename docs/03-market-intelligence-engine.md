@@ -375,7 +375,9 @@ Freshness:
 
 Engine nên chạy theo event:
 
-- On candle close: cập nhật confirmed structure.
+- Khi H1 hoặc M15 có nến đóng mới: cập nhật confirmed structure. Worker phải
+  recompute nếu một timeframe backfill trễ hơn timeframe còn lại sau khi MT5
+  vừa khởi động.
 - On intrabar price update: cập nhật proximity alert, provisional sweep, zone touch.
 - On human override: recompute effective context và strategy candidates.
 - On override expiring soon/expired: gửi alert, recompute H1 bias/structure rồi mới trả bot effective context.
