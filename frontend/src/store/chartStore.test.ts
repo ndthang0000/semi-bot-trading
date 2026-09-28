@@ -4,9 +4,17 @@ import { isZoneVisibleForPlaybooks, zoneDisplayName } from "../components/chart/
 import type { PriceZone } from "../types";
 
 describe("playbook-controlled chart layers", () => {
-  it("temporarily enables only Line Reaction V1", () => {
+  it("enables Line Reaction and Quick Order", () => {
     expect(defaultSelectedPlaybooks).toEqual(["line_reaction_v1"]);
-    expect(Array.from(enabledPlaybookKeys)).toEqual(["line_reaction_v1"]);
+    expect(Array.from(enabledPlaybookKeys)).toEqual(["line_reaction_v1", "quick_order_v1"]);
+  });
+
+  it("shows Quick Order trades without forcing strategy layers", () => {
+    const layers = playbookControlledLayers(["quick_order_v1"]);
+
+    expect(layers.showZones).toBe(false);
+    expect(layers.showStructure).toBe(false);
+    expect(layers.tradeVisibilityMode).toBe("visible");
   });
 
   it("selects only Liquidity Pools and Structure for Liquidity Sweep V1", () => {

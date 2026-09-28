@@ -38,6 +38,7 @@ export type ZoneTypeVisibility = Record<ZoneVisibilityKey, boolean>;
 export type TradeVisibilityMode = "visible" | "hidden" | "all" | "off";
 
 export type PlaybookKey =
+  | "quick_order_v1"
   | "line_reaction_v1"
   | "zone_reaction_v2"
   | "sr_breakout_v1"

@@ -755,7 +755,8 @@ Xem docs/24-line-reaction-v1.md.
 
 ### Quick Order
 
-Quick Order là luồng đặt lệnh thủ công độc lập với playbook. Nút `Quick order`
+Quick Order là luồng đặt lệnh thủ công, dùng key `quick_order_v1` để lọc chart,
+Trade History và Journal nhưng không phụ thuộc state của strategy playbook. Nút `Quick order`
 chỉ mở tại `Realtime · Latest`; Replay và cửa sổ lịch sử không được tạo lệnh
 LIVE. Trader chọn BUY/SELL, Market/Limit và một hoặc nhiều account ngay trên
 chart. Ba đường Entry, SL và TP hiển thị trực tiếp trên chart: Entry chỉ kéo
@@ -772,4 +773,6 @@ Backend fan-out một request/account dưới cùng `client_group_id`. Market re
 chỉ có TTL 10 giây và worker tính lại toàn bộ geometry từ bid/ask thật ngay
 trước khi gửi MT5. Limit giữ Entry đã xác nhận và có expiry. Client request id
 được lưu unique theo account để double click hoặc retry HTTP không tạo lệnh
-trùng. Quick Order không thêm, sửa hoặc dùng state của Line Reaction.
+trùng. Chọn `Quick Order V1` trong menu Playbooks để chỉ xem các lệnh Quick
+Order trên chart và tab Trades. Quick Order không thêm, sửa hoặc dùng state của
+Line Reaction.

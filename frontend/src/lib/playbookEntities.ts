@@ -13,6 +13,7 @@ const ZONE_REACTION_ENTITIES: AddEntityMenuKind[] = [
 ];
 
 export const playbookAddEntityKinds: Record<PlaybookKey, AddEntityMenuKind[]> = {
+  quick_order_v1: [],
   zone_reaction_v2: ZONE_REACTION_ENTITIES,
   sr_breakout_v1: ["support", "resistance"],
   manual_ai_v1: ["manual_ai"],

@@ -925,6 +925,7 @@ function TradeIdDetail({
 }
 
 function playbookLabel(value: string): string {
+  if (value === "quick_order_v1") return "Quick Order V1";
   if (value === "sr_breakout_v1") return "SR Breakout V1";
   if (value === "zone_reaction_v2") return "Zone Reaction V2";
   return value

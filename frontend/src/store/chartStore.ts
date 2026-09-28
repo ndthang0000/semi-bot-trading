@@ -27,7 +27,7 @@ export const defaultZoneTypeVisibility: ZoneTypeVisibility = {
 
 // Temporary focus mode: keep this single source in sync with backend playbook
 // switches. Persisted selections are normalized through this set on startup.
-export const enabledPlaybookKeys = new Set<PlaybookKey>(["line_reaction_v1"]);
+export const enabledPlaybookKeys = new Set<PlaybookKey>(["line_reaction_v1", "quick_order_v1"]);
 export const defaultSelectedPlaybooks: PlaybookKey[] = ["line_reaction_v1"];
 
 export type InspectorTab = "zones" | "setups" | "trades";
@@ -36,6 +36,7 @@ export const playbookLayerRequirements: Record<
   PlaybookKey,
   { zones: ZoneVisibilityKey[]; structure: boolean; structureDefaultOn?: boolean }
 > = {
+  quick_order_v1: { zones: [], structure: false },
   zone_reaction_v2: { zones: ["support", "resistance", "fvg"], structure: true },
   sr_breakout_v1: { zones: ["support", "resistance"], structure: true },
   manual_ai_v1: { zones: [], structure: true },

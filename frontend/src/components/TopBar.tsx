@@ -1083,6 +1083,7 @@ const LAYER_ITEMS: Array<{ key: ZoneVisibilityKey; label: string; colorClass: st
 ];
 
 const PLAYBOOK_ITEMS: Array<{ key: PlaybookKey; label: string; disabled?: boolean }> = [
+  { key: "quick_order_v1", label: "Quick Order V1", disabled: !enabledPlaybookKeys.has("quick_order_v1") },
   { key: "zone_reaction_v2", label: "Zone Reaction V2", disabled: !enabledPlaybookKeys.has("zone_reaction_v2") },
   { key: "sr_breakout_v1", label: "SR Breakout V1", disabled: !enabledPlaybookKeys.has("sr_breakout_v1") },
   { key: "manual_ai_v1", label: "Manual AI", disabled: !MANUAL_AI_V1_ENABLED || !enabledPlaybookKeys.has("manual_ai_v1") },

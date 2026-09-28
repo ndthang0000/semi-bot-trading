@@ -1226,8 +1226,19 @@ def trade_order_row_to_chart(row: Any) -> dict[str, Any]:
     metadata = json_loads(row["metadata_json"], {})
     if not isinstance(metadata, dict):
         metadata = {}
+    candidate_metadata = metadata.get("candidate_metadata")
+    quick_order_group_id = (
+        candidate_metadata.get("quick_order_group_id")
+        if isinstance(candidate_metadata, dict)
+        else None
+    )
     if row_has_key(row, "execution_group_id") and row["execution_group_id"]:
         metadata["execution_group_id"] = str(row["execution_group_id"])
+    elif quick_order_group_id:
+        # A single Quick Order request fans out into one trade per account.
+        # Preserve its client_group_id so chart/history review groups those
+        # executions as one discretionary decision.
+        metadata["execution_group_id"] = str(quick_order_group_id)
     elif metadata.get("candidate_id"):
         # Live bot orders share the same candidate across account workers. Expose
         # that stable identity so review UIs can treat the executions as one setup.

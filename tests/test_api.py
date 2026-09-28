@@ -811,6 +811,74 @@ class ApiTest(unittest.TestCase):
             {trade["metadata"]["execution_group_id"] for trade in trades},
         )
 
+    def test_quick_order_playbook_filter_groups_account_executions(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            seed_candles(db_path)
+            with connect(db_path) as conn:
+                init_db(conn)
+                conn.executemany(
+                    """
+                    INSERT INTO trade_ideas (
+                        id, symbol, direction, playbook, status, related_zone_ids_json,
+                        context_snapshot_json, suggested_entry, suggested_stop_loss,
+                        suggested_take_profit_json, risk_reward, created_at
+                    ) VALUES (?, 'XAUUSD', 'long', ?, 'filled', '[]', '{}',
+                              2000, 1990, '[2015]', 1.5, '2026-01-01T00:00:00+00:00')
+                    """,
+                    [
+                        ("quick-idea-ftmo", "quick_order_v1"),
+                        ("quick-idea-exness", "quick_order_v1"),
+                        ("line-idea", "line_reaction_v1"),
+                    ],
+                )
+                quick_metadata = json.dumps(
+                    {
+                        "candidate_metadata": {
+                            "quick_order_group_id": "quick-group-1",
+                        }
+                    }
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO trade_orders (
+                        id, trade_idea_id, account_label, symbol, side, order_type, status,
+                        entry_price, stop_loss, take_profit_json, quantity, opened_at,
+                        source, metadata_json, created_at
+                    ) VALUES (?, ?, ?, 'XAUUSD', 'buy', 'market', 'open', 2000, 1990,
+                              '[2015]', 0.01, '2026-01-01T00:15:00+00:00', 'live', ?,
+                              '2026-01-01T00:15:00+00:00')
+                    """,
+                    [
+                        ("quick-order-ftmo", "quick-idea-ftmo", "FTMO 100K 2-Step", quick_metadata),
+                        ("quick-order-exness", "quick-idea-exness", "Exness Personal", quick_metadata),
+                        ("line-order", "line-idea", "FTMO 100K 2-Step", "{}"),
+                    ],
+                )
+                conn.commit()
+
+            client = authenticated_test_client(root, config_path)
+            try:
+                response = client.get(
+                    "/api/trades?symbol=XAUUSD&timeframe=M15&limit=10"
+                    "&backtest=false&playbooks=quick_order_v1"
+                )
+            finally:
+                client.close()
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual({trade["playbook"] for trade in payload["trades"]}, {"quick_order_v1"})
+        self.assertEqual(
+            {trade["metadata"]["execution_group_id"] for trade in payload["trades"]},
+            {"quick-group-1"},
+        )
+
     def test_trade_visibility_can_be_hidden_and_restored(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
