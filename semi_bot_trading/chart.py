@@ -390,6 +390,77 @@ def load_manual_ai_setup_candidates(
     return candidates
 
 
+def load_quick_order_setup_candidates(
+    conn: Connection,
+    symbol: str,
+    allowed_playbooks: set[str] | None,
+) -> list[dict[str, Any]]:
+    """Expose active Quick Order limits through the pending setup layer."""
+    if allowed_playbooks is not None and "quick_order_v1" not in allowed_playbooks:
+        return []
+    rows = conn.execute(
+        """
+        SELECT * FROM quick_order_requests
+        WHERE symbol = ?
+          AND order_type = 'limit'
+          AND status IN ('queued', 'executing', 'pending', 'cancel_requested')
+        ORDER BY created_at ASC, account_label ASC
+        """,
+        (symbol,),
+    ).fetchall()
+    grouped_rows: dict[str, list[Any]] = {}
+    for row in rows:
+        grouped_rows.setdefault(str(row["client_group_id"]), []).append(row)
+
+    candidates: list[dict[str, Any]] = []
+    status_order = {"queued": 0, "executing": 1, "pending": 2, "cancel_requested": 3}
+    for group_id, group in grouped_rows.items():
+        row = max(group, key=lambda item: status_order.get(str(item["status"]), -1))
+        group_status = str(row["status"])
+        account_labels = sorted(str(item["account_label"]) for item in group)
+        account_statuses = [
+            {"account_label": str(item["account_label"]), "status": str(item["status"])}
+            for item in sorted(group, key=lambda item: str(item["account_label"]))
+        ]
+        candidates.append(
+            {
+                "id": group_id,
+                "symbol": str(row["symbol"]),
+                "timeframe": "H1",
+                "playbook": "quick_order_v1",
+                "direction": "long" if row["side"] == "buy" else "short",
+                "status": "waiting_confirmation",
+                "zone_reaction_state": "limit_pending",
+                "score": 1.0,
+                "entry": float(row["effective_entry"]),
+                "stop_loss": float(row["effective_stop"]),
+                "take_profit": [float(row["take_profit"])],
+                "risk_reward": float(row["risk_reward"]),
+                "primary_zone_id": None,
+                "related_zone_ids": [],
+                "trigger_point_ids": [],
+                "reason": [f"Quick Order {group_status} limit"],
+                "blocked_reason": [],
+                "expires_at": str(row["expires_at"]),
+                "metadata": {
+                    "quick_order": True,
+                    "quick_order_group_id": group_id,
+                    "quick_order_status": group_status,
+                    "created_at": str(row["created_at"]),
+                    "limit_expires_at": str(row["expires_at"]),
+                    "account_label": row["account_label"],
+                    "account_labels": account_labels,
+                    "account_statuses": account_statuses,
+                    "order_type": "limit",
+                    "entry_source": "quick_order",
+                    "atr": float(row["atr_h1"]),
+                    "atr_candle_time": str(row["atr_candle_time"]),
+                },
+            }
+        )
+    return candidates
+
+
 def build_m15_signal_snapshot(
     candles: list[dict[str, Any]],
     setup_candidates: list[dict[str, Any]],
@@ -1414,6 +1485,7 @@ def build_chart_payload(
                 datetime.now(UTC).isoformat(),
                 int(getattr(strategy_config, "h1_impulse_retest_v1_max_signal_age_hours", 48)),
             ),
+            *load_quick_order_setup_candidates(conn, symbol, allowed_playbooks),
         ]
     avg_body_period = (
         int(getattr(strategy_config, "zone_reaction_v2_reject_avg_body_period", 20))

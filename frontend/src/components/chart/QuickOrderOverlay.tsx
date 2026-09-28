@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDown, ArrowUp, Check, LoaderCircle, X } from "lucide-react";
 import { fetchAccountLabels } from "../../api/accounts";
+import { useQueryClient } from "@tanstack/react-query";
 import { createQuickOrder, previewQuickOrder, type QuickOrderPreview, type QuickOrderSide, type QuickOrderType } from "../../api/quickOrder";
+import { useChartStore } from "../../store/chartStore";
 import { useQuickOrderStore } from "../../store/quickOrderStore";
 
 type Level = "entry" | "stop" | "target";
@@ -35,6 +37,9 @@ const EXPIRY_OPTIONS = [
 ];
 
 export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, clientYToPrice }: Props) {
+  const queryClient = useQueryClient();
+  const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
+  const setSelectedPlaybooks = useChartStore((state) => state.setSelectedPlaybooks);
   const open = useQuickOrderStore((state) => state.open);
   const setOpen = useQuickOrderStore((state) => state.setOpen);
   const [accounts, setAccounts] = useState<string[]>([]);
@@ -209,6 +214,13 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
       });
       setPlaced(true);
       setPreview(null);
+      if (!selectedPlaybooks.includes("quick_order_v1")) {
+        setSelectedPlaybooks([...selectedPlaybooks, "quick_order_v1"]);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["chart"] }),
+        queryClient.invalidateQueries({ queryKey: ["trade-history"] }),
+      ]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không thể gửi Quick Order.");
     } finally {

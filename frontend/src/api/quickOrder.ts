@@ -49,3 +49,9 @@ export const previewQuickOrder = (body: QuickOrderInput) =>
 
 export const createQuickOrder = (body: QuickOrderInput & { client_request_id: string; expires_in_minutes: number }) =>
   request<{ id: string; account_statuses: Record<string, string> }>("/api/quick-orders", body);
+
+export const cancelQuickOrder = (groupId: string) =>
+  request<{ id: string; account_statuses: Record<string, string> }>(
+    `/api/quick-orders/${encodeURIComponent(groupId)}/cancel`,
+    undefined,
+  );

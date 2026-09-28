@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, History, Layers, Maximize2, Minimize2, Mouse
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTradeHistory } from "../api/chart";
 import { cancelManualAiPlan, rejectManualAiPlan, updateManualAiPlanLevels } from "../api/manualAi";
+import { cancelQuickOrder } from "../api/quickOrder";
 import { normalizeTradeReactionFilter, TRADE_REACTION_FILTERS } from "../lib/tradeHistoryFilters";
 import { accountBadgeClass } from "../lib/accountPresentation";
 import { compactTime, localDateTime, price } from "../lib/time";
@@ -680,6 +681,27 @@ function SetupsPanel({ candidates, m15Triggers, zones, onChanged, showToast }: {
   }, [m15Triggers]);
 
   const disableCandidatePlaybook = async (candidate: SetupCandidate) => {
+    if (candidate.playbook === "quick_order_v1" || candidate.metadata.quick_order === true) {
+      setCancellingIds((current) => addSetValue(current, candidate.id));
+      try {
+        const result = await cancelQuickOrder(candidate.id);
+        const pendingCancellation = Object.values(result.account_statuses).some(
+          (status) => status === "cancel_requested",
+        );
+        showToast(
+          "success",
+          pendingCancellation
+            ? "Đã gửi yêu cầu hủy Quick Order Limit tới các worker."
+            : "Đã hủy Quick Order Limit.",
+        );
+        onChanged();
+      } catch (error) {
+        showToast("error", error instanceof Error ? error.message : "Không thể hủy Quick Order Limit");
+      } finally {
+        setCancellingIds((current) => removeSetValue(current, candidate.id));
+      }
+      return;
+    }
     const brokerPlan = candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true;
     if (!brokerPlan) {
       setDisabledPlaybooks((current) => addSetValue(current, candidate.playbook));
@@ -999,6 +1021,7 @@ function SetupCard({
     ? candidate.metadata.manual_ai_plan_status
     : "draft";
   const isH1ImpulsePreview = candidate.playbook === "h1_impulse_retest_v1";
+  const isQuickOrder = candidate.playbook === "quick_order_v1" || candidate.metadata.quick_order === true;
   const canEditLevels = candidate.playbook === "manual_ai_v1"
     ? ["draft", "approved", "armed"].includes(manualAiPlanStatus)
     : isH1ImpulsePreview && (candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(manualAiPlanStatus));
@@ -1218,9 +1241,10 @@ function SetupCard({
         {canEditLevels && focused ? (
           <SetupAction active={editing} label={editing ? "Editing levels" : "Edit levels"} onClick={onEdit} />
         ) : null}
-        {!isH1ImpulsePreview ? <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} /> : null}
-        {(!isH1ImpulsePreview || candidate.metadata.execution_plan === true) && manualAiPlanStatus !== "expired" ? <SetupAction label="Reject" onClick={onReject} /> : null}
-        {(!isH1ImpulsePreview || candidate.metadata.execution_plan === true) && manualAiPlanStatus !== "expired" ? <SetupAction label={candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} /> : null}
+        {!isH1ImpulsePreview && !isQuickOrder ? <SetupAction label={watched ? "Watching" : "Watch"} onClick={onToggleWatch} /> : null}
+        {!isQuickOrder && (!isH1ImpulsePreview || candidate.metadata.execution_plan === true) && manualAiPlanStatus !== "expired" ? <SetupAction label="Reject" onClick={onReject} /> : null}
+        {isQuickOrder ? <SetupAction label={disableBusy ? "Cancelling…" : "Cancel Quick Order"} disabled={disableBusy} onClick={onDisablePlaybook} /> : null}
+        {!isQuickOrder && (!isH1ImpulsePreview || candidate.metadata.execution_plan === true) && manualAiPlanStatus !== "expired" ? <SetupAction label={candidate.playbook === "manual_ai_v1" || candidate.metadata.execution_plan === true ? (disableBusy ? "Cancelling…" : "Cancel limit") : "Disable PB"} disabled={disableBusy} onClick={onDisablePlaybook} /> : null}
       </div>
     </div>
   );

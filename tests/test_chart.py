@@ -16,12 +16,65 @@ from semi_bot_trading.chart import (
     build_wave_metrics,
     filter_traded_setup_candidates,
     load_manual_ai_setup_candidates,
+    load_quick_order_setup_candidates,
     load_chart_trades,
 )
 from semi_bot_trading.db import connect, init_db
 
 
 class ChartPayloadTest(unittest.TestCase):
+    def test_quick_order_limit_is_exposed_as_one_pending_setup_per_group(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.sqlite3"
+            with closing(connect(db_path)) as conn:
+                init_db(conn)
+                conn.executemany(
+                    """
+                    INSERT INTO quick_order_requests (
+                        id, client_group_id, client_request_id, account_label, symbol,
+                        side, order_type, requested_entry, requested_stop, effective_entry,
+                        effective_stop, take_profit, risk_reward, atr_h1, atr_candle_time,
+                        status, expires_at, created_at, updated_at
+                    ) VALUES (?, 'quick-group', 'quick-request-123', ?, 'XAUUSD',
+                              'buy', 'limit', 4300, 4286, 4300, 4286, 4321, 1.5,
+                              14, '2026-09-25T13:00:00+00:00', ?,
+                              '2026-09-25T16:00:00+00:00',
+                              '2026-09-25T14:00:00+00:00',
+                              '2026-09-25T14:00:00+00:00')
+                    """,
+                    [
+                        ("quick-ftmo", "FTMO 100K 2-Step", "pending"),
+                        ("quick-exness", "Exness Personal", "executing"),
+                    ],
+                )
+                candidates = load_quick_order_setup_candidates(
+                    conn,
+                    "XAUUSD",
+                    {"quick_order_v1"},
+                )
+                hidden = load_quick_order_setup_candidates(
+                    conn,
+                    "XAUUSD",
+                    {"line_reaction_v1"},
+                )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate["id"], "quick-group")
+        self.assertEqual(candidate["playbook"], "quick_order_v1")
+        self.assertEqual(candidate["entry"], 4300)
+        self.assertEqual(candidate["stop_loss"], 4286)
+        self.assertEqual(candidate["take_profit"], [4321])
+        self.assertTrue(candidate["metadata"]["quick_order"])
+        self.assertEqual(
+            candidate["metadata"]["account_statuses"],
+            [
+                {"account_label": "Exness Personal", "status": "executing"},
+                {"account_label": "FTMO 100K 2-Step", "status": "pending"},
+            ],
+        )
+        self.assertEqual(hidden, [])
+
     def test_expired_h1_setup_keeps_account_terminal_statuses_but_cancelled_only_group_is_hidden(self) -> None:
         raw_payload = json.dumps(
             {

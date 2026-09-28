@@ -430,11 +430,12 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       ...(selectedPlaybooksRef.current.includes("h1_impulse_retest_v1") ? h1ImpulsePreviewsRef.current : []),
     ].filter((candidate) => candidate.status !== "expired" || candidate.id === selectedSetupIdRef.current);
     const chartSetups = visibleSetupCandidates.flatMap((candidate) => {
-      const isManualAi = candidate.metadata.manual_ai === true
+      const isExecutionSetup = (candidate.metadata.manual_ai === true
         && candidate.metadata.execution_state === "primary"
-        && candidate.status === "waiting_confirmation";
+        && candidate.status === "waiting_confirmation")
+        || (candidate.metadata.quick_order === true && candidate.status === "waiting_confirmation");
       const isH1ImpulsePreview = candidate.metadata.h1_impulse_preview === true;
-      if (!isManualAi && !isH1ImpulsePreview) return [];
+      if (!isExecutionSetup && !isH1ImpulsePreview) return [];
       const box = setupToBox(
         candidate,
         currentPayload.range.start,
@@ -2331,6 +2332,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         {displayedSetupBoxes.map((box) => {
           const candidate = box.candidate;
           const isH1ImpulsePreview = candidate.metadata.h1_impulse_preview === true;
+          const isQuickOrder = candidate.metadata.quick_order === true;
           const previewOutcome = readObject(candidate.metadata.outcome);
           const outcomeStatus = typeof previewOutcome.status === "string" ? previewOutcome.status : "open";
           const resultR = typeof previewOutcome.result_r === "number" ? previewOutcome.result_r : null;
@@ -2346,10 +2348,12 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
             : `${candidate.direction === "long" ? "BUY" : "SELL"} · ${candidate.risk_reward?.toFixed(2) ?? "--"}R`;
           const detailLabel = isH1ImpulsePreview
             ? `${statusLabel} · H1 Impulse · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`
-            : `${statusLabel} · Manual AI · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`;
-          const canEdit = isH1ImpulsePreview
-            ? candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(planStatus)
-            : ["draft", "approved", "armed"].includes(planStatus);
+            : `${statusLabel} · ${isQuickOrder ? "Quick Order" : "Manual AI"} · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`;
+          const canEdit = isQuickOrder
+            ? false
+            : isH1ImpulsePreview
+              ? candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(planStatus)
+              : ["draft", "approved", "armed"].includes(planStatus);
           const isSelected = selectedSetupId === candidate.id;
           const isEditing = manualAiEditSetupId === candidate.id;
           const isDimmed = selectedSetupId !== null && !isSelected;

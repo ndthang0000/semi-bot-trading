@@ -775,4 +775,6 @@ trước khi gửi MT5. Limit giữ Entry đã xác nhận và có expiry. Clien
 được lưu unique theo account để double click hoặc retry HTTP không tạo lệnh
 trùng. Chọn `Quick Order V1` trong menu Playbooks để chỉ xem các lệnh Quick
 Order trên chart và tab Trades. Quick Order không thêm, sửa hoặc dùng state của
-Line Reaction.
+Line Reaction. Quick Order Limit đang chờ khớp được hiển thị trên chart như một
+pending setup từ lúc request được tạo đến khi khớp, bị hủy hoặc hết hạn. Sau khi
+khớp, overlay trade bình thường thay thế pending setup.
