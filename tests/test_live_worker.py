@@ -40,6 +40,8 @@ from semi_bot_trading.live_worker import (
     candidates_after_live_fvg_trade_count,
     execute_candidate,
     ftmo_news_guard_state,
+    is_overnight_flatten_window,
+    is_overnight_no_new_trade_window,
     is_weekend_flatten_window,
     is_weekend_no_new_trade_window,
     live_candidate_already_executed,
@@ -48,6 +50,7 @@ from semi_bot_trading.live_worker import (
     manual_ai_risk_pct,
     manage_open_trade_partial_take_profit,
     maybe_ftmo_news_flatten,
+    maybe_overnight_flatten,
     maybe_weekend_flatten,
     maybe_execute_candidates,
     process_manual_trading_lock,
@@ -106,6 +109,11 @@ def _make_env(**overrides) -> RuntimeEnv:
         weekend_flatten_timezone="America/New_York",
         weekend_no_new_trades_time="12:00",
         weekend_flatten_time="15:30",
+        overnight_flatten_enabled=False,
+        overnight_flatten_timezone="America/New_York",
+        overnight_no_new_trades_time="16:45",
+        overnight_flatten_time="16:50",
+        overnight_resume_time="18:05",
         partial_take_profit_enabled=True,
         partial_take_profit_r=1.25,
         partial_take_profit_fraction=0.5,
@@ -2208,6 +2216,23 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
             ).fetchone()["c"],
         )
 
+    def test_overnight_no_new_trade_cutoff_blocks_execution(self):
+        env = _make_env(overnight_flatten_enabled=True)
+        cutoff_now = datetime(2026, 6, 24, 20, 45, tzinfo=UTC)  # Wednesday 16:45 New York
+        client = _fake_client()
+        with patch("semi_bot_trading.live_worker.datetime") as dt:
+            dt.now.return_value = cutoff_now
+            maybe_execute_candidates(self._conn, self._config, env, client, [_make_candidate()], "XAUUSDm")
+        self.assertEqual(0, self._order_count())
+        client.place_market_order.assert_not_called()
+        alert = self._conn.execute(
+            "SELECT message_payload_json FROM alert_events WHERE event_type = 'execution_event'"
+        ).fetchone()
+        self.assertIsNotNone(alert)
+        payload = json.loads(alert["message_payload_json"])
+        self.assertEqual("overnight_no_new_trades", payload["reason_code"])
+        self.assertIn("16:45 to 18:05 America/New_York", payload["reason"][0])
+
     def test_empty_broker_symbol_no_trade(self):
         env = _make_env()
         client = _fake_client()
@@ -2517,6 +2542,108 @@ class TestFtmoNewsCompliance(unittest.TestCase):
         partial_tp.assert_not_called()
         news_flatten.assert_not_called()
         weekend_flatten.assert_not_called()
+
+
+# overnight flatten guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestOvernightFlatten(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self._db_path, self._conn = _setup_db(self._tmp.name)
+        self._config = replace(load_config(), database=self._db_path)
+
+    def tearDown(self):
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def test_windows_follow_new_york_rollover_and_dst(self):
+        env = _make_env(overnight_flatten_enabled=True)
+        before = datetime(2026, 6, 24, 20, 44, tzinfo=UTC)  # Wednesday 16:44 EDT
+        blocked = datetime(2026, 6, 24, 20, 45, tzinfo=UTC)  # Wednesday 16:45 EDT
+        flatten = datetime(2026, 6, 24, 20, 50, tzinfo=UTC)  # Wednesday 16:50 EDT
+        resumed = datetime(2026, 6, 24, 22, 5, tzinfo=UTC)   # Wednesday 18:05 EDT
+        winter_flatten = datetime(2026, 12, 2, 21, 50, tzinfo=UTC)  # Wednesday 16:50 EST
+
+        self.assertFalse(is_overnight_no_new_trade_window(env, before))
+        self.assertTrue(is_overnight_no_new_trade_window(env, blocked))
+        self.assertTrue(is_overnight_flatten_window(env, flatten))
+        self.assertFalse(is_overnight_no_new_trade_window(env, resumed))
+        self.assertTrue(is_overnight_flatten_window(env, winter_flatten))
+
+        friday = datetime(2026, 6, 26, 20, 50, tzinfo=UTC)
+        self.assertFalse(is_overnight_flatten_window(env, friday))
+
+    def test_flatten_cancels_all_pending_and_closes_all_positions_once(self):
+        env = _make_env(overnight_flatten_enabled=True)
+        client = _fake_client()
+        client.cancel_pending_orders.return_value = [{"order": 111, "retcode": 10009}]
+        client.close_open_positions.return_value = []
+        now = "2026-06-24T20:00:00+00:00"
+        self._conn.execute(
+            """INSERT INTO trade_ideas
+               (id, symbol, direction, playbook, status, entry_zone_id,
+                related_zone_ids_json, context_snapshot_json, suggested_entry,
+                suggested_stop_loss, suggested_take_profit_json, risk_reward, created_at)
+               VALUES ('overnight-idea', 'XAUUSD', 'long', 'test', 'approved', NULL, '[]', '{}',
+                       3000, 2980, '[3040]', 2.0, ?)""",
+            (now,),
+        )
+        self._conn.execute(
+            """INSERT INTO trade_orders
+               (id, trade_idea_id, account_label, symbol, side, order_type, status,
+                entry_price, stop_loss, take_profit_json, quantity,
+                opened_at, source, metadata_json, created_at)
+               VALUES ('overnight-order', 'overnight-idea', 'Test', 'XAUUSD', 'buy', 'limit', 'pending_fill',
+                       3000, 2980, '[3040]', 0.01, ?, 'live', '{}', ?)""",
+            (now, now),
+        )
+        self._conn.commit()
+        at_flatten = datetime(2026, 6, 24, 20, 50, tzinfo=UTC)
+
+        self.assertTrue(
+            maybe_overnight_flatten(
+                self._conn, self._config, env, client, "XAUUSDm", at_flatten
+            )
+        )
+        self.assertFalse(
+            maybe_overnight_flatten(
+                self._conn, self._config, env, client, "XAUUSDm", at_flatten + timedelta(minutes=1)
+            )
+        )
+        client.cancel_pending_orders.assert_called_once_with(
+            "XAUUSDm", magic=None, comment="Overnight flatten"
+        )
+        client.close_open_positions.assert_called_once_with(
+            "XAUUSDm", magic=None, comment="Overnight flatten"
+        )
+        row = self._conn.execute(
+            "SELECT status FROM trade_orders WHERE id='overnight-order'"
+        ).fetchone()
+        self.assertEqual("cancelled", row["status"])
+
+    def test_empty_account_marker_is_silent(self):
+        env = _make_env(overnight_flatten_enabled=True)
+        client = _fake_client()
+        client.cancel_pending_orders.return_value = []
+        client.close_open_positions.return_value = []
+
+        self.assertFalse(
+            maybe_overnight_flatten(
+                self._conn,
+                self._config,
+                env,
+                client,
+                "XAUUSDm",
+                datetime(2026, 6, 24, 20, 50, tzinfo=UTC),
+            )
+        )
+        marker = self._conn.execute(
+            "SELECT status,dedupe_key FROM alert_events WHERE account_label='Test'"
+        ).fetchone()
+        self.assertEqual("sent", marker["status"])
+        self.assertEqual("overnight-flatten:Test:XAUUSD:2026-06-24", marker["dedupe_key"])
 
 
 # weekend flatten guard

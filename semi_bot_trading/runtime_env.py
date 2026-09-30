@@ -49,6 +49,13 @@ class RuntimeEnv:
     weekend_flatten_timezone: str = "America/New_York"
     weekend_no_new_trades_time: str = "12:00"
     weekend_flatten_time: str = "15:30"
+    # Daily rollover protection. New York time tracks Exness' 21:00 UTC
+    # summer / 22:00 UTC winter swap boundary without a manual DST switch.
+    overnight_flatten_enabled: bool = True
+    overnight_flatten_timezone: str = "America/New_York"
+    overnight_no_new_trades_time: str = "16:45"
+    overnight_flatten_time: str = "16:50"
+    overnight_resume_time: str = "18:05"
     partial_take_profit_enabled: bool = True
     partial_take_profit_r: float = 1.0
     partial_take_profit_fraction: float = 0.4
@@ -125,6 +132,11 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         weekend_flatten_timezone=env_text("WEEKEND_FLATTEN_TIMEZONE", "America/New_York") or "America/New_York",
         weekend_no_new_trades_time=env_text("WEEKEND_NO_NEW_TRADES_TIME", "12:00") or "12:00",
         weekend_flatten_time=env_text("WEEKEND_FLATTEN_TIME", "15:30") or "15:30",
+        overnight_flatten_enabled=env_bool("OVERNIGHT_FLATTEN_ENABLED", True),
+        overnight_flatten_timezone=env_text("OVERNIGHT_FLATTEN_TIMEZONE", "America/New_York") or "America/New_York",
+        overnight_no_new_trades_time=env_text("OVERNIGHT_NO_NEW_TRADES_TIME", "16:45") or "16:45",
+        overnight_flatten_time=env_text("OVERNIGHT_FLATTEN_TIME", "16:50") or "16:50",
+        overnight_resume_time=env_text("OVERNIGHT_RESUME_TIME", "18:05") or "18:05",
         partial_take_profit_enabled=env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True),
         partial_take_profit_r=env_float("PARTIAL_TAKE_PROFIT_R", 1.0) or 1.0,
         partial_take_profit_fraction=env_float("PARTIAL_TAKE_PROFIT_FRACTION", 0.4) or 0.4,

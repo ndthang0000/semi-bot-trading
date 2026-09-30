@@ -209,6 +209,36 @@ Metrics:
 - Risk rejection count.
 - Executor errors.
 
+## Overnight Rollover Flatten
+
+XAUUSD worker không giữ exposure qua rollover ngày thường. Mặc định, từ thứ Hai
+đến thứ Năm theo `America/New_York`:
+
+- Ngừng tạo broker order mới từ `16:45`.
+- Lúc `16:50`, cancel **tất cả** pending orders và close **tất cả** open
+  positions của symbol trên account worker, gồm bot, manual (`magic=0`) và EA
+  khác.
+- Cho phép entry mới lại lúc `18:05`, sau daily rollover/market break.
+- Thứ Sáu do Weekend Flatten bên dưới xử lý sớm hơn.
+
+Exness áp dụng swap kim loại lúc `17:00 America/New_York` và triple swap cho
+XAUUSD vào thứ Tư. Dùng timezone New York để tự theo DST thay vì hard-code giờ
+Việt Nam. Holiday schedule vẫn có thể thay đổi từ broker; alert lỗi yêu cầu
+operator kiểm tra MT5 và đóng phần exposure còn lại thủ công.
+
+```text
+OVERNIGHT_FLATTEN_ENABLED=true
+OVERNIGHT_FLATTEN_TIMEZONE=America/New_York
+OVERNIGHT_NO_NEW_TRADES_TIME=16:45
+OVERNIGHT_FLATTEN_TIME=16:50
+OVERNIGHT_RESUME_TIME=18:05
+```
+
+Worker chỉ mutation broker một lần cho mỗi account, symbol và ngày rollover.
+Nếu account không có exposure, marker vẫn được lưu nhưng không gửi Telegram
+thường nhật. Khi có lệnh bị đóng/hủy hoặc thao tác thất bại, worker gửi alert;
+lỗi không được retry mỗi poll để tránh vòng lặp MT5 hyperactivity.
+
 ## Weekend Flatten
 
 Voi style XAUUSD H1/M15 zone reaction, live worker khong giu lenh qua weekend. Mac dinh:

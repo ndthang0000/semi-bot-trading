@@ -1177,6 +1177,7 @@ def run_live_iteration(config: AppConfig, env: RuntimeEnv, client: MT5BrokerClie
             else:
                 queue_ftmo_news_guard_alert(conn, config, env, client, broker_symbol, ftmo_news_guard, now)
             if ftmo_news_guard is None or ftmo_news_guard["phase"] == "stale":
+                maybe_overnight_flatten(conn, config, env, client, broker_symbol, now)
                 maybe_weekend_flatten(conn, config, env, client, broker_symbol, now)
             try:
                 quote = client.get_current_quote(broker_symbol)
@@ -2596,6 +2597,26 @@ def maybe_execute_candidates(
             ftmo_news_guard["title"],
         )
         return
+    if is_overnight_no_new_trade_window(env, now):
+        logger.warning("maybe_execute_candidates: overnight rollover cutoff active — skipping execution")
+        blocked = [candidate for candidate in candidates if candidate.get("status") == "eligible"]
+        if blocked:
+            candidate = sorted(
+                blocked, key=lambda item: float(item.get("score") or 0.0), reverse=True
+            )[0]
+            queue_execution_gate_block(
+                conn,
+                config,
+                env,
+                candidate,
+                reason_code="overnight_no_new_trades",
+                reason=(
+                    "Overnight rollover protection is active from "
+                    f"{env.overnight_no_new_trades_time} to {env.overnight_resume_time} "
+                    f"{env.overnight_flatten_timezone}. No broker order was created."
+                ),
+            )
+        return
     if is_weekend_no_new_trade_window(env, now):
         logger.warning("maybe_execute_candidates: weekend cutoff active — skipping execution")
         blocked = [candidate for candidate in candidates if candidate.get("status") == "eligible"]
@@ -2981,6 +3002,91 @@ def maybe_weekend_flatten(
     return did_anything and not errors
 
 
+def maybe_overnight_flatten(
+    conn: Connection,
+    config: AppConfig,
+    env: RuntimeEnv,
+    client: MT5BrokerClient,
+    broker_symbol: str,
+    now: datetime | None = None,
+) -> bool:
+    """Cancel and close all symbol exposure before the weekday swap rollover."""
+    if not env.execution_enabled or not env.overnight_flatten_enabled or not broker_symbol:
+        return False
+    now = now or datetime.now(UTC)
+    if not is_overnight_flatten_window(env, now):
+        return False
+
+    local_now = _overnight_local_datetime(env, now)
+    action_date = _daily_window_start_date(
+        local_now,
+        _parse_hhmm(env.overnight_flatten_time, "16:50"),
+        _parse_hhmm(env.overnight_resume_time, "18:05"),
+    )
+    completed_key = f"overnight-flatten:{env.account_label}:{config.symbol}:{action_date}"
+    failed_key = f"overnight-flatten-failed:{env.account_label}:{config.symbol}:{action_date}"
+    prior_attempt = conn.execute(
+        """SELECT dedupe_key FROM alert_events
+        WHERE account_label=? AND dedupe_key IN (?,?) LIMIT 1""",
+        (env.account_label, completed_key, failed_key),
+    ).fetchone()
+    if prior_attempt is not None:
+        return False
+
+    cancelled: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []
+    errors: list[str] = []
+    try:
+        cancelled = client.cancel_pending_orders(broker_symbol, magic=None, comment="Overnight flatten")
+    except Exception as exc:
+        logger.exception("Overnight pending-order cancellation failed")
+        errors.append(f"Pending-order cancellation failed: {exc}")
+    try:
+        closed = client.close_open_positions(broker_symbol, magic=None, comment="Overnight flatten")
+    except Exception as exc:
+        logger.exception("Overnight position close failed")
+        errors.append(f"Position close failed: {exc}")
+
+    did_anything = bool(cancelled or closed)
+    key = failed_key if errors else completed_key
+    queue_alert(
+        conn,
+        account_label=env.account_label,
+        symbol=config.symbol,
+        timeframe=config.strategy.timeframe,
+        event_type="execution_event",
+        severity="critical" if errors else "info",
+        entity_ids=[],
+        payload={
+            "title": "Overnight flatten incomplete" if errors else "Overnight flatten completed",
+            "outcome": "failed" if errors else "info",
+            "reason": [
+                f"Cancelled pending orders: {len(cancelled)}",
+                f"Closed positions: {len(closed)}",
+                *errors,
+            ],
+        },
+        dedupe_key=key,
+    )
+
+    if cancelled:
+        _mark_live_pending_orders_cancelled(conn, config.symbol, env.account_label, utc_now_iso())
+    if closed:
+        sync_closed_positions(conn, config, env, client, broker_symbol)
+
+    if not did_anything and not errors:
+        # Keep the daily dedupe marker without sending a routine "nothing to
+        # close" Telegram message every weekday.
+        sent_at = utc_now_iso()
+        conn.execute(
+            """UPDATE alert_events SET status='sent', sent_at=?
+            WHERE account_label=? AND dedupe_key=? AND status='pending'""",
+            (sent_at, env.account_label, completed_key),
+        )
+    conn.commit()
+    return did_anything and not errors
+
+
 def _mark_live_pending_orders_cancelled(conn: Connection, symbol: str, account_label: str, now: str) -> None:
     conn.execute(
         """
@@ -3003,6 +3109,28 @@ def is_weekend_no_new_trade_window(env: RuntimeEnv, now: datetime | None = None)
     local_now = _local_datetime(env, now or datetime.now(UTC))
     cutoff = _parse_hhmm(env.weekend_no_new_trades_time, "12:00")
     return _is_weekend_risk_window(local_now, cutoff)
+
+
+def is_overnight_no_new_trade_window(env: RuntimeEnv, now: datetime | None = None) -> bool:
+    if not env.overnight_flatten_enabled:
+        return False
+    local_now = _overnight_local_datetime(env, now or datetime.now(UTC))
+    return _is_weekday_daily_window(
+        local_now,
+        _parse_hhmm(env.overnight_no_new_trades_time, "16:45"),
+        _parse_hhmm(env.overnight_resume_time, "18:05"),
+    )
+
+
+def is_overnight_flatten_window(env: RuntimeEnv, now: datetime | None = None) -> bool:
+    if not env.overnight_flatten_enabled:
+        return False
+    local_now = _overnight_local_datetime(env, now or datetime.now(UTC))
+    return _is_weekday_daily_window(
+        local_now,
+        _parse_hhmm(env.overnight_flatten_time, "16:50"),
+        _parse_hhmm(env.overnight_resume_time, "18:05"),
+    )
 
 
 def is_weekend_flatten_window(env: RuntimeEnv, now: datetime | None = None) -> bool:
@@ -3030,15 +3158,48 @@ def _weekend_cycle_start_date(local_now: datetime) -> str:
     return (local_now.date() - timedelta(days=days_since_friday)).isoformat()
 
 
+def _is_weekday_daily_window(
+    local_now: datetime,
+    start: tuple[int, int],
+    end: tuple[int, int],
+) -> bool:
+    """Return true for a Mon-Thu rollover window, including cross-midnight configs."""
+    current = (local_now.hour, local_now.minute)
+    if start < end:
+        return local_now.weekday() in {0, 1, 2, 3} and start <= current < end
+    if current >= start:
+        return local_now.weekday() in {0, 1, 2, 3}
+    return local_now.weekday() in {1, 2, 3, 4} and current < end
+
+
+def _daily_window_start_date(
+    local_now: datetime,
+    start: tuple[int, int],
+    end: tuple[int, int],
+) -> str:
+    current = (local_now.hour, local_now.minute)
+    if start >= end and current < end:
+        return (local_now.date() - timedelta(days=1)).isoformat()
+    return local_now.date().isoformat()
+
+
 def _local_datetime(env: RuntimeEnv, now: datetime) -> datetime:
+    return _datetime_in_timezone(env.weekend_flatten_timezone, now)
+
+
+def _overnight_local_datetime(env: RuntimeEnv, now: datetime) -> datetime:
+    return _datetime_in_timezone(env.overnight_flatten_timezone, now)
+
+
+def _datetime_in_timezone(timezone_name: str, now: datetime) -> datetime:
     aware = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     try:
-        local_tz = ZoneInfo(env.weekend_flatten_timezone)
+        local_tz = ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
-        if env.weekend_flatten_timezone == "America/New_York":
+        if timezone_name == "America/New_York":
             logger.warning("System timezone database is missing America/New_York; using built-in New York DST rules")
             return _new_york_datetime(aware)
-        logger.warning("Unknown WEEKEND_FLATTEN_TIMEZONE=%s; falling back to UTC", env.weekend_flatten_timezone)
+        logger.warning("Unknown risk timezone=%s; falling back to UTC", timezone_name)
         local_tz = UTC
     return aware.astimezone(local_tz)
 
