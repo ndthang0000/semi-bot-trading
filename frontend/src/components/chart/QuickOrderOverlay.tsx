@@ -19,6 +19,7 @@ type Props = {
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const round = (value: number) => Math.round(value * 100) / 100;
 const DEFAULT_STOP_ATR = 1;
+const DEFAULT_LIMIT_EXPIRY_MINUTES = 240;
 const MIN_STOP_ATR = 0.618;
 const minimumStopPrice = (entry: number, side: QuickOrderSide, atr: number) => side === "buy"
   ? Math.floor((entry - atr * MIN_STOP_ATR) * 100) / 100
@@ -49,7 +50,7 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
   const [entry, setEntry] = useState(chartPrice);
   const [stop, setStop] = useState(chartPrice - 10);
   const [rr, setRr] = useState(1.5);
-  const [expiryMinutes, setExpiryMinutes] = useState(60);
+  const [expiryMinutes, setExpiryMinutes] = useState(DEFAULT_LIMIT_EXPIRY_MINUTES);
   const [atr, setAtr] = useState<number | null>(null);
   const [preview, setPreview] = useState<QuickOrderPreview | null>(null);
   const [loading, setLoading] = useState(false);

@@ -771,7 +771,8 @@ trước khi `Place order`.
 
 Backend fan-out một request/account dưới cùng `client_group_id`. Market request
 chỉ có TTL 10 giây và worker tính lại toàn bộ geometry từ bid/ask thật ngay
-trước khi gửi MT5. Limit giữ Entry đã xác nhận và có expiry. Client request id
+trước khi gửi MT5. Limit giữ Entry đã xác nhận, mặc định expiry 4 giờ và trader
+có thể chọn lại expiry trên form. Client request id
 được lưu unique theo account để double click hoặc retry HTTP không tạo lệnh
 trùng. Chọn `Quick Order V1` trong menu Playbooks để chỉ xem các lệnh Quick
 Order trên chart và tab Trades. Quick Order không thêm, sửa hoặc dùng state của
