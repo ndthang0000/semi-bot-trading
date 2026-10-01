@@ -57,6 +57,13 @@ class ChartPayloadTest(unittest.TestCase):
                     "XAUUSD",
                     {"line_reaction_v1"},
                 )
+                conn.execute(
+                    """UPDATE quick_order_requests
+                       SET status='replace_requested',replacement_levels_json=?
+                       WHERE id='quick-ftmo'""",
+                    (json.dumps({"entry_price": 4295, "stop_loss": 4280, "take_profit": 4325, "risk_reward": 2}),),
+                )
+                replacement_candidates = load_quick_order_setup_candidates(conn, "XAUUSD", {"quick_order_v1"})
 
         self.assertEqual(len(candidates), 1)
         candidate = candidates[0]
@@ -74,6 +81,10 @@ class ChartPayloadTest(unittest.TestCase):
             ],
         )
         self.assertEqual(hidden, [])
+        self.assertEqual(4295, replacement_candidates[0]["entry"])
+        self.assertEqual(4280, replacement_candidates[0]["stop_loss"])
+        self.assertEqual([4325], replacement_candidates[0]["take_profit"])
+        self.assertTrue(replacement_candidates[0]["metadata"]["quick_order_replace_pending"])
 
     def test_expired_h1_setup_keeps_account_terminal_statuses_but_cancelled_only_group_is_hidden(self) -> None:
         raw_payload = json.dumps(

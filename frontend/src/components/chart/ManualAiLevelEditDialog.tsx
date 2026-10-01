@@ -32,12 +32,14 @@ export function ManualAiLevelEditDialog({ playbook = "manual_ai_v1", side, statu
     ? levels.stopLoss < levels.entry && levels.entry < levels.takeProfit
     : levels.takeProfit < levels.entry && levels.entry < levels.stopLoss;
   const levelsValid = validGeometry && rr >= rrMin && (rrMax === null || rr <= rrMax);
-  const brokerReplace = status === "armed" || status === "replace_requested";
+  const quickOrder = playbook === "quick_order_v1";
+  const brokerReplace = status === "armed" || status === "replace_requested" || (quickOrder && status === "pending");
   const h1Impulse = playbook === "h1_impulse_retest_v1";
+  const setupLabel = quickOrder ? "Quick Order" : h1Impulse ? "H1 Impulse" : "Manual AI";
   return (
     <div className="pointer-events-auto absolute bottom-4 left-1/2 z-[90] w-[min(720px,calc(100%-2rem))] -translate-x-1/2 rounded-xl border border-yellow-300/40 bg-ink-950/95 p-3 shadow-2xl backdrop-blur" onPointerDown={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
-          <div><div className="text-sm font-bold text-yellow-100">Chỉnh {h1Impulse ? "H1 Impulse" : "Manual AI"} · kéo tiếp hoặc nhập giá</div>
+          <div><div className="text-sm font-bold text-yellow-100">Chỉnh {setupLabel} · kéo tiếp hoặc nhập giá</div>
           <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
           {brokerReplace
             ? "Limit đã nằm trên MT5. Worker sẽ hủy ticket cũ, kiểm tra chưa fill, tính lại lot và đặt ticket mới."

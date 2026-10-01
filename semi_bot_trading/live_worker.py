@@ -918,6 +918,8 @@ def _execute_trade_management_command(
 
     entry = float(position.get("price_open") or metadata.get("broker_position_entry_price") or row["entry_price"])
     current_stop = float(position.get("sl") or row["stop_loss"] or 0.0)
+    initial_stop = float(metadata.get("initial_stop_loss") or row["stop_loss"])
+    stop_before = current_stop
     take_profits = json.loads(row["take_profit_json"] or "[]")
     fallback_tp = float(take_profits[0]) if take_profits else 0.0
     current_tp = float(position.get("tp") or fallback_tp)
@@ -1023,8 +1025,13 @@ def _execute_trade_management_command(
             "modify_result": modify_result,
         })
 
-    metadata.setdefault("initial_stop_loss", float(row["stop_loss"]))
+    metadata.setdefault("initial_stop_loss", initial_stop)
     metadata["current_stop_loss"] = current_stop
+    result.update({
+        "initial_stop_loss": initial_stop,
+        "stop_loss_before": stop_before,
+        "stop_loss_after": current_stop,
+    })
     management = metadata.get("trade_management")
     management = management if isinstance(management, dict) else {}
     history = management.get("history")
@@ -1037,6 +1044,9 @@ def _execute_trade_management_command(
         "closed_volume": result.get("closed_volume"),
         "break_even_applied": result.get("break_even_applied"),
         "break_even_error": result.get("break_even_error"),
+        "initial_stop_loss": initial_stop,
+        "stop_loss_before": stop_before,
+        "stop_loss_after": current_stop,
     })
     management.update({"last_action": action, "last_command_id": command_id, "last_executed_at": now, "history": history[-20:]})
     metadata["trade_management"] = management
@@ -2056,7 +2066,7 @@ def process_quick_orders(
     rows = conn.execute(
         """SELECT * FROM quick_order_requests
            WHERE account_label=? AND symbol=?
-             AND status IN ('queued','executing','pending','cancel_requested')
+             AND status IN ('queued','executing','pending','cancel_requested','replace_requested')
            ORDER BY created_at""",
         (env.account_label, config.symbol),
     ).fetchall()
@@ -2066,18 +2076,25 @@ def process_quick_orders(
         now_iso = now.isoformat()
         expires_at = datetime.fromisoformat(str(row["expires_at"]))
         idea_id = str(row["trade_idea_id"] or live_trade_idea_id(order_id, account_label=env.account_label))
+        # A broker-safe replacement deliberately reuses the stable trade-idea
+        # identity after cancelling its old execution. A freshly queued row with
+        # cleared links must therefore ignore those historical cancelled rows.
+        has_current_link = bool(row["trade_idea_id"] or row["execution_request_id"])
         linked = conn.execute(
-            "SELECT id,status FROM trade_orders WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT id,status FROM trade_orders WHERE trade_idea_id=? AND account_label=? ORDER BY rowid DESC LIMIT 1",
             (idea_id, env.account_label),
-        ).fetchone()
+        ).fetchone() if status != "queued" or has_current_link else None
         execution = conn.execute(
-            "SELECT id,broker_order_id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT id,broker_order_id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY rowid DESC LIMIT 1",
             (idea_id, env.account_label),
-        ).fetchone()
+        ).fetchone() if status != "queued" or has_current_link else None
 
         if linked is not None:
             mapped = {"pending_fill": "pending", "filled": "filled", "closed": "closed", "cancelled": "cancelled"}.get(str(linked["status"]))
-            if mapped and status != "cancel_requested":
+            if mapped and (
+                mapped in {"filled", "closed"}
+                or status not in {"cancel_requested", "replace_requested"}
+            ):
                 conn.execute(
                     "UPDATE quick_order_requests SET status=?,trade_idea_id=?,execution_request_id=?,updated_at=? WHERE id=?",
                     (mapped, idea_id, execution["id"] if execution else row["execution_request_id"], now_iso, order_id),
@@ -2096,6 +2113,99 @@ def process_quick_orders(
             continue
 
         ticket = str(execution["broker_order_id"] or "") if execution else ""
+        if status == "replace_requested":
+            replacement = json.loads(row["replacement_levels_json"] or "{}")
+            required = {"entry_price", "stop_loss", "take_profit", "risk_reward"}
+            if not required.issubset(replacement):
+                logger.error("Quick Order replacement payload is incomplete order=%s", order_id)
+                continue
+            broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
+            if broker_state == "filled":
+                # The normal fill synchronizer owns the final transition. Never
+                # cancel or replace a ticket once MT5 reports that it filled.
+                continue
+            replacement_entry = float(replacement["entry_price"])
+            current_price = float(client.current_price_for_side(broker_symbol, str(row["side"])))
+            valid_limit_side = (
+                replacement_entry < current_price
+                if str(row["side"]) == "buy"
+                else replacement_entry > current_price
+            )
+            if not valid_limit_side:
+                message = (
+                    f"Replacement {row['side']} limit entry {replacement_entry:.2f} is on the wrong side "
+                    f"of broker price {current_price:.2f}; old ticket kept"
+                )
+                logger.warning("Quick Order %s order=%s", message, order_id)
+                conn.execute(
+                    """UPDATE quick_order_requests
+                       SET status='pending',replacement_levels_json='{}',replacement_error=?,updated_at=?
+                       WHERE id=?""",
+                    (message, now_iso, order_id),
+                )
+                conn.commit()
+                continue
+            if broker_state == "pending":
+                try:
+                    client.cancel_pending_order(broker_symbol, order_ticket=ticket, comment="Quick Order replace")
+                except Exception as exc:
+                    logger.warning("Quick Order replace cancel failed order=%s: %s", order_id, exc)
+                    continue
+                broker_state = "cancelled"
+            elif broker_state is None:
+                # Never assume that an absent ticket was cancelled; MT5 may be
+                # between its active-order and deal-history views.
+                continue
+            if broker_state != "cancelled":
+                continue
+            if linked is not None:
+                conn.execute(
+                    """UPDATE trade_orders SET status='cancelled',closed_at=?,updated_at=?
+                       WHERE id=? AND status='pending_fill'""",
+                    (now_iso, now_iso, linked["id"]),
+                )
+            if execution is not None:
+                conn.execute(
+                    """UPDATE execution_requests SET status='cancelled',updated_at=?
+                       WHERE id=? AND status IN ('pending','sent')""",
+                    (now_iso, execution["id"]),
+                )
+            conn.execute(
+                """UPDATE trade_ideas
+                   SET suggested_entry=?,suggested_stop_loss=?,suggested_take_profit_json=?,risk_reward=?
+                   WHERE id=?""",
+                (
+                    replacement_entry,
+                    float(replacement["stop_loss"]),
+                    json.dumps([float(replacement["take_profit"])]),
+                    float(replacement["risk_reward"]),
+                    idea_id,
+                ),
+            )
+            conn.execute(
+                """UPDATE quick_order_requests
+                   SET status='queued',requested_entry=?,requested_stop=?,effective_entry=?,effective_stop=?,
+                       take_profit=?,risk_reward=?,atr_h1=?,atr_candle_time=?,trade_idea_id=NULL,
+                       execution_request_id=NULL,replacement_levels_json='{}',replacement_error=NULL,updated_at=?
+                   WHERE id=?""",
+                (
+                    replacement_entry,
+                    float(replacement["stop_loss"]),
+                    replacement_entry,
+                    float(replacement["stop_loss"]),
+                    float(replacement["take_profit"]),
+                    float(replacement["risk_reward"]),
+                    float(replacement.get("atr_h1") or row["atr_h1"]),
+                    str(replacement.get("atr_candle_time") or row["atr_candle_time"]),
+                    now_iso,
+                    order_id,
+                ),
+            )
+            conn.commit()
+            # Submit the recalculated order on the next poll, after the old
+            # ticket is durably recorded as cancelled.
+            continue
+
         if status in {"pending", "cancel_requested"}:
             broker_state = client.get_pending_order_state(broker_symbol, order_ticket=ticket) if ticket else None
             if broker_state == "filled":
@@ -2169,11 +2279,11 @@ def process_quick_orders(
             ),
         )
         execution = conn.execute(
-            "SELECT id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT id,status,failure_reason FROM execution_requests WHERE trade_idea_id=? AND account_label=? ORDER BY rowid DESC LIMIT 1",
             (idea_id, env.account_label),
         ).fetchone()
         linked = conn.execute(
-            "SELECT status FROM trade_orders WHERE trade_idea_id=? AND account_label=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT status FROM trade_orders WHERE trade_idea_id=? AND account_label=? ORDER BY rowid DESC LIMIT 1",
             (idea_id, env.account_label),
         ).fetchone()
         if linked is not None:
@@ -4040,6 +4150,7 @@ def manage_open_trade_partial_take_profit(
         plan = metadata.get("partial_take_profit")
         if not isinstance(plan, dict):
             continue
+        metadata.setdefault("initial_stop_loss", float(row["stop_loss"]))
         uses_account_partial = row["playbook"] == "zone_reaction_v2"
         # Preserve explicit per-trade plans and completed partials awaiting BE.
         if not uses_account_partial and not plan.get("locked") and not plan.get("done"):

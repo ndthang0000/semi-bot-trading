@@ -778,4 +778,8 @@ trùng. Chọn `Quick Order V1` trong menu Playbooks để chỉ xem các lệnh
 Order trên chart và tab Trades. Quick Order không thêm, sửa hoặc dùng state của
 Line Reaction. Quick Order Limit đang chờ khớp được hiển thị trên chart như một
 pending setup từ lúc request được tạo đến khi khớp, bị hủy hoặc hết hạn. Sau khi
-khớp, overlay trade bình thường thay thế pending setup.
+khớp, overlay trade bình thường thay thế pending setup. Trong lúc Limit còn ở
+`queued` hoặc `pending`, trader có thể chọn `Edit levels` và kéo/nhập lại
+Entry, SL, TP. Nếu ticket đã nằm trên MT5, worker kiểm tra ticket chưa fill,
+hủy đúng ticket cũ rồi tạo ticket mới và tính lại lot theo SL mới. Nếu giá mới
+không còn đúng phía của Limit, ticket cũ được giữ nguyên và UI hiện lỗi replace.

@@ -319,6 +319,10 @@ Live worker quan ly lenh dang mo bang rule mac dinh:
 - Sau khi partial close thanh cong, doi SL cua position con lai ve entry, cong/tru buffer neu co.
 - Phan con lai giu TP cuoi cua setup; `zone_reaction_v2` hien tai dung `2.0R`.
 - Metadata `trade_orders.metadata_json.partial_take_profit` ghi `armed/done`, trigger price, closed volume va BE SL de UI/debug.
+- `metadata.initial_stop_loss` luôn giữ SL của setup lúc vào lệnh;
+  `metadata.current_stop_loss` và cột `trade_orders.stop_loss` phản ánh SL đang
+  hiệu lực sau BE/management. Journal tính R:R từ SL ban đầu và hiển thị thêm SL
+  hiện tại khi hai mức khác nhau.
 
 Config `.env`:
 
@@ -342,6 +346,11 @@ Trade Inspector có thể queue ba command giảm exposure cho một trade `live
   BE, không partial lần hai. Nếu SL đã tốt hơn entry thì giữ nguyên SL đó.
 - `break_even_trade_position`: giữ nguyên TP và dời SL về broker entry; nếu SL
   hiện tại đã hòa vốn hoặc tốt hơn thì command thành công mà không gửi modify.
+
+Auto partial và action `partial_trade_position` dùng cùng nguyên tắc giữ
+`initial_stop_loss`, đóng một phần rồi đưa phần còn lại về broker entry. Điểm
+khác là auto chạy tại trigger R với fraction theo plan/account (mặc định 40%),
+còn action dashboard chạy ngay và đóng 50% volume hiện tại.
 
 API chỉ ghi `account_execution_commands`; worker đúng `account_label` mới được
 gọi MT5. Trước mọi action, worker bắt buộc khớp broker position ticket từ trade

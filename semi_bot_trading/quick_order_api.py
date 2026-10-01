@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+import json
 import uuid
 from typing import Literal
 
@@ -33,6 +34,12 @@ class QuickOrderPreviewRequest(BaseModel):
     entry_price: float | None = Field(default=None, gt=0)
     stop_loss: float | None = Field(default=None, gt=0)
     risk_reward: float = Field(default=DEFAULT_RISK_REWARD, ge=1.0, le=4.0)
+
+
+class QuickOrderLevelsUpdate(BaseModel):
+    entry_price: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    take_profit: float = Field(gt=0)
 
 
 def _accounts(conn, labels: list[str]):
@@ -176,9 +183,107 @@ def register_quick_order_routes(app, config, require_auth):
                 raise HTTPException(404, "Quick order not found")
             conn.execute(
                 """UPDATE quick_order_requests SET status=CASE
-                    WHEN status='pending' THEN 'cancel_requested' ELSE 'cancelled' END,updated_at=?
-                    WHERE client_group_id=? AND status IN ('queued','executing','pending')""",
+                    WHEN status IN ('pending','replace_requested') THEN 'cancel_requested' ELSE 'cancelled' END,updated_at=?
+                    WHERE client_group_id=? AND status IN ('queued','executing','pending','replace_requested')""",
                 (now, group_id),
             )
             conn.commit()
             return _group(conn, group_id)
+
+    @app.patch("/api/quick-orders/{group_id}/levels")
+    def update_quick_order_levels(
+        group_id: str,
+        body: QuickOrderLevelsUpdate,
+        _: str = Depends(require_auth),
+    ):
+        now = datetime.now(UTC).isoformat()
+        with closing(connect(config.database)) as conn:
+            init_db(conn)
+            rows = conn.execute(
+                "SELECT * FROM quick_order_requests WHERE client_group_id=? ORDER BY account_label",
+                (group_id,),
+            ).fetchall()
+            if not rows:
+                raise HTTPException(404, "Quick order not found")
+            if any(str(row["order_type"]) != "limit" for row in rows):
+                raise HTTPException(422, "Only pending Quick Order Limit levels can be edited")
+            active = [row for row in rows if str(row["status"]) not in {"cancelled", "failed", "expired"}]
+            if not active:
+                raise HTTPException(409, "Quick Order is no longer editable")
+            final_statuses = sorted({str(row["status"]) for row in active if str(row["status"]) in {"filled", "closed"}})
+            if final_statuses:
+                raise HTTPException(409, "Quick Order already filled on at least one account")
+            editable_statuses = {"queued", "pending"}
+            busy = sorted({str(row["status"]) for row in active if str(row["status"]) not in editable_statuses})
+            if busy:
+                raise HTTPException(409, f"Quick Order is busy ({', '.join(busy)}); wait for workers and retry")
+
+            row = active[0]
+            side = str(row["side"])
+            valid_geometry = (
+                body.stop_loss < body.entry_price < body.take_profit
+                if side == "buy"
+                else body.take_profit < body.entry_price < body.stop_loss
+            )
+            if not valid_geometry:
+                raise HTTPException(422, f"{side.upper()} levels must keep SL, Entry and TP in the correct order")
+            risk = abs(body.entry_price - body.stop_loss)
+            risk_reward = abs(body.take_profit - body.entry_price) / risk if risk > 0 else 0
+            if not 1.0 <= risk_reward <= 4.0:
+                raise HTTPException(422, f"Quick Order R:R must be between 1.0R and 4.0R; received {risk_reward:.2f}R")
+            preview = _preview(
+                conn,
+                QuickOrderPreviewRequest(
+                    symbol=str(row["symbol"]),
+                    account_labels=[str(item["account_label"]) for item in active],
+                    side=side,
+                    order_type="limit",
+                    entry_price=body.entry_price,
+                    stop_loss=body.stop_loss,
+                    risk_reward=risk_reward,
+                ),
+            )
+            geometry = preview["accounts"][0]
+            replacement = {
+                "entry_price": float(geometry["entry"]),
+                "stop_loss": float(geometry["stop_loss"]),
+                "take_profit": float(geometry["take_profit"]),
+                "risk_reward": float(geometry["risk_reward"]),
+                "atr_h1": float(preview["atr_h1"]),
+                "atr_candle_time": str(preview["atr_candle_time"]),
+                "requested_at": now,
+            }
+            replacement_json = json.dumps(replacement, sort_keys=True)
+            for item in active:
+                if str(item["status"]) == "pending":
+                    conn.execute(
+                        """UPDATE quick_order_requests
+                           SET status='replace_requested',replacement_levels_json=?,replacement_error=NULL,updated_at=?
+                           WHERE id=?""",
+                        (replacement_json, now, item["id"]),
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE quick_order_requests
+                           SET requested_entry=?,requested_stop=?,effective_entry=?,effective_stop=?,take_profit=?,
+                               risk_reward=?,atr_h1=?,atr_candle_time=?,replacement_levels_json='{}',
+                               replacement_error=NULL,updated_at=?
+                           WHERE id=?""",
+                        (
+                            body.entry_price,
+                            body.stop_loss,
+                            replacement["entry_price"],
+                            replacement["stop_loss"],
+                            replacement["take_profit"],
+                            replacement["risk_reward"],
+                            replacement["atr_h1"],
+                            replacement["atr_candle_time"],
+                            now,
+                            item["id"],
+                        ),
+                    )
+            conn.commit()
+            return {
+                **_group(conn, group_id),
+                "requires_broker_replace": any(str(item["status"]) == "pending" for item in active),
+            }

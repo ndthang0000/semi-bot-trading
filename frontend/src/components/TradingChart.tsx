@@ -18,6 +18,7 @@ import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/
 import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
 import { h1ImpulsePreviewToSetupCandidate, previewH1Impulse, type H1ImpulsePreview, type H1ImpulseTargetMode } from "../api/h1Impulse";
 import { updateManualAiPlanLevels } from "../api/manualAi";
+import { updateQuickOrderLevels } from "../api/quickOrder";
 import { isEditableHotkeyTarget } from "../lib/appHotkeys";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { toUnixTime } from "../lib/time";
@@ -652,12 +653,14 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   const beginManualAiLevelDrag = useCallback((event: ReactPointerEvent<HTMLElement>, box: SetupBox, level: ManualAiLevel) => {
     if (manualAiEditSetupId !== box.candidate.id) return;
-    const status = typeof box.candidate.metadata.manual_ai_plan_status === "string"
-      ? box.candidate.metadata.manual_ai_plan_status
-      : "draft";
+    const isQuickOrder = box.candidate.playbook === "quick_order_v1" || box.candidate.metadata.quick_order === true;
+    const status = isQuickOrder
+      ? typeof box.candidate.metadata.quick_order_status === "string" ? box.candidate.metadata.quick_order_status : "queued"
+      : typeof box.candidate.metadata.manual_ai_plan_status === "string" ? box.candidate.metadata.manual_ai_plan_status : "draft";
     const isLocalH1Preview = box.candidate.metadata.h1_impulse_preview === true && box.candidate.metadata.execution_plan !== true;
-    if (!isLocalH1Preview && !["draft", "approved", "armed"].includes(status)) {
-      setDrawError(`Manual AI đang ở trạng thái ${status}; hãy chờ worker hoàn tất rồi thử lại.`);
+    const editableStatuses = isQuickOrder ? ["queued", "pending"] : ["draft", "approved", "armed"];
+    if (!isLocalH1Preview && !editableStatuses.includes(status)) {
+      setDrawError(`Setup đang ở trạng thái ${status}; hãy chờ worker hoàn tất rồi thử lại.`);
       return;
     }
     const takeProfit = box.candidate.take_profit[0];
@@ -779,7 +782,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       return;
     }
     const isH1Impulse = edit.candidate.playbook === "h1_impulse_retest_v1";
-    const rrMin = isH1Impulse ? 1.0 : 1.5;
+    const isQuickOrder = edit.candidate.playbook === "quick_order_v1" || edit.candidate.metadata.quick_order === true;
+    const rrMin = isH1Impulse || isQuickOrder ? 1.0 : 1.5;
     const targetMode = typeof edit.candidate.metadata.target_mode === "string" ? edit.candidate.metadata.target_mode : "fixed_rr";
     const waveTarget = isH1Impulse && (targetMode === "wave_safe" || targetMode === "wave_base");
     const rrMax = waveTarget ? null : 4;
@@ -797,19 +801,27 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         exitManualAiSetupInteraction();
         return;
       }
-      await updateManualAiPlanLevels(edit.candidate.id, {
-        entry_price: entry,
-        stop_loss: stopLoss,
-        take_profit: takeProfit,
-        entry_source: edit.entrySource,
-      });
+      if (isQuickOrder) {
+        await updateQuickOrderLevels(edit.candidate.id, {
+          entry_price: entry,
+          stop_loss: stopLoss,
+          take_profit: takeProfit,
+        });
+      } else {
+        await updateManualAiPlanLevels(edit.candidate.id, {
+          entry_price: entry,
+          stop_loss: stopLoss,
+          take_profit: takeProfit,
+          entry_source: edit.entrySource,
+        });
+      }
       exitManualAiSetupInteraction();
       onEntityCreatedRef.current();
     } catch (error) {
       setManualAiLevelEdit((current) => current ? {
         ...current,
         saving: false,
-        error: error instanceof Error ? error.message : "Không thể cập nhật Manual AI levels.",
+        error: error instanceof Error ? error.message : "Không thể cập nhật setup levels.",
       } : current);
     }
   }, [exitManualAiSetupInteraction, manualAiLevelEdit, updateH1ImpulsePreviewLevels]);
@@ -835,12 +847,14 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         ...payloadRef.current.layers.setup_candidates,
         ...h1ImpulsePreviewsRef.current,
       ].find((item) => item.id === selectedSetupId);
-      const status = typeof candidate?.metadata.manual_ai_plan_status === "string"
-        ? candidate.metadata.manual_ai_plan_status
-        : "draft";
+      const isQuickOrder = candidate?.playbook === "quick_order_v1" || candidate?.metadata.quick_order === true;
+      const status = isQuickOrder
+        ? typeof candidate?.metadata.quick_order_status === "string" ? candidate.metadata.quick_order_status : "queued"
+        : typeof candidate?.metadata.manual_ai_plan_status === "string" ? candidate.metadata.manual_ai_plan_status : "draft";
       const editableH1Preview = candidate?.playbook === "h1_impulse_retest_v1"
         && (candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(status));
-      if (!candidate || (candidate.playbook !== "manual_ai_v1" && !editableH1Preview) || (!editableH1Preview && !["draft", "approved", "armed"].includes(status))) return;
+      const editableQuickOrder = isQuickOrder && ["queued", "pending"].includes(status);
+      if (!candidate || (candidate.playbook !== "manual_ai_v1" && !editableH1Preview && !editableQuickOrder) || (!editableH1Preview && !editableQuickOrder && !["draft", "approved", "armed"].includes(status))) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       setManualAiEditSetupId(candidate.id);
@@ -2337,9 +2351,9 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           const outcomeStatus = typeof previewOutcome.status === "string" ? previewOutcome.status : "open";
           const resultR = typeof previewOutcome.result_r === "number" ? previewOutcome.result_r : null;
           const entrySource = setupEntrySourceLabel(candidate);
-          const planStatus = typeof candidate.metadata.manual_ai_plan_status === "string"
-            ? candidate.metadata.manual_ai_plan_status
-            : "pending";
+          const planStatus = isQuickOrder
+            ? typeof candidate.metadata.quick_order_status === "string" ? candidate.metadata.quick_order_status : "queued"
+            : typeof candidate.metadata.manual_ai_plan_status === "string" ? candidate.metadata.manual_ai_plan_status : "pending";
           const statusLabel = isH1ImpulsePreview
             ? `${outcomeStatus.toUpperCase()}${resultR === null ? "" : ` ${resultR > 0 ? "+" : ""}${resultR.toFixed(2)}R`}`
             : planStatus === "draft" ? "DRAFT" : planStatus === "replace_requested" ? "REPLACING" : "PENDING";
@@ -2350,7 +2364,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
             ? `${statusLabel} · H1 Impulse · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`
             : `${statusLabel} · ${isQuickOrder ? "Quick Order" : "Manual AI"} · ${candidate.risk_reward?.toFixed(2) ?? "--"}R · ${entrySource}`;
           const canEdit = isQuickOrder
-            ? false
+            ? ["queued", "pending"].includes(planStatus)
             : isH1ImpulsePreview
               ? candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(planStatus)
               : ["draft", "approved", "armed"].includes(planStatus);
@@ -2565,7 +2579,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
           saving={manualAiLevelEdit.saving}
           entrySource={manualAiLevelEdit.entrySource}
           entryOptions={readEntryOptions(manualAiLevelEdit.candidate.metadata.entry_options)}
-          rrMin={manualAiLevelEdit.candidate.playbook === "h1_impulse_retest_v1" ? 1 : 1.5}
+          rrMin={["h1_impulse_retest_v1", "quick_order_v1"].includes(manualAiLevelEdit.candidate.playbook) ? 1 : 1.5}
           rrMax={manualAiLevelEdit.candidate.playbook === "h1_impulse_retest_v1" && ["wave_safe", "wave_base"].includes(String(manualAiLevelEdit.candidate.metadata.target_mode)) ? null : 4}
           onEntrySourceSelect={selectSetupEntrySource}
           onLevelsChange={updateManualAiEditLevels}

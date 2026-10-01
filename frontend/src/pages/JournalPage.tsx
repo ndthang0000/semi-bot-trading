@@ -129,6 +129,12 @@ function metaVal(m: Record<string, unknown>, key: string): string {
   return "-";
 }
 
+function metaNumber(m: Record<string, unknown>, key: string): number | null {
+  const raw = m?.[key] ?? (m?.candidate_metadata as Record<string, unknown> | undefined)?.[key];
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
 function reviewOrEmpty(review: TradeReview | null | undefined) {
   return {
     strategy: review?.strategy_review ?? {},
@@ -224,8 +230,12 @@ function DetailPanel({ trade, group, reviewTargetId, onClose, onSaved }: {
   });
 
   const firstTakeProfit = firstTakeProfitPrice(trade);
-  const rr = firstTakeProfit !== null && trade.entry_price !== null && trade.stop_loss !== null
-    ? Math.abs((firstTakeProfit - trade.entry_price) / (trade.entry_price - trade.stop_loss))
+  const originalStopLoss = metaNumber(trade.metadata, "initial_stop_loss") ?? trade.stop_loss;
+  const currentStopLoss = metaNumber(trade.metadata, "current_stop_loss") ?? trade.stop_loss;
+  const stopWasMoved = originalStopLoss !== null && currentStopLoss !== null
+    && Math.abs(originalStopLoss - currentStopLoss) > 1e-6;
+  const rr = firstTakeProfit !== null && trade.entry_price !== null && originalStopLoss !== null
+    ? Math.abs((firstTakeProfit - trade.entry_price) / (trade.entry_price - originalStopLoss))
     : null;
   const lifecycleStatus = tradeLifecycleStatus(trade);
 
@@ -273,10 +283,11 @@ function DetailPanel({ trade, group, reviewTargetId, onClose, onSaved }: {
           ["Direction", trade.direction ?? trade.side],
           ["Entry", trade.entry_price?.toFixed(2) ?? "-"],
           ["Volume", `${trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })} lot`],
-          ["Stop Loss", trade.stop_loss?.toFixed(2) ?? "-"],
+          ["Original Stop Loss", originalStopLoss?.toFixed(2) ?? "-"],
+          ...(stopWasMoved ? [["Current Stop Loss", currentStopLoss?.toFixed(2) ?? "-"] as [string, string]] : []),
           ["Take Profit", takeProfitPrices(trade).map((price) => price.toFixed(2)).join(" / ") || "-"],
           ["Close Price", trade.close_price?.toFixed(2) ?? "-"],
-          ["R:R", rr ? `1:${rr.toFixed(2)}` : "-"],
+          ["R:R", rr !== null ? `1:${rr.toFixed(2)}` : "-"],
           ["PnL (R)", trade.pnl_r !== null ? `${trade.pnl_r >= 0 ? "+" : ""}${trade.pnl_r.toFixed(2)}R` : "-"],
           ["Opened", fmt(trade.opened_at)],
           ["Closed", fmt(trade.closed_at)],
@@ -819,6 +830,10 @@ function TradeRow({ group, showGroupContext, selected, onClick }: {
   const accountExecutions = groupAccountExecutions(group);
   const lifecycleStatus = tradeLifecycleStatus(trade);
   const takeProfits = takeProfitPrices(trade);
+  const originalStopLoss = metaNumber(trade.metadata, "initial_stop_loss") ?? trade.stop_loss;
+  const currentStopLoss = metaNumber(trade.metadata, "current_stop_loss") ?? trade.stop_loss;
+  const stopWasMoved = originalStopLoss !== null && currentStopLoss !== null
+    && Math.abs(originalStopLoss - currentStopLoss) > 1e-6;
   return (
     <tr
       onClick={onClick}
@@ -851,7 +866,10 @@ function TradeRow({ group, showGroupContext, selected, onClick }: {
         {trade.quantity.toLocaleString("en", { maximumFractionDigits: 4 })}
       </td>
       <td className="px-3 py-2 text-slate-400">{trade.entry_price?.toFixed(2) ?? "-"}</td>
-      <td className="px-3 py-2 text-slate-400">{trade.stop_loss?.toFixed(2) ?? "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-slate-400" title={stopWasMoved ? `Original ${originalStopLoss?.toFixed(2)} · Current ${currentStopLoss?.toFixed(2)}` : "Original Stop Loss"}>
+        {originalStopLoss?.toFixed(2) ?? "-"}
+        {stopWasMoved ? <span className="ml-1 text-[10px] text-cyan-300">→ {currentStopLoss?.toFixed(2)}</span> : null}
+      </td>
       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{takeProfits.map((price) => price.toFixed(2)).join(" / ") || "-"}</td>
       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{trade.close_price?.toFixed(2) ?? "-"}</td>
       <td className="whitespace-nowrap px-3 py-2 text-right font-semibold">

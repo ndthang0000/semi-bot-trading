@@ -98,6 +98,78 @@ class ApiTest(unittest.TestCase):
             with connect(db_path) as conn:
                 self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM quick_order_requests").fetchone()[0])
 
+    def test_quick_order_limit_levels_update_directly_or_request_broker_replace(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, db_path)
+            start = datetime.now(UTC) - timedelta(hours=16)
+            with connect(db_path) as conn:
+                init_db(conn)
+                for index in range(15):
+                    opened = start + timedelta(hours=index)
+                    conn.execute(
+                        """INSERT INTO candles
+                           (id,symbol,timeframe,open_time,close_time,open,high,low,close,volume,source)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (f"quick-edit-{index}", "XAUUSD", "H1", opened.isoformat(),
+                         (opened + timedelta(hours=1)).isoformat(), 4300, 4310, 4290, 4300, 1, "test"),
+                    )
+                now = datetime.now(UTC).isoformat()
+                conn.execute(
+                    """INSERT INTO account_execution_controls
+                       (account_label,requested_enabled,effective_enabled,hard_enabled,worker_status,broker_symbol,heartbeat_at,updated_at)
+                       VALUES ('FTMO',1,1,1,'online','XAUUSDm',?,?)""",
+                    (now, now),
+                )
+                conn.execute(
+                    """INSERT INTO spread_snapshots
+                       (id,account_label,symbol,broker_symbol,bid,ask,spread,snapshot_at)
+                       VALUES ('quote-edit','FTMO','XAUUSD','XAUUSDm',4299.7,4300.0,0.3,?)""",
+                    (now,),
+                )
+                conn.commit()
+            client = authenticated_test_client(root, config_path)
+            try:
+                created = client.post("/api/quick-orders", json={
+                    "client_request_id": "quick-edit-levels-1",
+                    "symbol": "XAUUSD",
+                    "account_labels": ["FTMO"],
+                    "side": "buy",
+                    "order_type": "limit",
+                    "entry_price": 4290,
+                    "stop_loss": 4275,
+                    "risk_reward": 2,
+                    "expires_in_minutes": 240,
+                })
+                self.assertEqual(200, created.status_code)
+                group_id = created.json()["id"]
+                direct = client.patch(
+                    f"/api/quick-orders/{group_id}/levels",
+                    json={"entry_price": 4288, "stop_loss": 4275, "take_profit": 4314},
+                )
+                self.assertEqual(200, direct.status_code)
+                self.assertFalse(direct.json()["requires_broker_replace"])
+                with connect(db_path) as conn:
+                    row = conn.execute("SELECT id,effective_entry,effective_stop,take_profit FROM quick_order_requests").fetchone()
+                    self.assertEqual((4288.0, 4275.0, 4314.0), tuple(row)[1:])
+                    conn.execute("UPDATE quick_order_requests SET status='pending' WHERE id=?", (row["id"],))
+                    conn.commit()
+                pending = client.patch(
+                    f"/api/quick-orders/{group_id}/levels",
+                    json={"entry_price": 4287, "stop_loss": 4274, "take_profit": 4313},
+                )
+                self.assertEqual(200, pending.status_code)
+                self.assertTrue(pending.json()["requires_broker_replace"])
+            finally:
+                client.close()
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+            with connect(db_path) as conn:
+                row = conn.execute("SELECT status,replacement_levels_json FROM quick_order_requests").fetchone()
+                self.assertEqual("replace_requested", row["status"])
+                self.assertEqual(4287.0, json.loads(row["replacement_levels_json"])["entry_price"])
+
     def test_h1_wave_target_accepts_rr_below_fixed_rr_floor(self) -> None:
         rr = validate_manual_ai_levels(
             "sell",

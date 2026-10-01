@@ -354,6 +354,8 @@ CREATE TABLE IF NOT EXISTS quick_order_requests (
     trade_idea_id TEXT,
     execution_request_id TEXT,
     failure_reason TEXT,
+    replacement_levels_json TEXT NOT NULL DEFAULT '{}',
+    replacement_error TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(client_request_id, account_label),
@@ -686,6 +688,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "liquidity_sweep_states", "extreme_price", "REAL")
     ensure_column(conn, "manual_ai_plans", "replacement_levels_json", "TEXT NOT NULL DEFAULT '{}'")
     ensure_column(conn, "manual_ai_plans", "replacement_error", "TEXT")
+    ensure_column(conn, "quick_order_requests", "replacement_levels_json", "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column(conn, "quick_order_requests", "replacement_error", "TEXT")
     backfill_liquidity_sweep_state_columns(conn)
     migrate_alert_event_indexes(conn)
     ensure_account_scoped_indexes(conn)

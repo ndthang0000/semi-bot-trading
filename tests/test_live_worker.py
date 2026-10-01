@@ -367,8 +367,15 @@ class TestAccountExecutionCommands(unittest.TestCase):
                     take_profit=3040.0, magic=260612, comment="Dashboard partial BE",
                 )
                 trade = conn.execute("SELECT stop_loss, metadata_json FROM trade_orders WHERE id = 'managed-trade'").fetchone()
-                partial = json.loads(trade["metadata_json"])["partial_take_profit"]
+                metadata = json.loads(trade["metadata_json"])
+                partial = metadata["partial_take_profit"]
                 self.assertEqual(3000, trade["stop_loss"])
+                self.assertEqual(2980, metadata["initial_stop_loss"])
+                self.assertEqual(3000, metadata["current_stop_loss"])
+                history = metadata["trade_management"]["history"][-1]
+                self.assertEqual(2980, history["initial_stop_loss"])
+                self.assertEqual(2980, history["stop_loss_before"])
+                self.assertEqual(3000, history["stop_loss_after"])
                 self.assertTrue(partial["done"])
                 self.assertTrue(partial["breakeven_applied"])
                 self.assertEqual(0.1, partial["closed_volume"])
@@ -921,6 +928,21 @@ class TestProcessQuickOrders(unittest.TestCase):
         self._conn.close()
         self._tmp.cleanup()
 
+    def _place_pending_limit(self):
+        self._conn.execute(
+            """UPDATE quick_order_requests
+               SET order_type='limit',requested_entry=2990,requested_stop=2970,
+                   effective_entry=2990,effective_stop=2970,take_profit=3020,risk_reward=1.5
+               WHERE id='quick-1'"""
+        )
+        self._conn.commit()
+        client = _fake_client(current_price=3000.0)
+        with patch("semi_bot_trading.live_worker.build_risk_manager", return_value=_fake_risk_manager(lot_size=0.12)):
+            process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+        row = self._conn.execute("SELECT status FROM quick_order_requests WHERE id='quick-1'").fetchone()
+        self.assertEqual("pending", row["status"])
+        return client
+
     def test_market_order_executes_once_with_live_atr_geometry(self):
         client = _fake_client(current_price=4300.0)
         with patch("semi_bot_trading.live_worker.build_risk_manager", return_value=_fake_risk_manager(lot_size=0.12)):
@@ -935,6 +957,70 @@ class TestProcessQuickOrders(unittest.TestCase):
         self.assertEqual(4280.0, order["stop_loss"])
         self.assertEqual(0.12, order["quantity"])
         client.place_market_order.assert_called_once()
+
+    def test_pending_limit_replace_cancels_old_ticket_and_requeues_new_levels(self):
+        client = self._place_pending_limit()
+        replacement = {
+            "entry_price": 2988,
+            "stop_loss": 2968,
+            "take_profit": 3028,
+            "risk_reward": 2,
+            "atr_h1": 20,
+            "atr_candle_time": datetime.now(UTC).isoformat(),
+        }
+        self._conn.execute(
+            "UPDATE quick_order_requests SET status='replace_requested',replacement_levels_json=? WHERE id='quick-1'",
+            (json.dumps(replacement),),
+        )
+        self._conn.commit()
+        client.get_pending_order_state.return_value = "pending"
+
+        process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+
+        client.cancel_pending_order.assert_called_once_with(
+            "XAUUSDm", order_ticket="33333", comment="Quick Order replace"
+        )
+        quick = self._conn.execute(
+            """SELECT status,effective_entry,effective_stop,take_profit,risk_reward,
+                      trade_idea_id,execution_request_id,replacement_levels_json
+               FROM quick_order_requests WHERE id='quick-1'"""
+        ).fetchone()
+        order = self._conn.execute("SELECT status FROM trade_orders ORDER BY created_at DESC LIMIT 1").fetchone()
+        request = self._conn.execute("SELECT status FROM execution_requests ORDER BY created_at DESC LIMIT 1").fetchone()
+        self.assertEqual(("queued", 2988.0, 2968.0, 3028.0, 2.0, None, None, "{}"), tuple(quick))
+        self.assertEqual("cancelled", order["status"])
+        self.assertEqual("cancelled", request["status"])
+
+        with patch("semi_bot_trading.live_worker.build_risk_manager", return_value=_fake_risk_manager(lot_size=0.06)):
+            process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+        replaced = self._conn.execute(
+            "SELECT status,trade_idea_id,execution_request_id FROM quick_order_requests WHERE id='quick-1'"
+        ).fetchone()
+        self.assertEqual("pending", replaced["status"])
+        self.assertIsNotNone(replaced["trade_idea_id"])
+        self.assertIsNotNone(replaced["execution_request_id"])
+        self.assertEqual(2, client.place_limit_order.call_count)
+
+    def test_pending_limit_replace_never_cancels_a_filled_ticket(self):
+        client = self._place_pending_limit()
+        self._conn.execute(
+            "UPDATE quick_order_requests SET status='replace_requested',replacement_levels_json=? WHERE id='quick-1'",
+            (json.dumps({"entry_price": 2988, "stop_loss": 2968, "take_profit": 3028, "risk_reward": 2}),),
+        )
+        self._conn.commit()
+        client.get_pending_order_state.return_value = "filled"
+
+        process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+
+        client.cancel_pending_order.assert_not_called()
+        quick = self._conn.execute("SELECT status,effective_entry FROM quick_order_requests WHERE id='quick-1'").fetchone()
+        self.assertEqual(("replace_requested", 2990.0), tuple(quick))
+
+        self._conn.execute("UPDATE trade_orders SET status='filled' WHERE status='pending_fill'")
+        self._conn.commit()
+        process_quick_orders(self._conn, self._config, self._env, client, "XAUUSDm", datetime.now(UTC))
+        quick = self._conn.execute("SELECT status,effective_entry FROM quick_order_requests WHERE id='quick-1'").fetchone()
+        self.assertEqual(("filled", 2990.0), tuple(quick))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

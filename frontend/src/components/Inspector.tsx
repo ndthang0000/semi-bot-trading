@@ -1022,9 +1022,14 @@ function SetupCard({
     : "draft";
   const isH1ImpulsePreview = candidate.playbook === "h1_impulse_retest_v1";
   const isQuickOrder = candidate.playbook === "quick_order_v1" || candidate.metadata.quick_order === true;
+  const quickOrderStatus = typeof candidate.metadata.quick_order_status === "string"
+    ? candidate.metadata.quick_order_status
+    : "queued";
   const canEditLevels = candidate.playbook === "manual_ai_v1"
     ? ["draft", "approved", "armed"].includes(manualAiPlanStatus)
-    : isH1ImpulsePreview && (candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(manualAiPlanStatus));
+    : isH1ImpulsePreview
+      ? candidate.metadata.execution_plan !== true || ["draft", "approved", "armed"].includes(manualAiPlanStatus)
+      : isQuickOrder && ["queued", "pending"].includes(quickOrderStatus);
   const previewOutcome = readPreviewOutcome(candidate);
   const entrySource = setupEntrySource(candidate);
   const rawEntrySource = typeof candidate.metadata.entry_source === "string" ? candidate.metadata.entry_source : "strategy_calculated";
@@ -1206,6 +1211,11 @@ function SetupCard({
       {typeof candidate.metadata.manual_ai_replace_error === "string" ? (
         <div className="mt-1 rounded border border-rose-500/30 bg-rose-950/50 px-2 py-1 text-[10px] leading-4 text-rose-200">
           Replace failed: {candidate.metadata.manual_ai_replace_error}
+        </div>
+      ) : null}
+      {Array.isArray(candidate.metadata.quick_order_replace_errors) && candidate.metadata.quick_order_replace_errors.length > 0 ? (
+        <div className="mt-1 rounded border border-rose-500/30 bg-rose-950/50 px-2 py-1 text-[10px] leading-4 text-rose-200">
+          Replace failed: {candidate.metadata.quick_order_replace_errors.join(" · ")}
         </div>
       ) : null}
       {trigger ? (

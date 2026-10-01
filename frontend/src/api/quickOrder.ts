@@ -33,9 +33,9 @@ export type QuickOrderPreview = {
   }>;
 };
 
-async function request<T>(path: string, body: unknown): Promise<T> {
+async function request<T>(path: string, body: unknown, method = "POST"): Promise<T> {
   const response = await authFetch(path, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -55,3 +55,12 @@ export const cancelQuickOrder = (groupId: string) =>
     `/api/quick-orders/${encodeURIComponent(groupId)}/cancel`,
     undefined,
   );
+
+export const updateQuickOrderLevels = (
+  groupId: string,
+  body: { entry_price: number; stop_loss: number; take_profit: number },
+) => request<{ id: string; account_statuses: Record<string, string>; requires_broker_replace: boolean }>(
+  `/api/quick-orders/${encodeURIComponent(groupId)}/levels`,
+  body,
+  "PATCH",
+);

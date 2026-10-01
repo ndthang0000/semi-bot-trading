@@ -403,7 +403,7 @@ def load_quick_order_setup_candidates(
         SELECT * FROM quick_order_requests
         WHERE symbol = ?
           AND order_type = 'limit'
-          AND status IN ('queued', 'executing', 'pending', 'cancel_requested')
+          AND status IN ('queued', 'executing', 'pending', 'cancel_requested', 'replace_requested')
         ORDER BY created_at ASC, account_label ASC
         """,
         (symbol,),
@@ -413,10 +413,26 @@ def load_quick_order_setup_candidates(
         grouped_rows.setdefault(str(row["client_group_id"]), []).append(row)
 
     candidates: list[dict[str, Any]] = []
-    status_order = {"queued": 0, "executing": 1, "pending": 2, "cancel_requested": 3}
+    status_order = {"queued": 0, "executing": 1, "pending": 2, "replace_requested": 3, "cancel_requested": 4}
     for group_id, group in grouped_rows.items():
         row = max(group, key=lambda item: status_order.get(str(item["status"]), -1))
         group_status = str(row["status"])
+        replacement = {}
+        if group_status == "replace_requested":
+            try:
+                parsed_replacement = json.loads(row["replacement_levels_json"] or "{}")
+                replacement = parsed_replacement if isinstance(parsed_replacement, dict) else {}
+            except (TypeError, ValueError):
+                replacement = {}
+        entry = float(replacement.get("entry_price", row["effective_entry"]))
+        stop_loss = float(replacement.get("stop_loss", row["effective_stop"]))
+        take_profit = float(replacement.get("take_profit", row["take_profit"]))
+        risk_reward = float(replacement.get("risk_reward", row["risk_reward"]))
+        replacement_errors = [
+            str(item["replacement_error"])
+            for item in group
+            if item["replacement_error"]
+        ]
         account_labels = sorted(str(item["account_label"]) for item in group)
         account_statuses = [
             {"account_label": str(item["account_label"]), "status": str(item["status"])}
@@ -432,10 +448,10 @@ def load_quick_order_setup_candidates(
                 "status": "waiting_confirmation",
                 "zone_reaction_state": "limit_pending",
                 "score": 1.0,
-                "entry": float(row["effective_entry"]),
-                "stop_loss": float(row["effective_stop"]),
-                "take_profit": [float(row["take_profit"])],
-                "risk_reward": float(row["risk_reward"]),
+                "entry": entry,
+                "stop_loss": stop_loss,
+                "take_profit": [take_profit],
+                "risk_reward": risk_reward,
                 "primary_zone_id": None,
                 "related_zone_ids": [],
                 "trigger_point_ids": [],
@@ -446,6 +462,8 @@ def load_quick_order_setup_candidates(
                     "quick_order": True,
                     "quick_order_group_id": group_id,
                     "quick_order_status": group_status,
+                    "quick_order_replace_pending": group_status == "replace_requested",
+                    "quick_order_replace_errors": replacement_errors,
                     "created_at": str(row["created_at"]),
                     "limit_expires_at": str(row["expires_at"]),
                     "account_label": row["account_label"],
