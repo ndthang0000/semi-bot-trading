@@ -7,7 +7,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .chart import build_chart_payload
+from .chart import CHART_INDICATOR_WARMUP_CANDLES, build_chart_payload, load_chart_indicator_candles
 from .config import AppConfig
 from .db import connect, init_db
 
@@ -46,7 +46,7 @@ def build_chart_payload_from_query(config: AppConfig, query: dict[str, list[str]
 
     with connect(config.database) as conn:
         init_db(conn)
-        return build_chart_payload(
+        payload = build_chart_payload(
             conn,
             symbol=symbol,
             timeframe=timeframe,
@@ -56,6 +56,14 @@ def build_chart_payload_from_query(config: AppConfig, query: dict[str, list[str]
             active_zones_only=active_zones_only,
             structure_timeframe=config.bias.timeframe,
         )
+        payload["layers"]["indicator_candles"] = load_chart_indicator_candles(
+            conn,
+            symbol,
+            timeframe,
+            payload["layers"]["candles"],
+            CHART_INDICATOR_WARMUP_CANDLES,
+        )
+        return payload
 
 
 class TradingChartRequestHandler(SimpleHTTPRequestHandler):

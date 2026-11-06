@@ -19,6 +19,7 @@ from .zones import CandleSlice, latest_atr
 
 
 CHART_PAYLOAD_VERSION = 1
+CHART_INDICATOR_WARMUP_CANDLES = 1_000
 MAX_TOUCH_ONLY_M15_TRIGGER_OVERLAYS = 500
 WAVE_METRIC_LEG_LIMIT = 12
 WAVE_STRENGTH_SAMPLE_SIZE = 4
@@ -840,6 +841,34 @@ def chart_candle_rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def load_chart_indicator_candles(
+    conn: Connection,
+    symbol: str,
+    timeframe: str,
+    visible_candles: list[dict[str, Any]],
+    warmup_bars: int = CHART_INDICATOR_WARMUP_CANDLES,
+) -> list[dict[str, Any]]:
+    if not visible_candles:
+        return []
+    if warmup_bars <= 0:
+        return list(visible_candles)
+
+    # The warm-up history is calculation-only. Include the first visible bar
+    # in this query, then de-duplicate it when combining both windows.
+    historical = load_chart_candles(
+        conn,
+        symbol,
+        timeframe,
+        warmup_bars + 1,
+        end=str(visible_candles[0]["time"]),
+    )
+    by_time = {
+        str(candle["time"]): candle
+        for candle in [*historical, *visible_candles]
+    }
+    return [by_time[time] for time in sorted(by_time)]
 
 
 def load_chart_structure(

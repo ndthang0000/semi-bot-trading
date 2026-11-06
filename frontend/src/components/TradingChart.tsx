@@ -77,6 +77,7 @@ import { levelStatusLabel, selectIntradayLevels } from "./chart/intradayMap";
 import { formatWaveDuration, formatWaveLegLabel } from "./chart/waveMetrics";
 import { type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
+import { buildEmaSeriesData } from "./chart/ema";
 import {
   clampNumber,
   compactTradeGroupSummary,
@@ -155,6 +156,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const scaleAnchorSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const zigzagSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema34SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const setSelected = useChartStore((state) => state.setSelected);
   const selected = useChartStore((state) => state.selected);
   const selectedSetupId = useChartStore((state) => state.selectedSetupId);
@@ -171,6 +174,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooks = useChartStore((state) => state.selectedPlaybooks);
   const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showEma = useChartStore((state) => state.showEma);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -233,6 +237,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const selectedPlaybooksRef = useRef(selectedPlaybooks);
   const showHistoricalLiquiditySweepsRef = useRef(showHistoricalLiquiditySweeps);
   const showStructureRef = useRef(showStructure);
+  const showEmaRef = useRef(showEma);
   const showIntradayLevelsRef = useRef(showIntradayLevels);
   const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
   const showH1ImpulseCandidatesRef = useRef(showH1ImpulseCandidates);
@@ -255,6 +260,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
   const persistedZoneDraftRef = useRef<PriceZone | null>(null);
   const candleDataRef = useRef<CandleDatum[]>([]);
+  const ema34DataRef = useRef<ReturnType<typeof buildEmaSeriesData>>([]);
+  const ema200DataRef = useRef<ReturnType<typeof buildEmaSeriesData>>([]);
   const appliedCandleDataRef = useRef<CandleDatum[]>([]);
   const appliedCandleKeyRef = useRef<string | null>(null);
   const appliedViewKeyRef = useRef<string | null>(null);
@@ -275,6 +282,27 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     ),
     [payload.layers.candles],
   );
+  const indicatorCandleData = useMemo(
+    () => normalizeCandleData(
+      (payload.layers.indicator_candles ?? payload.layers.candles).map((candle) => ({
+        time: toUnixTime(candle.time),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+      })),
+    ),
+    [payload.layers.candles, payload.layers.indicator_candles],
+  );
+  const visibleFrom = candleData[0]?.time;
+  const ema34Data = useMemo(
+    () => buildEmaSeriesData(indicatorCandleData, 34, visibleFrom),
+    [indicatorCandleData, visibleFrom],
+  );
+  const ema200Data = useMemo(
+    () => buildEmaSeriesData(indicatorCandleData, 200, visibleFrom),
+    [indicatorCandleData, visibleFrom],
+  );
   // Include every OHLC value. MT5 can finalize/correct a candle after the tab
   // was backgrounded, so tracking only the latest close leaves stale history.
   const candleKey = useMemo(
@@ -289,6 +317,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   selectedPlaybooksRef.current = selectedPlaybooks;
   showHistoricalLiquiditySweepsRef.current = showHistoricalLiquiditySweeps;
   showStructureRef.current = showStructure;
+  showEmaRef.current = showEma;
   showIntradayLevelsRef.current = showIntradayLevels;
   showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
   showH1ImpulseCandidatesRef.current = showH1ImpulseCandidates;
@@ -308,6 +337,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   drawingsRef.current = drawings;
   drawPreviewZoneRef.current = drawPreviewZone;
   candleDataRef.current = candleData;
+  ema34DataRef.current = ema34Data;
+  ema200DataRef.current = ema200Data;
 
   useEffect(() => {
     if (!selectedSetupId) return;
@@ -1488,6 +1519,11 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   }, [payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructure]);
 
   useEffect(() => {
+    ema34SeriesRef.current?.setData(showEma ? ema34Data : []);
+    ema200SeriesRef.current?.setData(showEma ? ema200Data : []);
+  }, [ema34Data, ema200Data, showEma]);
+
+  useEffect(() => {
     if (!zoneFocusRequest || handledZoneFocusRequestRef.current === zoneFocusRequest.id) return;
     handledZoneFocusRequestRef.current = zoneFocusRequest.id;
     focusZoneOnChart(chartRef.current, zoneFocusRequest.zone, payloadRef.current.layers.candles, scheduleOverlayRecalc);
@@ -1568,16 +1604,36 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       lineWidth: 1,
       priceLineVisible: false,
     });
+    const ema34Series = chart.addSeries(LineSeries, {
+      color: "#22d3ee",
+      crosshairMarkerVisible: true,
+      lastValueVisible: true,
+      lineWidth: 1,
+      priceLineVisible: false,
+      title: "EMA 34",
+    });
+    const ema200Series = chart.addSeries(LineSeries, {
+      color: "#e879f9",
+      crosshairMarkerVisible: true,
+      lastValueVisible: true,
+      lineWidth: 1,
+      priceLineVisible: false,
+      title: "EMA 200",
+    });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     scaleAnchorSeriesRef.current = scaleAnchorSeries;
     zigzagSeriesRef.current = zigzagSeries;
+    ema34SeriesRef.current = ema34Series;
+    ema200SeriesRef.current = ema200Series;
     candleSeries.setData(candleDataRef.current);
     scaleAnchorSeries.setData(
       buildScaleAnchorData(candleDataRef.current, scaleEventsForViewport(container.clientWidth, newsDataRef.current?.events ?? [])),
     );
     zigzagSeries.setData(buildZigZagSeriesData(payload.layers.structure, payload.range.end, payload.replay?.as_of, showStructureRef.current));
+    ema34Series.setData(showEmaRef.current ? ema34DataRef.current : []);
+    ema200Series.setData(showEmaRef.current ? ema200DataRef.current : []);
     payloadRef.current = payload;
     appliedCandleKeyRef.current = candleKey;
     appliedCandleDataRef.current = candleDataRef.current;
@@ -1737,6 +1793,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       candleSeriesRef.current = null;
       scaleAnchorSeriesRef.current = null;
       zigzagSeriesRef.current = null;
+      ema34SeriesRef.current = null;
+      ema200SeriesRef.current = null;
     };
   }, [
     finishZoneDrag,

@@ -878,7 +878,9 @@ cd C:\workspace\semi-bot-trading
 
 The script fast-forwards `main` from `codex/dev-local`, installs Python and Node
 dependencies, builds the frontend, runs Python tests, pushes `main`, restarts the
-API, waits for `/api/health`, and only then starts both LIVE workers. Use
+API, waits for `/api/health`, and only then starts the installed LIVE workers.
+The API and Exness tasks are required; the FTMO task is optional and is skipped
+when it has been removed from the home PC. Use
 `-SkipTests` or `-SkipPush` only when intentionally bypassing those steps.
 
 The installer refuses to register tasks when `PRAGMA quick_check` reports a

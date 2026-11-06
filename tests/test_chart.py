@@ -153,6 +153,7 @@ class ChartPayloadTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "XAUUSD")
         self.assertEqual(payload["timeframe"], "M15")
         self.assertEqual(len(payload["layers"]["candles"]), 2)
+        self.assertNotIn("indicator_candles", payload["layers"])
         self.assertIn("structure", payload["layers"])
         self.assertEqual(payload["layers"]["structure_timeframe"], "H1")
         self.assertIn("wave_metrics", payload["layers"])

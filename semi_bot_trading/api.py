@@ -65,10 +65,12 @@ from .auth import (
     verify_password,
 )
 from .chart import (
+    CHART_INDICATOR_WARMUP_CANDLES,
     build_atr_snapshot,
     build_chart_payload,
     build_wave_metrics,
     load_chart_candles,
+    load_chart_indicator_candles,
     load_chart_structure,
     trade_order_row_to_chart,
 )
@@ -660,7 +662,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 if replay_at:
                     if replay_start is None:
                         raise HTTPException(status_code=422, detail="replay_start is required when replay_at is provided")
-                    return build_realtime_replay_payload(
+                    payload = build_realtime_replay_payload(
                         conn,
                         config,
                         symbol=symbol or config.symbol,
@@ -671,19 +673,27 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                         active_zones_only=active_zones_only,
                         allowed_playbooks=allowed_playbooks,
                     )
-                payload = build_chart_payload(
+                else:
+                    payload = build_chart_payload(
+                        conn,
+                        symbol=symbol or config.symbol,
+                        timeframe=timeframe.upper(),
+                        limit=limit,
+                        start_index=start_index,
+                        start=start,
+                        end=end,
+                        active_zones_only=active_zones_only,
+                        structure_timeframe=config.bias.timeframe,
+                        strategy_config=config.strategy,
+                        allowed_playbooks=allowed_playbooks,
+                        macro_trend_config=config.macro_trend,
+                    )
+                payload["layers"]["indicator_candles"] = load_chart_indicator_candles(
                     conn,
-                    symbol=symbol or config.symbol,
-                    timeframe=timeframe.upper(),
-                    limit=limit,
-                    start_index=start_index,
-                    start=start,
-                    end=end,
-                    active_zones_only=active_zones_only,
-                    structure_timeframe=config.bias.timeframe,
-                    strategy_config=config.strategy,
-                    allowed_playbooks=allowed_playbooks,
-                    macro_trend_config=config.macro_trend,
+                    symbol or config.symbol,
+                    timeframe.upper(),
+                    payload["layers"]["candles"],
+                    CHART_INDICATOR_WARMUP_CANDLES,
                 )
                 return payload
         except ValueError as exc:

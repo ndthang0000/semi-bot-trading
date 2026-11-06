@@ -334,6 +334,7 @@ function MobileLayersPanel({ accountLabels }: { accountLabels: string[] }) {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showEma = useChartStore((state) => state.showEma);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -347,6 +348,7 @@ function MobileLayersPanel({ accountLabels }: { accountLabels: string[] }) {
   const setShowZones = useChartStore((state) => state.setShowZones);
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
+  const setShowEma = useChartStore((state) => state.setShowEma);
   const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
   const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
   const setShowH1ImpulseCandidates = useChartStore((state) => state.setShowH1ImpulseCandidates);
@@ -399,6 +401,7 @@ function MobileLayersPanel({ accountLabels }: { accountLabels: string[] }) {
         ))}
       </div>
       <MobileToggleRow checked={showStructure} disabled={structureRequired} label="Structure + ZigZag" onChange={setShowStructure} />
+      <MobileToggleRow checked={showEma} label="EMA 34 + EMA 200" onChange={setShowEma} />
       <MobileToggleRow checked={showIntradayLevels} label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
       <MobileToggleRow
         checked={showBrokenIntradayLevels}
@@ -890,6 +893,7 @@ function LayerMenu() {
   const showZones = useChartStore((state) => state.showZones);
   const zoneTypeVisibility = useChartStore((state) => state.zoneTypeVisibility);
   const showStructure = useChartStore((state) => state.showStructure);
+  const showEma = useChartStore((state) => state.showEma);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -903,6 +907,7 @@ function LayerMenu() {
   const setZoneTypeVisible = useChartStore((state) => state.setZoneTypeVisible);
   const setAllZoneTypesVisible = useChartStore((state) => state.setAllZoneTypesVisible);
   const setShowStructure = useChartStore((state) => state.setShowStructure);
+  const setShowEma = useChartStore((state) => state.setShowEma);
   const setShowIntradayLevels = useChartStore((state) => state.setShowIntradayLevels);
   const setShowBrokenIntradayLevels = useChartStore((state) => state.setShowBrokenIntradayLevels);
   const setShowH1ImpulseCandidates = useChartStore((state) => state.setShowH1ImpulseCandidates);
@@ -926,7 +931,7 @@ function LayerMenu() {
   const visibleZoneCount = Object.values(zoneTypeVisibility).filter(Boolean).length;
   const h1ImpulseSelected = selectedPlaybooks.includes("h1_impulse_retest_v1");
   const structureRequired = selectedPlaybooks.some((playbook) => playbookLayerRequirements[playbook].structure);
-  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (h1ImpulseSelected && showH1ImpulseCandidates && timeframe === "H1" ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
+  const totalVisibleCount = visibleZoneCount + (showStructure ? 1 : 0) + (showEma ? 1 : 0) + (showIntradayLevels ? 1 : 0) + (h1ImpulseSelected && showH1ImpulseCandidates && timeframe === "H1" ? 1 : 0) + (tradeVisibilityMode === "off" ? 0 : 1);
   const allZonesVisible = visibleZoneCount === LAYER_ITEMS.length;
 
   return (
@@ -999,6 +1004,7 @@ function LayerMenu() {
               />
             ))}
             <MenuCheck checked={showStructure} colorClass="bg-blue-400" disabled={structureRequired} label="Structure + ZigZag" onChange={setShowStructure} />
+            <MenuCheck checked={showEma} colorClass="bg-cyan-400" label="EMA 34 + EMA 200" onChange={setShowEma} />
             <MenuCheck checked={showIntradayLevels} colorClass="bg-amber-300" label="Intraday liquidity levels" onChange={setShowIntradayLevels} />
             <MenuCheck
               checked={showBrokenIntradayLevels}

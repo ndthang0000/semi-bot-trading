@@ -474,6 +474,7 @@ Backend xuất một payload chart-ready để UI có thể render ngay, chưa c
   },
   "layers": {
     "candles": [],
+    "indicator_candles": [],
     "structure": [],
     "zones": [],
     "contexts": {
@@ -490,6 +491,8 @@ Backend xuất một payload chart-ready để UI có thể render ngay, chưa c
 Quy ước:
 
 - `candles`: dữ liệu OHLCV để vẽ chart chính.
+- `indicator_candles`: gồm `candles` và tối đa 1.000 nến warm-up phía trước,
+  chỉ dùng để tính indicator như EMA; UI không render các nến warm-up này.
 - `structure`: HH/HL/LH/LL, BOS, CHOCH trong range đang xem.
 - `zones`: vùng giá có `visual_start` và `visual_end`; active zone có `visual_end = null`, UI kéo tới candle hiện tại.
 - `contexts`: map theo timeframe để chart M15 vẫn đọc được H1 bias/regime.

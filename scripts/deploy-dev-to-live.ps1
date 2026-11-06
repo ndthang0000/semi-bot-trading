@@ -7,9 +7,11 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ExpectedLiveRoot = "C:\workspace\semi-bot-trading"
-$Tasks = @(
+$RequiredTasks = @(
     "SemiBotTrading-API",
-    "SemiBotTrading-ExnessWorker",
+    "SemiBotTrading-ExnessWorker"
+)
+$OptionalTasks = @(
     "SemiBotTrading-FTMOWorker"
 )
 
@@ -70,9 +72,17 @@ if (-not $SkipPush) {
     Invoke-NativeChecked -FilePath "git" -Arguments @("push", "origin", "main")
 }
 
-foreach ($TaskName in $Tasks) {
+foreach ($TaskName in $RequiredTasks) {
     if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
         throw "Scheduled Task not found: $TaskName"
+    }
+}
+$Tasks = @($RequiredTasks)
+foreach ($TaskName in $OptionalTasks) {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        $Tasks += $TaskName
+    } else {
+        Write-Host "Optional LIVE task not installed; skipping: $TaskName" -ForegroundColor Yellow
     }
 }
 
@@ -115,7 +125,9 @@ if (-not $ApiHealthy) {
 
 Write-Host "Starting LIVE workers..." -ForegroundColor Cyan
 Start-ScheduledTask -TaskName "SemiBotTrading-ExnessWorker"
-Start-ScheduledTask -TaskName "SemiBotTrading-FTMOWorker"
+if ($Tasks -contains "SemiBotTrading-FTMOWorker") {
+    Start-ScheduledTask -TaskName "SemiBotTrading-FTMOWorker"
+}
 Start-Sleep -Seconds 3
 
 $Tasks | ForEach-Object {

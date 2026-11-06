@@ -55,6 +55,7 @@ type ChartState = {
   showZones: boolean;
   zoneTypeVisibility: ZoneTypeVisibility;
   showStructure: boolean;
+  showEma: boolean;
   showIntradayLevels: boolean;
   showBrokenIntradayLevels: boolean;
   showH1ImpulseCandidates: boolean;
@@ -83,6 +84,7 @@ type ChartState = {
   setZoneTypeVisible: (zoneType: ZoneVisibilityKey, visible: boolean) => void;
   setAllZoneTypesVisible: (visible: boolean) => void;
   setShowStructure: (showStructure: boolean) => void;
+  setShowEma: (showEma: boolean) => void;
   setShowIntradayLevels: (showIntradayLevels: boolean) => void;
   setShowBrokenIntradayLevels: (show: boolean) => void;
   setShowH1ImpulseCandidates: (show: boolean) => void;
@@ -118,6 +120,7 @@ export const useChartStore = create<ChartState>()(
       showZones: true,
       zoneTypeVisibility: defaultZoneTypeVisibility,
       showStructure: true,
+      showEma: false,
       showIntradayLevels: true,
       showBrokenIntradayLevels: false,
       showH1ImpulseCandidates: true,
@@ -202,6 +205,7 @@ export const useChartStore = create<ChartState>()(
         set((state) => ({
           showStructure: requiresStructureForPlaybooks(state.selectedPlaybooks) ? true : showStructure,
         })),
+      setShowEma: (showEma) => set({ showEma }),
       setShowIntradayLevels: (showIntradayLevels) => set({ showIntradayLevels }),
       setShowBrokenIntradayLevels: (showBrokenIntradayLevels) => set({ showBrokenIntradayLevels }),
       setShowH1ImpulseCandidates: (showH1ImpulseCandidates) => set({ showH1ImpulseCandidates }),
@@ -318,6 +322,7 @@ export const useChartStore = create<ChartState>()(
         showZones: state.showZones,
         zoneTypeVisibility: state.zoneTypeVisibility,
         showStructure: state.showStructure,
+        showEma: state.showEma,
         showIntradayLevels: state.showIntradayLevels,
         showBrokenIntradayLevels: state.showBrokenIntradayLevels,
         showH1ImpulseCandidates: state.showH1ImpulseCandidates,
@@ -332,11 +337,13 @@ export const useChartStore = create<ChartState>()(
         startIndex: state.startIndex,
       }),
       merge: (persisted, current) => {
-        const layerSettings = persisted as Partial<ChartState> | undefined;
+        const layerSettings = persisted as (Partial<ChartState> & { showEma34?: boolean; showEma200?: boolean }) | undefined;
         const selectedPlaybooks = uniquePlaybooks(layerSettings?.selectedPlaybooks ?? current.selectedPlaybooks);
+        const showEma = layerSettings?.showEma ?? Boolean(layerSettings?.showEma34 || layerSettings?.showEma200);
         const merged = {
           ...current,
           ...layerSettings,
+          showEma,
           selectedPlaybooks,
           zoneTypeVisibility: {
             ...defaultZoneTypeVisibility,

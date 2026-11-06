@@ -11,6 +11,7 @@ __pycache__/
 !.env.exness.example
 !.env.ftmo.example
 var/
+logs/
 *.sqlite
 *.sqlite3
 frontend/node_modules/

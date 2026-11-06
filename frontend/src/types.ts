@@ -457,6 +457,7 @@ export type ChartPayload = {
   };
   layers: {
     candles: ChartCandle[];
+    indicator_candles?: ChartCandle[];
     structure: StructurePoint[];
     structure_timeframe: string;
     wave_metrics: WaveMetrics;

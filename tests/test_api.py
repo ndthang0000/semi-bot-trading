@@ -644,6 +644,8 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(payload["range"]["start_index"], 1)
         self.assertEqual(len(payload["layers"]["candles"]), 1)
         self.assertEqual(payload["layers"]["candles"][0]["time"], "2026-01-01T00:15:00+00:00")
+        self.assertEqual(len(payload["layers"]["indicator_candles"]), 2)
+        self.assertEqual(payload["layers"]["indicator_candles"][0]["time"], "2026-01-01T00:00:00+00:00")
 
     def test_health_endpoint(self) -> None:
         with TemporaryDirectory() as temp_dir:
