@@ -147,12 +147,16 @@ def validate_chart_drawing(request: ChartDrawingCreateRequest | ChartDrawingUpda
     anchors = request.anchors
     if anchors is None:
         return
-    expected = 2 if drawing_type == "fib_retracement" else 1
+    expected = 3 if drawing_type == "fib_extension" else 2 if drawing_type == "fib_retracement" else 1
     if len(anchors) != expected:
         raise HTTPException(status_code=422, detail=f"{drawing_type} requires exactly {expected} anchor(s)")
     for index, anchor in enumerate(anchors):
         require_timezone_aware_iso(anchor.time, f"anchors[{index}].time")
-    if drawing_type == "fib_retracement" and anchors[0].time == anchors[1].time and anchors[0].price == anchors[1].price:
+    if drawing_type in {"fib_retracement", "fib_extension"} and any(
+        left.time == right.time and left.price == right.price
+        for index, left in enumerate(anchors)
+        for right in anchors[index + 1:]
+    ):
         raise HTTPException(status_code=422, detail="Fib anchors must not be identical")
     if drawing_type == "note" and isinstance(request, ChartDrawingCreateRequest) and not (request.content or "").strip():
         raise HTTPException(status_code=422, detail="Note content must not be empty")

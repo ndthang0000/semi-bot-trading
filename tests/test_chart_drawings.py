@@ -73,6 +73,59 @@ class ChartDrawingApiTest(unittest.TestCase):
         self.assertEqual(422, response.status_code)
         self.assertIn("requires exactly 2", response.json()["detail"])
 
+    def test_fib_extension_requires_three_distinct_anchors(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "trading.toml"
+            write_test_config(config_path, root / "test.sqlite3")
+            client = authenticated_test_client(root, config_path)
+            try:
+                rejected = client.post(
+                    "/api/chart-drawings",
+                    json={
+                        "drawing_type": "fib_extension",
+                        "origin_timeframe": "H1",
+                        "anchors": [
+                            {"time": "2026-08-10T08:00:00+00:00", "price": 4300},
+                            {"time": "2026-08-10T09:00:00+00:00", "price": 4400},
+                        ],
+                    },
+                )
+                duplicate = client.post(
+                    "/api/chart-drawings",
+                    json={
+                        "drawing_type": "fib_extension",
+                        "origin_timeframe": "H1",
+                        "anchors": [
+                            {"time": "2026-08-10T08:00:00+00:00", "price": 4300},
+                            {"time": "2026-08-10T09:00:00+00:00", "price": 4400},
+                            {"time": "2026-08-10T09:00:00+00:00", "price": 4400},
+                        ],
+                    },
+                )
+                created = client.post(
+                    "/api/chart-drawings",
+                    json={
+                        "drawing_type": "fib_extension",
+                        "origin_timeframe": "H1",
+                        "anchors": [
+                            {"time": "2026-08-10T08:00:00+00:00", "price": 4300},
+                            {"time": "2026-08-10T09:00:00+00:00", "price": 4400},
+                            {"time": "2026-08-10T10:00:00+00:00", "price": 4350},
+                        ],
+                        "properties": {"variant": "trend_based"},
+                    },
+                )
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+        self.assertEqual(422, rejected.status_code)
+        self.assertIn("requires exactly 3", rejected.json()["detail"])
+        self.assertEqual(422, duplicate.status_code)
+        self.assertIn("must not be identical", duplicate.json()["detail"])
+        self.assertEqual(201, created.status_code)
+        self.assertEqual("fib_extension", created.json()["drawing_type"])
+
 
 if __name__ == "__main__":
     unittest.main()

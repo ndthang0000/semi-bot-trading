@@ -15,6 +15,7 @@ const tools: Array<{ key: ChartDrawingTool; label: string; hotkey: string; icon:
   { key: "horizontal_line", label: "Đường giá ngang", hotkey: "H", icon: Minus },
   { key: "fib_standard", label: "Fibonacci Retracement", hotkey: "F", icon: null },
   { key: "fib_ote", label: "Fibonacci OTE", hotkey: "Shift+F", icon: null },
+  { key: "fib_extension", label: "Trend-Based Fib Extension", hotkey: "X", icon: null },
   { key: "note", label: "Ghi chú", hotkey: "N", icon: Type },
   { key: "copy_price", label: "Copy giá tại điểm click", hotkey: "Alt+C", icon: Copy },
 ];
@@ -104,7 +105,7 @@ export function ChartDrawingToolbar({ activeTool, onToolChange }: Props) {
             type="button"
             onClick={() => onToolChange(active && tool.key !== "cursor" ? "cursor" : tool.key)}
           >
-            {Icon ? <Icon size={19} strokeWidth={1.8} /> : <FibonacciIcon variant={tool.key === "fib_ote" ? "ote" : "standard"} />}
+            {Icon ? <Icon size={19} strokeWidth={1.8} /> : <FibonacciIcon variant={tool.key === "fib_ote" ? "ote" : tool.key === "fib_extension" ? "extension" : "standard"} />}
             <span className="sr-only">{tool.label}</span>
           </button>
         );
@@ -113,7 +114,18 @@ export function ChartDrawingToolbar({ activeTool, onToolChange }: Props) {
   );
 }
 
-function FibonacciIcon({ variant }: { variant: "standard" | "ote" }) {
+function FibonacciIcon({ variant }: { variant: "standard" | "ote" | "extension" }) {
+  if (variant === "extension") {
+    return (
+      <svg aria-hidden="true" className="text-emerald-200" height="22" viewBox="0 0 24 24" width="22">
+        <path d="M3 5.5h18M7 10h14M11 14.5h10M15 19h6" fill="none" stroke="currentColor" strokeWidth="1.25" />
+        <path d="M4 18 10 7l5 7" fill="none" stroke="currentColor" strokeDasharray="2 1.5" strokeWidth="1.2" />
+        <circle cx="4" cy="18" fill="#202124" r="1.5" stroke="currentColor" strokeWidth="1.1" />
+        <circle cx="10" cy="7" fill="#202124" r="1.5" stroke="currentColor" strokeWidth="1.1" />
+        <circle cx="15" cy="14" fill="#202124" r="1.5" stroke="currentColor" strokeWidth="1.1" />
+      </svg>
+    );
+  }
   return (
     <svg aria-hidden="true" className={variant === "ote" ? "text-amber-300" : "text-violet-200"} height="22" viewBox="0 0 24 24" width="22">
       {variant === "ote" ? <rect fill="currentColor" opacity="0.22" x="3" y="9" width="18" height="6" rx="1" /> : null}

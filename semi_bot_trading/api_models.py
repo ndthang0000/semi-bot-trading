@@ -287,7 +287,7 @@ class WeeklyJournalRequest(BaseModel):
     achieved_r: float = Field(default=0, ge=-1_000, le=1_000)
 
 
-ChartDrawingType = Literal["note", "fib_retracement", "horizontal_line"]
+ChartDrawingType = Literal["note", "fib_retracement", "fib_extension", "horizontal_line"]
 ChartDrawingTimeframe = Literal["M5", "M15", "H1"]
 
 
@@ -301,7 +301,7 @@ class ChartDrawingCreateRequest(BaseModel):
     drawing_type: ChartDrawingType
     origin_timeframe: ChartDrawingTimeframe
     visible_timeframes: list[ChartDrawingTimeframe] = Field(default_factory=lambda: ["H1", "M15", "M5"], min_length=1, max_length=3)
-    anchors: list[ChartDrawingAnchor] = Field(min_length=1, max_length=2)
+    anchors: list[ChartDrawingAnchor] = Field(min_length=1, max_length=3)
     properties: dict[str, Any] = Field(default_factory=dict)
     content: str | None = Field(default=None, max_length=2_000)
     locked: bool = False
@@ -311,7 +311,7 @@ class ChartDrawingCreateRequest(BaseModel):
 class ChartDrawingUpdateRequest(BaseModel):
     revision: int = Field(ge=1)
     visible_timeframes: list[ChartDrawingTimeframe] | None = Field(default=None, min_length=1, max_length=3)
-    anchors: list[ChartDrawingAnchor] | None = Field(default=None, min_length=1, max_length=2)
+    anchors: list[ChartDrawingAnchor] | None = Field(default=None, min_length=1, max_length=3)
     properties: dict[str, Any] | None = None
     content: str | None = Field(default=None, max_length=2_000)
     locked: bool | None = None

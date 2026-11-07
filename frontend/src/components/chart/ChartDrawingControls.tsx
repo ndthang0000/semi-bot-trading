@@ -1,6 +1,6 @@
 import type { PointerEventHandler } from "react";
 import type { ChartDrawing, ChartDrawingAnchor, ChartDrawingTool } from "../../types";
-import { ChartDrawingLayer, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./ChartDrawingLayer";
+import { ChartDrawingLayer, type FibExtensionPreview, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./ChartDrawingLayer";
 import { ChartDrawingToolbar } from "./ChartDrawingToolbar";
 
 export type PendingChartNote = {
@@ -12,11 +12,13 @@ export type PendingChartNote = {
 type Props = {
   drawings: RenderedChartDrawing[];
   measure: MeasurePreview | null;
+  fibExtensionPreview: FibExtensionPreview | null;
   priceGuide: PriceGuide | null;
   plotWidth: number;
   selectedId: string | null;
   activeTool: ChartDrawingTool;
   measureHasStart: boolean;
+  fibExtensionAnchorCount: number;
   pendingNote: PendingChartNote | null;
   noteContent: string;
   chartWidth: number;
@@ -39,6 +41,7 @@ export function ChartDrawingControls(props: Props) {
       <ChartDrawingLayer
         drawings={props.drawings}
         measure={props.measure}
+        fibExtensionPreview={props.fibExtensionPreview}
         priceGuide={props.priceGuide}
         plotWidth={props.plotWidth}
         selectedId={props.selectedId}
@@ -58,7 +61,7 @@ export function ChartDrawingControls(props: Props) {
       <ChartDrawingToolbar activeTool={props.activeTool} onToolChange={props.onToolChange} />
       {props.activeTool !== "cursor" && !props.pendingNote ? (
         <div className="pointer-events-none absolute left-4 top-4 z-[65] hidden rounded-lg border border-cyan-400/35 bg-ink-900/92 px-3 py-2 text-xs text-cyan-100 shadow-lg lg:block">
-          {drawingHint(props.activeTool, props.measureHasStart)}
+          {drawingHint(props.activeTool, props.measureHasStart, props.fibExtensionAnchorCount)}
           <span className="ml-2 text-slate-500">Esc để hủy</span>
         </div>
       ) : null}
@@ -100,9 +103,14 @@ export function ChartDrawingControls(props: Props) {
   );
 }
 
-function drawingHint(tool: ChartDrawingTool, measureHasStart: boolean): string {
+function drawingHint(tool: ChartDrawingTool, measureHasStart: boolean, fibExtensionAnchorCount: number): string {
   if (tool === "measure") return measureHasStart ? "Click điểm kết thúc để hoàn thành phép đo" : "Click điểm bắt đầu phép đo";
   if (tool === "fib_standard") return "Kéo từ swing bắt đầu đến swing kết thúc để vẽ Fibonacci";
   if (tool === "fib_ote") return "Kéo theo nhịp impulse; vùng vàng 0.62–0.79 là OTE";
+  if (tool === "fib_extension") {
+    if (fibExtensionAnchorCount === 1) return "Click B tại cuối nhịp impulse";
+    if (fibExtensionAnchorCount === 2) return "Click C tại cuối nhịp hồi để tạo extension";
+    return "Click A tại đầu nhịp impulse";
+  }
   return "Click một mức giá trên chart";
 }

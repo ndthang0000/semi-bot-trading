@@ -75,7 +75,7 @@ import { QuickOrderOverlay } from "./chart/QuickOrderOverlay";
 import { WaveStrengthBadge } from "./chart/WaveStrengthBadge";
 import { levelStatusLabel, selectIntradayLevels } from "./chart/intradayMap";
 import { formatWaveDuration, formatWaveLegLabel } from "./chart/waveMetrics";
-import { type DrawingPoint, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
+import { type DrawingPoint, type FibExtensionPreview, type MeasurePreview, type PriceGuide, type RenderedChartDrawing } from "./chart/ChartDrawingLayer";
 import { candleSeriesKey, classifyCandleSeriesChange } from "./chart/candleUpdates";
 import { buildEmaSeriesData } from "./chart/ema";
 import {
@@ -205,6 +205,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const [drawingTool, setDrawingTool] = useState<ChartDrawingTool>("cursor");
   const [renderedDrawings, setRenderedDrawings] = useState<RenderedChartDrawing[]>([]);
   const [measurePreview, setMeasurePreview] = useState<MeasurePreview | null>(null);
+  const [fibExtensionPreview, setFibExtensionPreview] = useState<FibExtensionPreview | null>(null);
   const [copyPriceGuide, setCopyPriceGuide] = useState<PriceGuide | null>(null);
   const [linePriceGuide, setLinePriceGuide] = useState<PriceGuide | null>(null);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
@@ -228,6 +229,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const manualDrawRef = useRef<ManualDrawState | null>(null);
   const manualAiLevelDragRef = useRef<{ candidateId: string; level: ManualAiLevel; moved: boolean } | null>(null);
   const drawingInteractionRef = useRef<{ tool: "fib_standard" | "fib_ote"; start: DrawingPoint } | null>(null);
+  const fibExtensionAnchorsRef = useRef<DrawingPoint[]>([]);
   const measureStartRef = useRef<DrawingPoint | null>(null);
   const drawingMoveRef = useRef<{ drawing: ChartDrawing; startX: number; startY: number; moved: boolean } | null>(null);
   const drawingDraftAnchorRef = useRef<{ id: string; anchor: ChartDrawingAnchor } | null>(null);
@@ -925,13 +927,15 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     setSelectedDrawingId(null);
     setDrawingMessage(null);
     setMeasurePreview(null);
+    setFibExtensionPreview(null);
     setCopyPriceGuide(null);
     measureStartRef.current = null;
     drawingInteractionRef.current = null;
+    fibExtensionAnchorsRef.current = [];
   }, [setAddEntityKind]);
 
   const persistDrawing = useCallback(async (
-    drawingType: "note" | "fib_retracement" | "horizontal_line",
+    drawingType: "note" | "fib_retracement" | "fib_extension" | "horizontal_line",
     anchors: ChartDrawingAnchor[],
     properties: Record<string, unknown> = {},
     content: string | null = null,
@@ -994,6 +998,23 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       }
       return;
     }
+    if (drawingTool === "fib_extension") {
+      const anchors = fibExtensionAnchorsRef.current;
+      if (anchors.length < 2) {
+        const next = [...anchors, point];
+        fibExtensionAnchorsRef.current = next;
+        setFibExtensionPreview({ anchors: next, cursor: point });
+      } else {
+        fibExtensionAnchorsRef.current = [];
+        setFibExtensionPreview(null);
+        void persistDrawing(
+          "fib_extension",
+          [...anchors, point].map((anchor) => ({ time: anchor.time, price: anchor.price })),
+          { variant: "trend_based" },
+        );
+      }
+      return;
+    }
     drawingInteractionRef.current = { tool: drawingTool, start: point };
     setMeasurePreview({ start: point, end: point });
   }, [drawingPointFromPointer, drawingTool, persistDrawing]);
@@ -1020,6 +1041,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       setCopyPriceGuide({ y: point.y, price: point.price });
     } else if (drawingTool === "measure" && measureStartRef.current) {
       setMeasurePreview({ start: measureStartRef.current, end: point });
+    } else if (drawingTool === "fib_extension" && fibExtensionAnchorsRef.current.length > 0) {
+      setFibExtensionPreview({ anchors: fibExtensionAnchorsRef.current, cursor: point });
     }
   }, [drawingPointFromPointer, drawingTool]);
 
@@ -1135,6 +1158,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "m") tool = "measure";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "n") tool = "note";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "f") tool = event.shiftKey ? "fib_ote" : "fib_standard";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "x") tool = "fib_extension";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "h") tool = "horizontal_line";
       else if (event.key === "Escape") { tool = "cursor"; setAddEntityKind(null); setLineDraw(null); }
       if (tool) {
@@ -1608,7 +1632,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       color: "#22d3ee",
       crosshairMarkerVisible: true,
       lastValueVisible: true,
-      lineWidth: 1,
+      lineWidth: 2,
       priceLineVisible: false,
       title: "EMA 34",
     });
@@ -1616,7 +1640,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       color: "#e879f9",
       crosshairMarkerVisible: true,
       lastValueVisible: true,
-      lineWidth: 1,
+      lineWidth: 2,
       priceLineVisible: false,
       title: "EMA 200",
     });
@@ -2050,11 +2074,13 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       <ChartDrawingControls
         drawings={renderedDrawings}
         measure={measurePreview}
+        fibExtensionPreview={fibExtensionPreview}
         priceGuide={isLineDrawing ? (lineDraw ? null : linePriceGuide) : copyPriceGuide}
         plotWidth={drawingPlotWidth}
         selectedId={selectedDrawingId}
         activeTool={drawingTool}
         measureHasStart={measureStartRef.current !== null}
+        fibExtensionAnchorCount={fibExtensionPreview?.anchors.length ?? 0}
         pendingNote={pendingNote}
         noteContent={noteContent}
         chartWidth={containerRef.current?.clientWidth ?? 320}

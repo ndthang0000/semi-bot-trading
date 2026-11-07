@@ -1,7 +1,7 @@
 export type Timeframe = "M5" | "M15" | "H1";
 
-export type ChartDrawingType = "note" | "fib_retracement" | "horizontal_line";
-export type ChartDrawingTool = "cursor" | "measure" | "note" | "fib_standard" | "fib_ote" | "horizontal_line" | "copy_price";
+export type ChartDrawingType = "note" | "fib_retracement" | "fib_extension" | "horizontal_line";
+export type ChartDrawingTool = "cursor" | "measure" | "note" | "fib_standard" | "fib_ote" | "fib_extension" | "horizontal_line" | "copy_price";
 
 export type ChartDrawingAnchor = {
   time: string;

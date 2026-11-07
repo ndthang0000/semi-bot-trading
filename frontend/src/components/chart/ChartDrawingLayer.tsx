@@ -5,11 +5,13 @@ import type { ChartDrawing } from "../../types";
 export type DrawingPoint = { x: number; y: number; price: number; time: string };
 export type RenderedChartDrawing = { drawing: ChartDrawing; points: DrawingPoint[] };
 export type MeasurePreview = { start: DrawingPoint; end: DrawingPoint };
+export type FibExtensionPreview = { anchors: DrawingPoint[]; cursor: DrawingPoint };
 export type PriceGuide = { y: number; price: number };
 
 type Props = {
   drawings: RenderedChartDrawing[];
   measure: MeasurePreview | null;
+  fibExtensionPreview: FibExtensionPreview | null;
   priceGuide: PriceGuide | null;
   plotWidth: number;
   selectedId: string | null;
@@ -20,12 +22,24 @@ type Props = {
 
 const STANDARD_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 const OTE_LEVELS = [0, 0.5, 0.62, 0.705, 0.79, 1];
+const EXTENSION_LEVELS = [0, 0.618, 1, 1.272, 1.618, 2, 2.618];
 
 export function fibRetracementValue(origin: number, end: number, level: number): number {
   return end + (origin - end) * level;
 }
 
-export function ChartDrawingLayer({ drawings, measure, priceGuide, plotWidth, selectedId, onSelect, onDelete, onMoveStart }: Props) {
+export function fibExtensionValue(origin: number, end: number, retracementEnd: number, level: number): number {
+  return retracementEnd + (end - origin) * level;
+}
+
+export function fibExtensionLineRange(impulseEndX: number, retracementEndX: number): { left: number; right: number } {
+  return {
+    left: Math.min(impulseEndX, retracementEndX),
+    right: Math.max(impulseEndX, retracementEndX),
+  };
+}
+
+export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, priceGuide, plotWidth, selectedId, onSelect, onDelete, onMoveStart }: Props) {
   return (
     <div className="pointer-events-none absolute inset-0 z-[42]">
       <svg className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
@@ -64,9 +78,13 @@ export function ChartDrawingLayer({ drawings, measure, priceGuide, plotWidth, se
               </g>
             );
           }
+          if (drawing.drawing_type === "fib_extension" && points.length === 3) {
+            return <FibExtensionSvg key={drawing.id} points={points} plotWidth={plotWidth} selected={selected} onClick={() => onSelect(drawing)} />;
+          }
           return null;
         })}
         {measure ? <MeasureSvg measure={measure} /> : null}
+        {fibExtensionPreview ? <FibExtensionPreviewSvg preview={fibExtensionPreview} plotWidth={plotWidth} /> : null}
         {priceGuide ? (
           <g>
             <line x1={0} x2={plotWidth} y1={priceGuide.y} y2={priceGuide.y} stroke="#67e8f9" strokeDasharray="4 4" strokeWidth="1" opacity="0.9" />
@@ -107,6 +125,40 @@ export function ChartDrawingLayer({ drawings, measure, priceGuide, plotWidth, se
       ) : null}
     </div>
   );
+}
+
+function FibExtensionSvg({ points, plotWidth, selected, onClick }: { points: DrawingPoint[]; plotWidth: number; selected: boolean; onClick: () => void }) {
+  const [origin, end, retracementEnd] = points;
+  const { left, right } = fibExtensionLineRange(end.x, retracementEnd.x);
+  const labelX = Math.min(right + 5, Math.max(5, plotWidth - 118));
+  return (
+    <g className="pointer-events-auto cursor-pointer" onClick={onClick}>
+      <polyline points={`${origin.x},${origin.y} ${end.x},${end.y} ${retracementEnd.x},${retracementEnd.y}`} fill="none" stroke={selected ? "#67e8f9" : "#64748b"} strokeWidth={selected ? 1.5 : 1} strokeDasharray="3 3" />
+      {EXTENSION_LEVELS.map((level) => {
+        const y = fibExtensionValue(origin.y, end.y, retracementEnd.y, level);
+        const price = fibExtensionValue(origin.price, end.price, retracementEnd.price, level);
+        const major = level === 1 || level === 1.618;
+        return (
+          <g key={level}>
+            <line x1={left} x2={right} y1={y} y2={y} stroke={selected ? "#67e8f9" : major ? "#34d399" : "#6ee7b7"} strokeWidth={major || selected ? 1.5 : 1} opacity={major ? 0.95 : 0.76} />
+            <text x={labelX} y={y - 4} fill={major ? "#a7f3d0" : "#6ee7b7"} fontSize="10">{formatFibLevel(level)} · {price.toFixed(2)}</text>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+function FibExtensionPreviewSvg({ preview, plotWidth }: { preview: FibExtensionPreview; plotWidth: number }) {
+  const points = [...preview.anchors, preview.cursor];
+  if (preview.anchors.length === 1) {
+    return <line x1={points[0].x} y1={points[0].y} x2={points[1].x} y2={points[1].y} stroke="#6ee7b7" strokeWidth="1.5" strokeDasharray="4 3" />;
+  }
+  return <FibExtensionSvg points={points} plotWidth={plotWidth} selected={false} onClick={() => undefined} />;
+}
+
+function formatFibLevel(level: number): string {
+  return level.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function MeasureSvg({ measure }: { measure: MeasurePreview }) {
