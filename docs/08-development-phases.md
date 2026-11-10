@@ -250,7 +250,7 @@ Technical tasks:
 - Track trade lifecycle in replay/backtest mode.
 - Apply account-profile risk defaults (1% prop firm, 2% personal), max daily
   loss 5%, max 10 trades/day, min RR 1:2. Manual AI uses its lower dedicated
-  policy (0.75% prop firm, configured personal-account risk; 2% on Exness).
+  policy (0.75% prop firm, configured personal-account risk).
 
 Exit criteria:
 

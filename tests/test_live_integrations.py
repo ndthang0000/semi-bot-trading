@@ -737,6 +737,7 @@ class LiveIntegrationTest(unittest.TestCase):
                             'LIVE_SYNC_CANDLES="false"',
                             'LIVE_RUN_DETECTORS="false"',
                             'LIVE_EVALUATE_INTRABAR="true"',
+                            'MAX_DAILY_LOSS_PCT="10"',
                         ]
                     )
                 )
@@ -753,6 +754,7 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertFalse(env.live_sync_candles)
         self.assertFalse(env.live_run_detectors)
         self.assertTrue(env.live_evaluate_intrabar)
+        self.assertEqual(10.0, env.max_daily_loss_pct)
 
     def test_runtime_env_reads_ftmo_news_compliance_flags(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

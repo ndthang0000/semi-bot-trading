@@ -20,9 +20,11 @@ Risk Engine kiểm tra trước khi executor nhận request.
 Rule MVP:
 
 - Risk mặc định theo account profile: tài khoản quỹ 1%, tài khoản thường 2%.
+- Có thể override riêng giới hạn lỗ ngày của từng worker bằng
+  `MAX_DAILY_LOSS_PCT`; nếu không đặt thì dùng mặc định của account profile.
 - Manual AI, H1 Impulse, Quick Order, Line Reaction và Zone Reaction V2 dùng
-  0.75% cho tài khoản quỹ; tài khoản thường dùng `RISK_PER_TRADE_PCT` (Exness
-  hiện là 2%).
+  0.75% cho tài khoản quỹ; tài khoản thường dùng `RISK_PER_TRADE_PCT` theo
+  worker account.
 - Max total open risk.
 - Max daily loss: 5%.
 - Max trades per day: 10.
@@ -50,6 +52,17 @@ risk_policy:
   require_stop_loss: true
   require_human_confirmation: true
 ```
+
+Ví dụ Exness account nhỏ dùng 10% mỗi lệnh nhưng dừng sau một lệnh thua đủ SL:
+
+```text
+RISK_PER_TRADE_PCT=10.0
+MAX_DAILY_LOSS_PCT=10.0
+```
+
+Risk Engine vẫn lấy giá trị nhỏ hơn giữa risk mỗi lệnh và ngân sách lỗ còn lại
+trong ngày. Vì vậy một phần lỗ đã ghi nhận trước đó có thể làm lệnh tiếp theo
+nhỏ hơn 10%; khi chạm 10% thì worker chặn entry mới đến ngày kế tiếp.
 
 Quick Order là ngoại lệ có chủ đích cho rule RR chung: trader có thể chọn
 `1.0R–4.0R`, mặc định `1.5R`. SL mặc định là `1 ATR(14) H1` và không được ngắn

@@ -84,5 +84,57 @@ class AccountProfileRiskDefaultsTest(unittest.TestCase):
         self.assertEqual(2.0, PROFILES["personal_cent"].risk_per_trade_pct)
 
 
+class PersonalDailyLossOverrideTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._conn = connect(Path(self._tmp.name) / "risk.sqlite3")
+        init_db(self._conn)
+        self._client = MagicMock()
+        self._client.get_account_info.return_value = {"balance": 40_002.42, "equity": 40_002.42}
+        self._client.get_symbol_trade_info.return_value = {
+            "trade_contract_size": 100.0,
+            "volume_min": 0.01,
+            "volume_max": 100.0,
+            "volume_step": 0.01,
+        }
+
+    def tearDown(self) -> None:
+        self._conn.close()
+        self._tmp.cleanup()
+
+    def _assess(self, max_daily_loss_pct: float | None):
+        manager = build_risk_manager(
+            self._client,
+            "personal",
+            10.0,
+            None,
+            max_daily_loss_pct,
+        )
+        return manager.assess_trade(
+            self._conn,
+            "XAUUSD",
+            4046.32,
+            4026.55,
+            "XAUUSDc",
+            account_label="Exness Personal",
+        )
+
+    def test_profile_default_caps_ten_percent_trade_at_six_percent_daily_limit(self) -> None:
+        result = self._assess(None)
+
+        self.assertTrue(result.allowed)
+        self.assertAlmostEqual(2_400.1452, result.risk_amount)
+        self.assertEqual(1.21, result.lot_size)
+
+    def test_account_override_allows_ten_percent_trade_with_ten_percent_daily_limit(self) -> None:
+        result = self._assess(10.0)
+
+        self.assertTrue(result.allowed)
+        self.assertAlmostEqual(4_000.242, result.risk_amount)
+        self.assertAlmostEqual(4_000.242, result.daily_loss_limit)
+        self.assertEqual(2.02, result.lot_size)
+        self.assertIn("max_daily_loss=10.0%", result.reason)
+
+
 if __name__ == "__main__":
     unittest.main()

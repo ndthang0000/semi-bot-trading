@@ -2422,13 +2422,14 @@ class TestMaybeExecuteCandidates(unittest.TestCase):
             maybe_execute_candidates(
                 self._conn,
                 self._config,
-                _make_env(risk_per_trade_pct=0.25),
+                _make_env(risk_per_trade_pct=0.25, max_daily_loss_pct=10.0),
                 client,
                 [candidate],
                 "XAUUSDm",
             )
 
         self.assertEqual(0.25, build.call_args.args[2])
+        self.assertEqual(10.0, build.call_args.args[4])
 
     # ── already executed guard ────────────────────────────────────────────────
     def test_already_executed_pending_not_re_traded(self):

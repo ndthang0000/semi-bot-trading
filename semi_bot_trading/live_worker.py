@@ -2853,6 +2853,7 @@ def maybe_execute_candidates(
         env.account_profile,
         selected_risk_pct,
         env.account_balance_scale,
+        env.max_daily_loss_pct,
     )
     assessment = risk_manager.assess_trade(
         conn=conn,

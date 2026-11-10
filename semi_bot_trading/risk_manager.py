@@ -90,12 +90,18 @@ class RiskManager:
         profile: AccountProfile,
         risk_per_trade_pct: float | None = None,
         balance_scale: float | None = None,
+        max_daily_loss_pct: float | None = None,
     ) -> None:
         self.client = client
         self.profile = profile
         # Allow env-level override of risk %; otherwise use profile default.
         self._risk_pct = risk_per_trade_pct if risk_per_trade_pct is not None else profile.risk_per_trade_pct
         self._balance_scale = balance_scale if balance_scale is not None else profile.balance_scale
+        self._max_daily_loss_pct = (
+            max_daily_loss_pct if max_daily_loss_pct is not None else profile.max_daily_loss_pct
+        )
+        if self._max_daily_loss_pct <= 0:
+            raise ValueError("max_daily_loss_pct must be greater than zero")
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -171,10 +177,10 @@ class RiskManager:
                 )
             daily_loss = max(-float(daily_metric["daily_profit"]) * self._balance_scale, 0.0)
             limit_base = float(daily_metric["initial_balance"] or daily_metric["balance_at_midnight"]) * self._balance_scale
-            daily_loss_limit = limit_base * self.profile.max_daily_loss_pct / 100.0
+            daily_loss_limit = limit_base * self._max_daily_loss_pct / 100.0
         else:
             daily_loss = get_today_realized_loss(conn, symbol, account_label=account_label) * self._balance_scale
-            daily_loss_limit = risk_balance * self.profile.max_daily_loss_pct / 100.0
+            daily_loss_limit = risk_balance * self._max_daily_loss_pct / 100.0
         if daily_loss >= daily_loss_limit:
             return RiskAssessment(
                 allowed=False,
@@ -182,7 +188,7 @@ class RiskManager:
                 reason=(
                     f"[{self.profile.name}] Daily loss limit reached: "
                     f"${daily_loss:.2f} >= ${daily_loss_limit:.2f} "
-                    f"({self.profile.max_daily_loss_pct}% of risk balance ${risk_balance:.2f})"
+                    f"({self._max_daily_loss_pct}% of risk balance ${risk_balance:.2f})"
                 ),
                 balance=risk_balance,
                 daily_loss=daily_loss,
@@ -265,6 +271,7 @@ class RiskManager:
                 f"balance_scale={self._balance_scale:.4f} "
                 f"risk_balance=${risk_balance:.2f} "
                 f"risk_amount=${risk_amount:.2f} "
+                f"max_daily_loss={self._max_daily_loss_pct}% "
                 f"stop={stop_distance:.5f} "
                 f"contract={contract_size} "
                 f"lots={lot_size}"
@@ -324,6 +331,7 @@ def build_risk_manager(
     profile_name: str,
     risk_per_trade_pct: float | None,
     balance_scale: float | None = None,
+    max_daily_loss_pct: float | None = None,
 ) -> RiskManager:
     """Construct a RiskManager from env-level config."""
     key = profile_name.lower().strip()
@@ -332,4 +340,10 @@ def build_risk_manager(
             f"Unknown account profile '{profile_name}'. "
             f"Valid options: {', '.join(PROFILES)}"
         )
-    return RiskManager(client, PROFILES[key], risk_per_trade_pct, balance_scale)
+    return RiskManager(
+        client,
+        PROFILES[key],
+        risk_per_trade_pct,
+        balance_scale,
+        max_daily_loss_pct,
+    )

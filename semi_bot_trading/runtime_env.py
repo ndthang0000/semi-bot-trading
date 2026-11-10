@@ -44,6 +44,8 @@ class RuntimeEnv:
     allowed_origins: list[str]
     # Environment — "development" | "production"
     environment: str
+    # Optional account-level override. None keeps the selected profile default.
+    max_daily_loss_pct: float | None = None
     # Weekend risk controls
     weekend_flatten_enabled: bool = True
     weekend_flatten_timezone: str = "America/New_York"
@@ -120,6 +122,7 @@ def load_runtime_env(dotenv_path: Path | str = ".env") -> RuntimeEnv:
         account_profile=env_text("ACCOUNT_PROFILE", "personal") or "personal",
         account_balance_scale=env_float("ACCOUNT_BALANCE_SCALE"),
         risk_per_trade_pct=env_float("RISK_PER_TRADE_PCT"),
+        max_daily_loss_pct=env_float("MAX_DAILY_LOSS_PCT"),
         secret_key=env_text("SECRET_KEY", "") or "",
         admin_username=env_text("ADMIN_USERNAME", "admin") or "admin",
         admin_password_hash=env_text("ADMIN_PASSWORD_HASH"),

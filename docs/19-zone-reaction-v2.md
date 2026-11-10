@@ -16,7 +16,7 @@ Live executor khoa risk rieng cho `zone_reaction_v2` cung muc voi Manual AI va
 H1 Impulse, bat ke account-level `RISK_PER_TRADE_PCT`:
 
 - `ftmo_challenge` va `the5ers`: `0.75%` moi trade.
-- `personal` va `personal_cent`: dung `RISK_PER_TRADE_PCT` (`2%` tren Exness hien tai).
+- `personal` va `personal_cent`: dung `RISK_PER_TRADE_PCT` cua worker account.
 
 Risk manager van tinh lot dong tu khoang cach Entry-SL va account balance; cac
 daily-loss, spread, news, position-limit va execution gate khac khong thay doi.
