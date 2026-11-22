@@ -1,13 +1,60 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from semi_bot_trading.candles import Candle, upsert_candles
+from semi_bot_trading.db import connect, init_db
 from tests.helpers import TemporaryDirectory
 from tests.test_api import authenticated_test_client, write_test_config
 
 
 class ChartDrawingApiTest(unittest.TestCase):
+    def test_fixed_range_volume_profile_crud_and_previous_day_preset(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, database)
+            client = authenticated_test_client(root, config_path)
+            start = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+            with connect(database) as conn:
+                init_db(conn)
+                upsert_candles(conn, [
+                    Candle("XAUUSD", "M1", start + timedelta(minutes=index), start + timedelta(minutes=index + 1), 100, 101, 99, 100.5, 10, "test")
+                    for index in range(5)
+                ])
+                upsert_candles(conn, [
+                    Candle("XAUUSD", "D1", start, start + timedelta(days=1), 100, 110, 90, 105, 1000, "test")
+                ])
+            try:
+                created = client.post("/api/chart-drawings", json={
+                    "symbol": "XAUUSD",
+                    "drawing_type": "volume_profile_fixed_range",
+                    "origin_timeframe": "H1",
+                    "anchors": [
+                        {"time": start.isoformat(), "price": 100},
+                        {"time": (start + timedelta(minutes=5)).isoformat(), "price": 100},
+                    ],
+                    "properties": {"rows": 24, "value_area_pct": 70, "mode": "up_down"},
+                })
+                listed = client.get("/api/chart-drawings?symbol=XAUUSD&timeframe=H1")
+                updated = client.patch(
+                    f"/api/chart-drawings/{created.json()['id']}",
+                    json={"revision": created.json()["revision"], "properties": {"rows": 30, "mode": "total"}},
+                )
+                preset = client.get("/api/volume-profile/presets/previous-broker-day?symbol=XAUUSD")
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+        self.assertEqual(201, created.status_code)
+        self.assertEqual(5, created.json()["volume_profile"]["source_bar_count"])
+        self.assertEqual(1, len(listed.json()["drawings"]))
+        self.assertEqual(30, updated.json()["volume_profile"]["settings"]["rows"])
+        self.assertEqual("total", updated.json()["volume_profile"]["settings"]["mode"])
+        self.assertEqual(start.isoformat(), preset.json()["range_start"])
+
     def test_chart_drawings_crud_visibility_and_revision(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -1,9 +1,11 @@
 import { Lock, Trash2 } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import type { ChartDrawing } from "../../types";
+import type { ChartDrawing, VolumeProfileRow } from "../../types";
 
 export type DrawingPoint = { x: number; y: number; price: number; time: string };
-export type RenderedChartDrawing = { drawing: ChartDrawing; points: DrawingPoint[] };
+export type RenderedVolumeProfileRow = VolumeProfileRow & { y: number; height: number };
+export type RenderedVolumeProfile = { rows: RenderedVolumeProfileRow[]; pocY: number; vahY: number; valY: number };
+export type RenderedChartDrawing = { drawing: ChartDrawing; points: DrawingPoint[]; volumeProfile?: RenderedVolumeProfile };
 export type MeasurePreview = { start: DrawingPoint; end: DrawingPoint };
 export type FibExtensionPreview = { anchors: DrawingPoint[]; cursor: DrawingPoint };
 export type PriceGuide = { y: number; price: number };
@@ -18,6 +20,7 @@ type Props = {
   onSelect: (drawing: ChartDrawing) => void;
   onDelete: (drawing: ChartDrawing) => void;
   onMoveStart: (event: ReactPointerEvent<HTMLButtonElement>, drawing: ChartDrawing) => void;
+  onRangeMoveStart: (event: ReactPointerEvent<HTMLButtonElement>, drawing: ChartDrawing, anchorIndex: number) => void;
 };
 
 const STANDARD_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -39,7 +42,12 @@ export function fibExtensionLineRange(impulseEndX: number, retracementEndX: numb
   };
 }
 
-export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, priceGuide, plotWidth, selectedId, onSelect, onDelete, onMoveStart }: Props) {
+export function volumeProfileBarWidth(rangeWidth: number, widthPct: number, magnitude: number, maxMagnitude: number): number {
+  if (rangeWidth <= 0 || magnitude <= 0 || maxMagnitude <= 0) return 0;
+  return rangeWidth * Math.min(100, Math.max(10, widthPct)) / 100 * magnitude / maxMagnitude;
+}
+
+export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, priceGuide, plotWidth, selectedId, onSelect, onDelete, onMoveStart, onRangeMoveStart }: Props) {
   return (
     <div className="pointer-events-none absolute inset-0 z-[42]">
       <svg className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
@@ -81,6 +89,11 @@ export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, pric
           if (drawing.drawing_type === "fib_extension" && points.length === 3) {
             return <FibExtensionSvg key={drawing.id} points={points} plotWidth={plotWidth} selected={selected} onClick={() => onSelect(drawing)} />;
           }
+          if (drawing.drawing_type === "volume_profile_fixed_range" && points.length === 2) {
+            const rendered = drawings.find((item) => item.drawing.id === drawing.id)?.volumeProfile;
+            if (!rendered) return null;
+            return <VolumeProfileSvg key={drawing.id} drawing={drawing} points={points} profile={rendered} selected={selected} onClick={() => onSelect(drawing)} />;
+          }
           return null;
         })}
         {measure ? <MeasureSvg measure={measure} /> : null}
@@ -111,6 +124,19 @@ export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, pric
         </button>
       ) : null)}
 
+      {drawings.map(({ drawing, points, volumeProfile }) => drawing.drawing_type === "volume_profile_fixed_range" && drawing.id === selectedId && volumeProfile && points.length === 2 ? (
+        points.map((point, anchorIndex) => (
+          <button
+            key={`${drawing.id}:${anchorIndex}`}
+            aria-label={anchorIndex === 0 ? "Move Volume Profile start" : "Move Volume Profile end"}
+            className="pointer-events-auto absolute z-[55] hidden h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-cyan-100 bg-cyan-500 shadow lg:block"
+            style={{ left: point.x, top: (volumeProfile.rows[0]?.y ?? 20) + 8 }}
+            type="button"
+            onPointerDown={(event) => onRangeMoveStart(event, drawing, anchorIndex)}
+          />
+        ))
+      ) : null)}
+
       {selectedId ? (
         <button
           className="pointer-events-auto absolute bottom-16 right-4 flex items-center gap-2 rounded-lg border border-rose-400/40 bg-rose-950/90 px-3 py-2 text-xs font-semibold text-rose-100 shadow-lg hover:bg-rose-900"
@@ -124,6 +150,52 @@ export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, pric
         </button>
       ) : null}
     </div>
+  );
+}
+
+function VolumeProfileSvg({ drawing, points, profile, selected, onClick }: { drawing: ChartDrawing; points: DrawingPoint[]; profile: RenderedVolumeProfile; selected: boolean; onClick: () => void }) {
+  const left = Math.min(points[0].x, points[1].x);
+  const right = Math.max(points[0].x, points[1].x);
+  const width = Math.max(4, right - left);
+  const settings = drawing.volume_profile?.settings;
+  const maxMagnitude = Math.max(1, ...profile.rows.map((row) => settings?.mode === "delta" ? Math.abs(row.delta) : row.total_volume));
+  const placeRight = settings?.placement !== "left";
+  const profileTop = Math.min(...profile.rows.map((row) => row.y));
+  const profileBottom = Math.max(...profile.rows.map((row) => row.y + row.height));
+  return (
+    <g className="pointer-events-none">
+      <rect
+        x={left}
+        y={profileTop}
+        width={width}
+        height={Math.max(1, profileBottom - profileTop)}
+        fill="rgba(15,118,110,.025)"
+        stroke={selected ? "#67e8f9" : "rgba(45,212,191,.35)"}
+        strokeDasharray="4 3"
+        pointerEvents="stroke"
+        cursor="pointer"
+        onClick={onClick}
+      />
+      {profile.rows.map((row) => {
+        const magnitude = settings?.mode === "delta" ? Math.abs(row.delta) : row.total_volume;
+        const barWidth = volumeProfileBarWidth(width, settings?.width_pct ?? 40, magnitude, maxMagnitude);
+        const x = placeRight ? right - barWidth : left;
+        if (settings?.mode === "up_down") {
+          const upWidth = row.total_volume > 0 ? barWidth * row.up_volume / row.total_volume : 0;
+          return (
+            <g key={row.index}>
+              <rect x={placeRight ? right - barWidth : left} y={row.y} width={barWidth - upWidth} height={row.height} fill={row.in_value_area ? "rgba(244,63,94,.52)" : "rgba(244,63,94,.22)"} />
+              <rect x={placeRight ? right - upWidth : left + barWidth - upWidth} y={row.y} width={upWidth} height={row.height} fill={row.in_value_area ? "rgba(16,185,129,.58)" : "rgba(16,185,129,.25)"} />
+            </g>
+          );
+        }
+        const positive = settings?.mode !== "delta" || row.delta >= 0;
+        return <rect key={row.index} x={x} y={row.y} width={barWidth} height={row.height} fill={row.in_value_area ? (positive ? "rgba(20,184,166,.58)" : "rgba(244,63,94,.56)") : (positive ? "rgba(20,184,166,.24)" : "rgba(244,63,94,.22)")} />;
+      })}
+      {settings?.show_poc !== false ? <line x1={left} x2={right} y1={profile.pocY} y2={profile.pocY} stroke="#fbbf24" strokeWidth="1.5" /> : null}
+      {settings?.show_vah !== false ? <line x1={left} x2={right} y1={profile.vahY} y2={profile.vahY} stroke="#a78bfa" strokeWidth="1" strokeDasharray="4 3" /> : null}
+      {settings?.show_val !== false ? <line x1={left} x2={right} y1={profile.valY} y2={profile.valY} stroke="#fb7185" strokeWidth="1" strokeDasharray="4 3" /> : null}
+    </g>
   );
 }
 

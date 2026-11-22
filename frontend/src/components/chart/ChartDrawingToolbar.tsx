@@ -5,6 +5,7 @@ import type { ChartDrawingTool } from "../../types";
 type Props = {
   activeTool: ChartDrawingTool;
   onToolChange: (tool: ChartDrawingTool) => void;
+  onPreviousDayVolumeProfile: () => void;
 };
 
 const STORAGE_KEY = "semi-bot-chart-drawing-toolbar-position-v1";
@@ -16,11 +17,12 @@ const tools: Array<{ key: ChartDrawingTool; label: string; hotkey: string; icon:
   { key: "fib_standard", label: "Fibonacci Retracement", hotkey: "F", icon: null },
   { key: "fib_ote", label: "Fibonacci OTE", hotkey: "Shift+F", icon: null },
   { key: "fib_extension", label: "Trend-Based Fib Extension", hotkey: "X", icon: null },
+  { key: "volume_profile", label: "Fixed Range Volume Profile", hotkey: "V", icon: null },
   { key: "note", label: "Ghi chú", hotkey: "N", icon: Type },
   { key: "copy_price", label: "Copy giá tại điểm click", hotkey: "Alt+C", icon: Copy },
 ];
 
-export function ChartDrawingToolbar({ activeTool, onToolChange }: Props) {
+export function ChartDrawingToolbar({ activeTool, onToolChange, onPreviousDayVolumeProfile }: Props) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerX: number; pointerY: number; x: number; y: number } | null>(null);
   const [position, setPosition] = useState(() => readPosition());
@@ -105,12 +107,29 @@ export function ChartDrawingToolbar({ activeTool, onToolChange }: Props) {
             type="button"
             onClick={() => onToolChange(active && tool.key !== "cursor" ? "cursor" : tool.key)}
           >
-            {Icon ? <Icon size={19} strokeWidth={1.8} /> : <FibonacciIcon variant={tool.key === "fib_ote" ? "ote" : tool.key === "fib_extension" ? "extension" : "standard"} />}
+            {Icon ? <Icon size={19} strokeWidth={1.8} /> : tool.key === "volume_profile" ? <VolumeProfileIcon /> : <FibonacciIcon variant={tool.key === "fib_ote" ? "ote" : tool.key === "fib_extension" ? "extension" : "standard"} />}
             <span className="sr-only">{tool.label}</span>
           </button>
         );
       })}
+      <button
+        className="ml-1 h-9 shrink-0 rounded-lg border border-emerald-300/20 px-2 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-400/10"
+        title="Tạo Volume Profile cho broker day đã đóng gần nhất"
+        type="button"
+        onClick={onPreviousDayVolumeProfile}
+      >
+        Prev day
+      </button>
     </div>
+  );
+}
+
+function VolumeProfileIcon() {
+  return (
+    <svg aria-hidden="true" className="text-teal-200" height="22" viewBox="0 0 24 24" width="22">
+      <path d="M4 4v16M4 6h6M4 9h11M4 12h16M4 15h9M4 18h4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M4 12h16" opacity=".5" stroke="#fbbf24" strokeWidth="2" />
+    </svg>
   );
 }
 

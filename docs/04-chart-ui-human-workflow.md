@@ -703,6 +703,15 @@ Không nên build chart engine từ đầu ở MVP.
 - Drawing có optimistic `revision`; API trả `409` nếu một tab khác đã sửa hoặc xóa bản mới hơn.
 - Mặc định drawing mới hiển thị trên H1, M15 và M5. Xóa là soft-delete để không làm mất dấu dữ liệu ngoài ý muốn.
 
+### Fixed Range Volume Profile
+
+- Công cụ Volume Profile dùng hai time anchor và snap vào biên nến đang hiển thị; range được lưu theo quy ước `[start, end)` và không kéo dài vô hạn sang phải.
+- Worker duy nhất có `LIVE_SYNC_CANDLES=true` backfill 30 ngày M1, tiếp tục lưu M1 mới không giới hạn thời gian và đồng bộ D1 để xác định preset `Previous broker day`. M1 chỉ phục vụ tính toán, không xuất hiện trong selector timeframe hay payload nến chart.
+- Backend phân bổ MT5 tick volume của mỗi nến M1 theo phần price overlap giữa các row. Mặc định 24 rows, Value Area 70%, mode Up/Down, width 30% và placement bên trái; giới hạn một profile là 5.000 nến M1 và không fallback sang M5.
+- Mỗi drawing lưu settings riêng: Rows, Value Area %, Total/Up-Down/Delta, width, placement trái/phải và toggle POC/VAH/VAL. POC/VAH/VAL cùng histogram được backend tính lại khi range hoặc settings đổi.
+- Desktop cho phép tạo, kéo hai time handle và sửa settings; mobile chỉ hiển thị và bật/tắt layer `Volume Profiles`. Histogram và các level của profile cho phép click xuyên xuống chart; chỉ đường viền range nhận click để chọn drawing, sau đó hai handle mới nhận thao tác kéo. Preset `Previous broker day` chỉ tạo một profile cho cùng symbol/range và chọn lại profile hiện có khi bấm lặp. Volume Profile v1 không hoạt động trong Replay.
+- Dữ liệu Forex dùng tick volume từ broker MT5 nên hình dạng có thể khác TradingView nếu nguồn giá/volume khác.
+
 ## Cần mock sớm
 
 Trước khi nối data thật, nên có mock UI với candle fixture và entity fixture để kiểm tra:

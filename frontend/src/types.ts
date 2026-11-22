@@ -1,7 +1,7 @@
 export type Timeframe = "M5" | "M15" | "H1";
 
-export type ChartDrawingType = "note" | "fib_retracement" | "fib_extension" | "horizontal_line";
-export type ChartDrawingTool = "cursor" | "measure" | "note" | "fib_standard" | "fib_ote" | "fib_extension" | "horizontal_line" | "copy_price";
+export type ChartDrawingType = "note" | "fib_retracement" | "fib_extension" | "horizontal_line" | "volume_profile_fixed_range";
+export type ChartDrawingTool = "cursor" | "measure" | "note" | "fib_standard" | "fib_ote" | "fib_extension" | "horizontal_line" | "volume_profile" | "copy_price";
 
 export type ChartDrawingAnchor = {
   time: string;
@@ -23,6 +23,49 @@ export type ChartDrawing = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  volume_profile?: VolumeProfileResult;
+};
+
+export type VolumeProfileRow = {
+  index: number;
+  price_low: number;
+  price_high: number;
+  price_mid: number;
+  up_volume: number;
+  down_volume: number;
+  total_volume: number;
+  delta: number;
+  in_value_area: boolean;
+};
+
+export type VolumeProfileSettings = {
+  rows: number;
+  value_area_pct: number;
+  mode: "total" | "up_down" | "delta";
+  width_pct: number;
+  placement: "left" | "right";
+  show_poc: boolean;
+  show_vah: boolean;
+  show_val: boolean;
+};
+
+export type VolumeProfileResult = {
+  source_timeframe: "M1";
+  volume_kind: "tick_volume";
+  tick_size: number;
+  tick_size_source: string;
+  range_start: string;
+  range_end: string;
+  source_bar_count: number;
+  total_volume: number;
+  profile_low: number;
+  profile_high: number;
+  row_size: number;
+  poc: number;
+  vah: number;
+  val: number;
+  settings: VolumeProfileSettings;
+  rows: VolumeProfileRow[];
 };
 
 export type ZoneVisibilityKey =

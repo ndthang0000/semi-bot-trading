@@ -1472,16 +1472,54 @@ def _expire_news_regimes(conn: Connection, config: AppConfig, now: datetime) -> 
 
 def sync_mt5_candles(conn: Connection, config: AppConfig, client: MT5BrokerClient, broker_symbol: str) -> None:
     # broker_symbol is resolved once at startup and passed in — no redundant MT5 call.
-    timeframe_counts = {config.bias.timeframe: 800, config.strategy.timeframe: 1200, "M5": 1800}
+    timeframe_counts = {config.bias.timeframe: 800, config.strategy.timeframe: 1200, "M5": 1800, "D1": 41}
+    latest_m1 = latest_closed_candle_time(conn, config.symbol, "M1")
+    if latest_m1 is None:
+        timeframe_counts["M1"] = 30 * 24 * 60 + 1
+    else:
+        latest = datetime.fromisoformat(latest_m1)
+        missing_minutes = max(0, int((datetime.now(UTC) - latest).total_seconds() // 60))
+        timeframe_counts["M1"] = min(30 * 24 * 60 + 1, max(3, missing_minutes + 2))
+
+    metadata = conn.execute("SELECT 1 FROM instrument_metadata WHERE symbol = ?", (config.symbol,)).fetchone()
+    if metadata is None and hasattr(client, "get_symbol_trade_info"):
+        trade_info = client.get_symbol_trade_info(broker_symbol)
+        conn.execute(
+            """
+            INSERT INTO instrument_metadata (symbol, broker_symbol, digits, point, trade_tick_size, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                broker_symbol = excluded.broker_symbol,
+                digits = excluded.digits,
+                point = excluded.point,
+                trade_tick_size = excluded.trade_tick_size,
+                updated_at = excluded.updated_at
+            """,
+            (
+                config.symbol,
+                broker_symbol,
+                int(float(trade_info.get("digits") or 0)),
+                float(trade_info.get("point") or 0),
+                float(trade_info.get("trade_tick_size") or 0),
+                datetime.now(UTC).replace(microsecond=0).isoformat(),
+            ),
+        )
+        conn.commit()
     for timeframe, count in timeframe_counts.items():
         candles = client.copy_rates(broker_symbol, config.symbol, timeframe, count)
-        # The last candle from MT5 is the still-forming live candle; exclude it from
-        # the closed-candle store.  When MT5 returns ≤1 candle (unexpected) treat
-        # everything as live so we never write an open candle into the closed table.
-        closed_candles = candles[:-1] if len(candles) > 1 else []
+        if timeframe in {"M1", "D1"}:
+            now = datetime.now(UTC)
+            closed_candles = [candle for candle in candles if candle.close_time <= now]
+            live_candle = next((candle for candle in reversed(candles) if candle.close_time > now), None)
+        else:
+            # Preserve the established sync contract for strategy timeframes:
+            # MT5 position zero is the still-forming candle.
+            closed_candles = candles[:-1] if len(candles) > 1 else []
+            live_candle = candles[-1] if candles else None
         upsert_candles(conn, closed_candles)
-        live_candle = candles[-1] if candles else None
         upsert_live_candle(conn, live_candle)
+        if timeframe in {"M1", "D1"}:
+            logger.info("Synced %s candles timeframe=%s requested=%d closed=%d", config.symbol, timeframe, count, len(closed_candles))
 
 
 def _load_swing_ids(conn: Connection, symbol: str, timeframe: str) -> set[str]:

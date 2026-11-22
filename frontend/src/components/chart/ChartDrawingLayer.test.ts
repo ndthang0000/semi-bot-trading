@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fibExtensionLineRange, fibExtensionValue, fibRetracementValue } from "./ChartDrawingLayer";
+import { fibExtensionLineRange, fibExtensionValue, fibRetracementValue, volumeProfileBarWidth } from "./ChartDrawingLayer";
 
 describe("fibRetracementValue", () => {
   it("places level zero at the impulse end and level one at its origin", () => {
@@ -30,5 +30,17 @@ describe("fibExtensionLineRange", () => {
   it("keeps extension levels bounded between B and C", () => {
     expect(fibExtensionLineRange(420, 680)).toEqual({ left: 420, right: 680 });
     expect(fibExtensionLineRange(680, 420)).toEqual({ left: 420, right: 680 });
+  });
+});
+
+describe("volumeProfileBarWidth", () => {
+  it("scales row magnitude inside the selected time range", () => {
+    expect(volumeProfileBarWidth(500, 40, 100, 100)).toBe(200);
+    expect(volumeProfileBarWidth(500, 40, 25, 100)).toBe(50);
+  });
+
+  it("keeps the configured width within supported bounds", () => {
+    expect(volumeProfileBarWidth(100, 2, 1, 1)).toBe(10);
+    expect(volumeProfileBarWidth(100, 200, 1, 1)).toBe(100);
   });
 });

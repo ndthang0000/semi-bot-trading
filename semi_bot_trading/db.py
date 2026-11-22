@@ -584,6 +584,16 @@ CREATE TABLE IF NOT EXISTS chart_drawings (
 CREATE INDEX IF NOT EXISTS idx_chart_drawings_lookup
 ON chart_drawings(symbol, deleted_at, updated_at);
 
+-- Broker price precision used by derived analytics such as Volume Profile.
+CREATE TABLE IF NOT EXISTS instrument_metadata (
+    symbol TEXT PRIMARY KEY,
+    broker_symbol TEXT NOT NULL,
+    digits INTEGER NOT NULL,
+    point REAL NOT NULL,
+    trade_tick_size REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- Quote-driven state for the Liquidity Sweep Reclaim playbook. State is scoped
 -- per account because broker Bid/Ask and spread can differ.
 CREATE TABLE IF NOT EXISTS liquidity_sweep_states (

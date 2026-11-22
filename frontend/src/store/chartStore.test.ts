@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultSelectedPlaybooks, enabledPlaybookKeys, playbookControlledLayers, playbookLayerRequirements, setupSelectionState } from "./chartStore";
+import { defaultSelectedPlaybooks, enabledPlaybookKeys, playbookControlledLayers, playbookLayerRequirements, setupSelectionState, useChartStore } from "./chartStore";
 import { isZoneVisibleForPlaybooks, zoneDisplayName } from "../components/chart/chartCore";
 import type { PriceZone } from "../types";
 
@@ -103,6 +103,15 @@ describe("Manual AI setup interaction state", () => {
       selectedSetupId: "setup-b",
       manualAiEditSetupId: null,
     });
+  });
+});
+
+describe("Volume Profile layer", () => {
+  it("is visible by default and can be toggled independently", () => {
+    expect(useChartStore.getState().showVolumeProfiles).toBe(true);
+    useChartStore.getState().setShowVolumeProfiles(false);
+    expect(useChartStore.getState().showVolumeProfiles).toBe(false);
+    useChartStore.getState().setShowVolumeProfiles(true);
   });
 });
 

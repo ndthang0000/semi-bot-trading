@@ -90,6 +90,7 @@ from .strategy.h1_impulse_retest_v1 import (
     h1_impulse_preview_config_from_strategy,
     revalidate_h1_impulse_order,
 )
+from .volume_profile import VolumeProfileError, calculate_fixed_range_profile, normalize_volume_profile_settings
 
 
 MAX_CHART_LIMIT = 15_000
@@ -144,10 +145,15 @@ def zones_are_duplicates(candidate: Any, existing: Any) -> bool:
 
 
 def validate_chart_drawing(request: ChartDrawingCreateRequest | ChartDrawingUpdateRequest, drawing_type: str) -> None:
+    if drawing_type == "volume_profile_fixed_range" and request.properties is not None:
+        try:
+            normalize_volume_profile_settings(request.properties)
+        except VolumeProfileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     anchors = request.anchors
     if anchors is None:
         return
-    expected = 3 if drawing_type == "fib_extension" else 2 if drawing_type == "fib_retracement" else 1
+    expected = 3 if drawing_type == "fib_extension" else 2 if drawing_type in {"fib_retracement", "volume_profile_fixed_range"} else 1
     if len(anchors) != expected:
         raise HTTPException(status_code=422, detail=f"{drawing_type} requires exactly {expected} anchor(s)")
     for index, anchor in enumerate(anchors):
@@ -158,12 +164,15 @@ def validate_chart_drawing(request: ChartDrawingCreateRequest | ChartDrawingUpda
         for right in anchors[index + 1:]
     ):
         raise HTTPException(status_code=422, detail="Fib anchors must not be identical")
+    if drawing_type == "volume_profile_fixed_range":
+        if anchors[0].time == anchors[1].time:
+            raise HTTPException(status_code=422, detail="Volume Profile anchors must span a time range")
     if drawing_type == "note" and isinstance(request, ChartDrawingCreateRequest) and not (request.content or "").strip():
         raise HTTPException(status_code=422, detail="Note content must not be empty")
 
 
-def chart_drawing_row_to_api(row: Any) -> dict[str, Any]:
-    return {
+def chart_drawing_row_to_api(row: Any, volume_profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = {
         "id": row["id"],
         "symbol": row["symbol"],
         "drawing_type": row["drawing_type"],
@@ -179,6 +188,32 @@ def chart_drawing_row_to_api(row: Any) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+    if volume_profile is not None:
+        payload["volume_profile"] = volume_profile
+    return payload
+
+
+def calculate_chart_drawing_volume_profile(
+    conn: Any,
+    *,
+    symbol: str,
+    drawing_type: str,
+    anchors: list[dict[str, Any]],
+    properties: dict[str, Any],
+) -> dict[str, Any] | None:
+    if drawing_type != "volume_profile_fixed_range":
+        return None
+    parsed = sorted(require_timezone_aware_iso(str(anchor["time"]), "anchor.time") for anchor in anchors)
+    try:
+        return calculate_fixed_range_profile(
+            conn,
+            symbol=symbol,
+            start=parsed[0],
+            end=parsed[1],
+            settings=properties,
+        )
+    except VolumeProfileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def manual_ai_row_to_api(row: Any) -> dict[str, Any]:
@@ -2819,7 +2854,19 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                 "SELECT * FROM chart_drawings WHERE symbol = ? AND deleted_at IS NULL ORDER BY updated_at ASC",
                 (symbol,),
             ).fetchall()
-        drawings = [chart_drawing_row_to_api(row) for row in rows]
+            drawings = [
+                chart_drawing_row_to_api(
+                    row,
+                    calculate_chart_drawing_volume_profile(
+                        conn,
+                        symbol=str(row["symbol"]),
+                        drawing_type=str(row["drawing_type"]),
+                        anchors=json_loads(row["anchors_json"], []),
+                        properties=json_loads(row["properties_json"], {}),
+                    ),
+                )
+                for row in rows
+            ]
         if timeframe is not None:
             drawings = [item for item in drawings if timeframe in item["visible_timeframes"]]
         if not include_hidden:
@@ -2837,6 +2884,15 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
         visible_timeframes = list(dict.fromkeys(request.visible_timeframes))
         with connect(config.database) as conn:
             init_db(conn)
+            anchors_payload = [anchor.model_dump() for anchor in request.anchors]
+            properties = normalize_volume_profile_settings(request.properties) if request.drawing_type == "volume_profile_fixed_range" else request.properties
+            volume_profile = calculate_chart_drawing_volume_profile(
+                conn,
+                symbol=request.symbol,
+                drawing_type=request.drawing_type,
+                anchors=anchors_payload,
+                properties=properties,
+            )
             conn.execute(
                 """
                 INSERT INTO chart_drawings (
@@ -2851,8 +2907,8 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
                     request.drawing_type,
                     request.origin_timeframe,
                     json.dumps(visible_timeframes),
-                    json.dumps([anchor.model_dump() for anchor in request.anchors]),
-                    json.dumps(request.properties),
+                    json.dumps(anchors_payload),
+                    json.dumps(properties),
                     (request.content or "").strip() or None,
                     int(request.locked),
                     int(request.hidden),
@@ -2863,7 +2919,7 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             )
             conn.commit()
             row = conn.execute("SELECT * FROM chart_drawings WHERE id = ?", (drawing_id,)).fetchone()
-        return chart_drawing_row_to_api(row)
+        return chart_drawing_row_to_api(row, volume_profile)
 
     @app.patch("/api/chart-drawings/{drawing_id}")
     def update_chart_drawing(
@@ -2886,6 +2942,15 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             visible = request.visible_timeframes if request.visible_timeframes is not None else json_loads(row["visible_timeframes_json"], [])
             anchors = [anchor.model_dump() for anchor in request.anchors] if request.anchors is not None else json_loads(row["anchors_json"], [])
             properties = request.properties if request.properties is not None else json_loads(row["properties_json"], {})
+            if row["drawing_type"] == "volume_profile_fixed_range":
+                properties = normalize_volume_profile_settings(properties)
+            volume_profile = calculate_chart_drawing_volume_profile(
+                conn,
+                symbol=str(row["symbol"]),
+                drawing_type=str(row["drawing_type"]),
+                anchors=anchors,
+                properties=properties,
+            )
             content = request.content if "content" in request.model_fields_set else row["content"]
             locked = request.locked if request.locked is not None else bool(row["locked"])
             hidden = request.hidden if request.hidden is not None else bool(row["hidden"])
@@ -2903,7 +2968,34 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             )
             conn.commit()
             updated = conn.execute("SELECT * FROM chart_drawings WHERE id = ?", (drawing_id,)).fetchone()
-        return chart_drawing_row_to_api(updated)
+        return chart_drawing_row_to_api(updated, volume_profile)
+
+    @app.get("/api/volume-profile/presets/previous-broker-day")
+    def previous_broker_day_volume_profile_preset(
+        symbol: str = Query(default=config.symbol),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            row = conn.execute(
+                """
+                SELECT open_time, close_time
+                FROM candles
+                WHERE symbol = ? AND timeframe = 'D1'
+                ORDER BY open_time DESC
+                LIMIT 1
+                """,
+                (symbol,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=409, detail="Previous broker day is not ready; wait for D1 candle sync")
+        return {
+            "symbol": symbol,
+            "preset": "previous_broker_day",
+            "range_start": row["open_time"],
+            "range_end": row["close_time"],
+            "source_timeframe": "D1",
+        }
 
     @app.delete("/api/chart-drawings/{drawing_id}")
     def delete_chart_drawing(

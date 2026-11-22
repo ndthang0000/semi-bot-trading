@@ -287,7 +287,7 @@ class WeeklyJournalRequest(BaseModel):
     achieved_r: float = Field(default=0, ge=-1_000, le=1_000)
 
 
-ChartDrawingType = Literal["note", "fib_retracement", "fib_extension", "horizontal_line"]
+ChartDrawingType = Literal["note", "fib_retracement", "fib_extension", "horizontal_line", "volume_profile_fixed_range"]
 ChartDrawingTimeframe = Literal["M5", "M15", "H1"]
 
 

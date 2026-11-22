@@ -56,6 +56,7 @@ type ChartState = {
   zoneTypeVisibility: ZoneTypeVisibility;
   showStructure: boolean;
   showEma: boolean;
+  showVolumeProfiles: boolean;
   showIntradayLevels: boolean;
   showBrokenIntradayLevels: boolean;
   showH1ImpulseCandidates: boolean;
@@ -85,6 +86,7 @@ type ChartState = {
   setAllZoneTypesVisible: (visible: boolean) => void;
   setShowStructure: (showStructure: boolean) => void;
   setShowEma: (showEma: boolean) => void;
+  setShowVolumeProfiles: (show: boolean) => void;
   setShowIntradayLevels: (showIntradayLevels: boolean) => void;
   setShowBrokenIntradayLevels: (show: boolean) => void;
   setShowH1ImpulseCandidates: (show: boolean) => void;
@@ -121,6 +123,7 @@ export const useChartStore = create<ChartState>()(
       zoneTypeVisibility: defaultZoneTypeVisibility,
       showStructure: true,
       showEma: false,
+      showVolumeProfiles: true,
       showIntradayLevels: true,
       showBrokenIntradayLevels: false,
       showH1ImpulseCandidates: true,
@@ -206,6 +209,7 @@ export const useChartStore = create<ChartState>()(
           showStructure: requiresStructureForPlaybooks(state.selectedPlaybooks) ? true : showStructure,
         })),
       setShowEma: (showEma) => set({ showEma }),
+      setShowVolumeProfiles: (showVolumeProfiles) => set({ showVolumeProfiles }),
       setShowIntradayLevels: (showIntradayLevels) => set({ showIntradayLevels }),
       setShowBrokenIntradayLevels: (showBrokenIntradayLevels) => set({ showBrokenIntradayLevels }),
       setShowH1ImpulseCandidates: (showH1ImpulseCandidates) => set({ showH1ImpulseCandidates }),
@@ -323,6 +327,7 @@ export const useChartStore = create<ChartState>()(
         zoneTypeVisibility: state.zoneTypeVisibility,
         showStructure: state.showStructure,
         showEma: state.showEma,
+        showVolumeProfiles: state.showVolumeProfiles,
         showIntradayLevels: state.showIntradayLevels,
         showBrokenIntradayLevels: state.showBrokenIntradayLevels,
         showH1ImpulseCandidates: state.showH1ImpulseCandidates,

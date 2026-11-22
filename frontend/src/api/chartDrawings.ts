@@ -36,7 +36,7 @@ export async function createChartDrawing(input: ChartDrawingCreateInput): Promis
 
 export async function updateChartDrawing(
   drawing: ChartDrawing,
-  input: { anchors?: ChartDrawingAnchor[]; content?: string | null; locked?: boolean; hidden?: boolean },
+  input: { anchors?: ChartDrawingAnchor[]; properties?: Record<string, unknown>; content?: string | null; locked?: boolean; hidden?: boolean },
 ): Promise<ChartDrawing> {
   const response = await authFetch(`/api/chart-drawings/${encodeURIComponent(drawing.id)}`, {
     method: "PATCH",
@@ -44,6 +44,19 @@ export async function updateChartDrawing(
     body: JSON.stringify({ revision: drawing.revision, ...input }),
   });
   if (!response.ok) throw await apiError(response, `Update drawing failed with ${response.status}`);
+  return response.json();
+}
+
+export async function fetchPreviousBrokerDayVolumeProfilePreset(symbol: string): Promise<{
+  symbol: string;
+  preset: "previous_broker_day";
+  range_start: string;
+  range_end: string;
+  source_timeframe: "D1";
+}> {
+  const params = new URLSearchParams({ symbol });
+  const response = await authFetch(`/api/volume-profile/presets/previous-broker-day?${params.toString()}`);
+  if (!response.ok) throw await apiError(response, `Previous broker day failed with ${response.status}`);
   return response.json();
 }
 

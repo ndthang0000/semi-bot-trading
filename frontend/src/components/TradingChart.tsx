@@ -14,8 +14,9 @@ import {
 } from "lightweight-charts";
 import { ArrowDown, ArrowUp, Newspaper, Star } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { findVolumeProfileForRange } from "./chart/volumeProfileDrawing";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
-import { createChartDrawing, deleteChartDrawing, updateChartDrawing } from "../api/chartDrawings";
+import { createChartDrawing, deleteChartDrawing, fetchPreviousBrokerDayVolumeProfilePreset, updateChartDrawing } from "../api/chartDrawings";
 import { h1ImpulsePreviewToSetupCandidate, previewH1Impulse, type H1ImpulsePreview, type H1ImpulseTargetMode } from "../api/h1Impulse";
 import { updateManualAiPlanLevels } from "../api/manualAi";
 import { updateQuickOrderLevels } from "../api/quickOrder";
@@ -109,6 +110,7 @@ import type {
   TradeOrder,
   WaveLeg,
   ZoneTypeVisibility,
+  VolumeProfileSettings,
 } from "../types";
 
 type TradingChartProps = {
@@ -175,6 +177,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showHistoricalLiquiditySweeps = useChartStore((state) => state.showHistoricalLiquiditySweeps);
   const showStructure = useChartStore((state) => state.showStructure);
   const showEma = useChartStore((state) => state.showEma);
+  const showVolumeProfiles = useChartStore((state) => state.showVolumeProfiles);
   const showIntradayLevels = useChartStore((state) => state.showIntradayLevels);
   const showBrokenIntradayLevels = useChartStore((state) => state.showBrokenIntradayLevels);
   const showH1ImpulseCandidates = useChartStore((state) => state.showH1ImpulseCandidates);
@@ -228,11 +231,12 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const zoneDragRef = useRef<ZoneDragState | null>(null);
   const manualDrawRef = useRef<ManualDrawState | null>(null);
   const manualAiLevelDragRef = useRef<{ candidateId: string; level: ManualAiLevel; moved: boolean } | null>(null);
-  const drawingInteractionRef = useRef<{ tool: "fib_standard" | "fib_ote"; start: DrawingPoint } | null>(null);
+  const drawingInteractionRef = useRef<{ tool: "fib_standard" | "fib_ote" | "volume_profile"; start: DrawingPoint } | null>(null);
   const fibExtensionAnchorsRef = useRef<DrawingPoint[]>([]);
   const measureStartRef = useRef<DrawingPoint | null>(null);
   const drawingMoveRef = useRef<{ drawing: ChartDrawing; startX: number; startY: number; moved: boolean } | null>(null);
-  const drawingDraftAnchorRef = useRef<{ id: string; anchor: ChartDrawingAnchor } | null>(null);
+  const drawingRangeMoveRef = useRef<{ drawing: ChartDrawing; anchorIndex: number; moved: boolean } | null>(null);
+  const drawingDraftAnchorRef = useRef<{ id: string; anchors: ChartDrawingAnchor[] } | null>(null);
   const payloadRef = useRef(payload);
   const showZonesRef = useRef(showZones);
   const zoneTypeVisibilityRef = useRef(zoneTypeVisibility);
@@ -240,6 +244,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const showHistoricalLiquiditySweepsRef = useRef(showHistoricalLiquiditySweeps);
   const showStructureRef = useRef(showStructure);
   const showEmaRef = useRef(showEma);
+  const showVolumeProfilesRef = useRef(showVolumeProfiles);
   const showIntradayLevelsRef = useRef(showIntradayLevels);
   const showBrokenIntradayLevelsRef = useRef(showBrokenIntradayLevels);
   const showH1ImpulseCandidatesRef = useRef(showH1ImpulseCandidates);
@@ -257,6 +262,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const onZonePersistedRef = useRef(onZonePersisted);
   const newsDataRef = useRef(newsData);
   const drawingsRef = useRef(drawings);
+  const previousDayRequestPendingRef = useRef(false);
+  const previousDayCreatedRef = useRef<{ key: string; id: string } | null>(null);
   const handledZoneFocusRequestRef = useRef<number | null>(null);
   const handledTradeFocusRequestRef = useRef<number | null>(null);
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
@@ -320,6 +327,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   showHistoricalLiquiditySweepsRef.current = showHistoricalLiquiditySweeps;
   showStructureRef.current = showStructure;
   showEmaRef.current = showEma;
+  showVolumeProfilesRef.current = showVolumeProfiles;
   showIntradayLevelsRef.current = showIntradayLevels;
   showBrokenIntradayLevelsRef.current = showBrokenIntradayLevels;
   showH1ImpulseCandidatesRef.current = showH1ImpulseCandidates;
@@ -339,6 +347,11 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   drawingsRef.current = drawings;
   drawPreviewZoneRef.current = drawPreviewZone;
   candleDataRef.current = candleData;
+
+  useEffect(() => {
+    const created = previousDayCreatedRef.current;
+    if (created && drawings.some((drawing) => drawing.id === created.id)) previousDayCreatedRef.current = null;
+  }, [drawings]);
   ema34DataRef.current = ema34Data;
   ema200DataRef.current = ema200Data;
 
@@ -557,16 +570,29 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     }, []);
     const newsMarkers = buildNewsTimelineMarkers(newsDataRef.current?.events ?? [], toUnixTime(lastCandle.time), plotWidth, height, timeScale);
     const chartDrawings = drawingsRef.current.flatMap((drawing) => {
-      const draftAnchor = drawingDraftAnchorRef.current?.id === drawing.id ? drawingDraftAnchorRef.current.anchor : null;
-      const effectiveAnchors = draftAnchor ? [draftAnchor, ...drawing.anchors.slice(1)] : drawing.anchors;
+      if (drawing.drawing_type === "volume_profile_fixed_range" && !showVolumeProfilesRef.current) return [];
+      const draftAnchors = drawingDraftAnchorRef.current?.id === drawing.id ? drawingDraftAnchorRef.current.anchors : null;
+      const effectiveAnchors = draftAnchors ?? drawing.anchors;
       const points = effectiveAnchors.flatMap((anchor) => {
         const x = interpolateChartX(timeScale, toUnixTime(anchor.time), candleDataRef.current);
+        if (x === null) return [];
+        if (drawing.drawing_type === "volume_profile_fixed_range") return [{ x, y: 0, price: anchor.price, time: anchor.time }];
         const y = series.priceToCoordinate(anchor.price);
-        if (x === null || y === null) return [];
-        return [{ x, y, price: anchor.price, time: anchor.time }];
+        return y === null ? [] : [{ x, y, price: anchor.price, time: anchor.time }];
       });
       if (points.length !== effectiveAnchors.length) return [];
-      return [{ drawing, points }];
+      if (drawing.drawing_type !== "volume_profile_fixed_range" || !drawing.volume_profile) return [{ drawing, points }];
+      const profileRows = drawing.volume_profile.rows.flatMap((row) => {
+        const top = series.priceToCoordinate(row.price_high);
+        const bottom = series.priceToCoordinate(row.price_low);
+        if (top === null || bottom === null) return [];
+        return [{ ...row, y: Math.min(top, bottom), height: Math.max(1, Math.abs(bottom - top)) }];
+      });
+      const pocY = series.priceToCoordinate(drawing.volume_profile.poc);
+      const vahY = series.priceToCoordinate(drawing.volume_profile.vah);
+      const valY = series.priceToCoordinate(drawing.volume_profile.val);
+      if (profileRows.length !== drawing.volume_profile.rows.length || pocY === null || vahY === null || valY === null) return [];
+      return [{ drawing, points, volumeProfile: { rows: profileRows, pocY, vahY, valY } }];
     });
     const selectedCandleValue = selectedCandleRef.current;
     let selectedMarker: { x: number; y: number; width: number; height: number } | null = null;
@@ -630,7 +656,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
 
   useEffect(() => {
     scheduleOverlayRecalc();
-  }, [h1ImpulsePreviews, scheduleOverlayRecalc, selectedCandle, selectedPlaybooks, selectedSetupId]);
+  }, [h1ImpulsePreviews, scheduleOverlayRecalc, selectedCandle, selectedPlaybooks, selectedSetupId, showVolumeProfiles]);
 
   const startOverlayInteractionSync = useCallback(() => {
     if (interactionRecalcRef.current !== null) return;
@@ -935,7 +961,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   }, [setAddEntityKind]);
 
   const persistDrawing = useCallback(async (
-    drawingType: "note" | "fib_retracement" | "fib_extension" | "horizontal_line",
+    drawingType: "note" | "fib_retracement" | "fib_extension" | "horizontal_line" | "volume_profile_fixed_range",
     anchors: ChartDrawingAnchor[],
     properties: Record<string, unknown> = {},
     content: string | null = null,
@@ -954,13 +980,20 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       setDrawingTool("cursor");
       setDrawingMessage("Đã lưu drawing.");
       onDrawingsChanged?.();
+      return created;
     } catch (error) {
       setDrawError(error instanceof Error ? error.message : "Could not save chart drawing.");
+      return null;
     }
   }, [onDrawingsChanged]);
 
   const beginChartDrawing = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (drawingTool === "cursor") return;
+    if (drawingTool === "volume_profile" && payloadRef.current.replay) {
+      setDrawError("Volume Profile v1 chưa hỗ trợ Replay.");
+      setDrawingTool("cursor");
+      return;
+    }
     const point = drawingPointFromPointer(event.clientX, event.clientY);
     if (!point) return;
     event.preventDefault();
@@ -1064,6 +1097,12 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       drawingInteractionRef.current = null;
       const point = drawingPointFromPointer(event.clientX, event.clientY);
       if (!point) return;
+      if (interaction.tool === "volume_profile") {
+        const anchors = snappedVolumeProfileAnchors(interaction.start, point, candleDataRef.current, payloadRef.current.timeframe);
+        setMeasurePreview(null);
+        void persistDrawing("volume_profile_fixed_range", anchors, defaultVolumeProfileSettings());
+        return;
+      }
       const variant = interaction.tool === "fib_ote" ? "ote" : "standard";
       setMeasurePreview(null);
       void persistDrawing(
@@ -1112,7 +1151,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       const point = drawingPointFromPointer(event.clientX, event.clientY);
       if (!point) return;
       event.preventDefault();
-      drawingDraftAnchorRef.current = { id: moving.drawing.id, anchor: { time: point.time, price: point.price } };
+      drawingDraftAnchorRef.current = { id: moving.drawing.id, anchors: [{ time: point.time, price: point.price }] };
       scheduleOverlayRecalc();
     };
     const finish = (event: PointerEvent) => {
@@ -1145,6 +1184,109 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     };
   }, [drawingPointFromPointer, onDrawingsChanged, scheduleOverlayRecalc]);
 
+  const beginRangeMoveDrawing = useCallback((event: ReactPointerEvent<HTMLButtonElement>, drawing: ChartDrawing, anchorIndex: number) => {
+    if (drawing.locked || drawing.drawing_type !== "volume_profile_fixed_range") return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedDrawingId(drawing.id);
+    drawingRangeMoveRef.current = { drawing, anchorIndex, moved: false };
+  }, []);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const moving = drawingRangeMoveRef.current;
+      if (!moving) return;
+      const time = timeFromClientX(event.clientX);
+      if (time === null) return;
+      event.preventDefault();
+      moving.moved = true;
+      const anchors = movedVolumeProfileAnchors(moving.drawing.anchors, moving.anchorIndex, time, candleDataRef.current, payloadRef.current.timeframe);
+      drawingDraftAnchorRef.current = { id: moving.drawing.id, anchors };
+      scheduleOverlayRecalc();
+    };
+    const finish = (event: PointerEvent) => {
+      const moving = drawingRangeMoveRef.current;
+      if (!moving) return;
+      drawingRangeMoveRef.current = null;
+      if (!moving.moved) return;
+      const time = timeFromClientX(event.clientX);
+      const anchors = time === null
+        ? null
+        : movedVolumeProfileAnchors(moving.drawing.anchors, moving.anchorIndex, time, candleDataRef.current, payloadRef.current.timeframe);
+      if (!anchors) {
+        drawingDraftAnchorRef.current = null;
+        scheduleOverlayRecalc();
+        return;
+      }
+      void updateChartDrawing(moving.drawing, { anchors })
+        .then(() => {
+          setDrawingMessage("Đã cập nhật range Volume Profile.");
+          onDrawingsChanged?.();
+        })
+        .catch((error) => setDrawError(error instanceof Error ? error.message : "Could not update Volume Profile range."))
+        .finally(() => {
+          drawingDraftAnchorRef.current = null;
+          scheduleOverlayRecalc();
+        });
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+    };
+  }, [onDrawingsChanged, scheduleOverlayRecalc, timeFromClientX]);
+
+  const saveVolumeProfileSettings = useCallback(async (drawing: ChartDrawing, settings: VolumeProfileSettings) => {
+    try {
+      await updateChartDrawing(drawing, { properties: settings });
+      setDrawingMessage("Đã lưu Volume Profile settings.");
+      onDrawingsChanged?.();
+    } catch (error) {
+      setDrawError(error instanceof Error ? error.message : "Could not update Volume Profile settings.");
+    }
+  }, [onDrawingsChanged]);
+
+  const createPreviousDayVolumeProfile = useCallback(async () => {
+    if (payloadRef.current.replay) {
+      setDrawError("Volume Profile v1 chưa hỗ trợ Replay.");
+      return;
+    }
+    if (previousDayRequestPendingRef.current) {
+      setDrawingMessage("Previous day Volume Profile đang được tạo.");
+      return;
+    }
+    previousDayRequestPendingRef.current = true;
+    try {
+      const preset = await fetchPreviousBrokerDayVolumeProfilePreset(payloadRef.current.symbol);
+      const key = `${preset.symbol}:${preset.range_start}:${preset.range_end}`;
+      const existing = findVolumeProfileForRange(drawingsRef.current, preset.symbol, preset.range_start, preset.range_end);
+      if (existing) {
+        setSelectedDrawingId(existing.id);
+        setDrawingMessage("Previous day Volume Profile đã tồn tại.");
+        return;
+      }
+      if (previousDayCreatedRef.current?.key === key) {
+        setSelectedDrawingId(previousDayCreatedRef.current.id);
+        setDrawingMessage("Previous day Volume Profile đã tồn tại.");
+        return;
+      }
+      const price = payloadRef.current.layers.candles.at(-1)?.close ?? 1;
+      const created = await persistDrawing(
+        "volume_profile_fixed_range",
+        [{ time: preset.range_start, price }, { time: preset.range_end, price }],
+        defaultVolumeProfileSettings(),
+      );
+      if (created && !drawingsRef.current.some((drawing) => drawing.id === created.id)) {
+        previousDayCreatedRef.current = { key, id: created.id };
+      }
+    } catch (error) {
+      setDrawError(error instanceof Error ? error.message : "Could not create previous-day Volume Profile.");
+    } finally {
+      previousDayRequestPendingRef.current = false;
+    }
+  }, [persistDrawing]);
+
   useEffect(() => {
     const hotkeys = (event: KeyboardEvent) => {
       const selectedLineId = useLineReactionStore.getState().selectedId;
@@ -1159,6 +1301,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "n") tool = "note";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "f") tool = event.shiftKey ? "fib_ote" : "fib_standard";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "x") tool = "fib_extension";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "v") tool = "volume_profile";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "h") tool = "horizontal_line";
       else if (event.key === "Escape") { tool = "cursor"; setAddEntityKind(null); setLineDraw(null); }
       if (tool) {
@@ -2087,6 +2230,10 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         message={drawingMessage}
         onDelete={(drawing) => void removeDrawing(drawing)}
         onMoveStart={beginMoveDrawing}
+        onRangeMoveStart={beginRangeMoveDrawing}
+        onVolumeProfileSettingsSave={(drawing, settings) => void saveVolumeProfileSettings(drawing, settings)}
+        onDrawingDeselect={() => setSelectedDrawingId(null)}
+        onPreviousDayVolumeProfile={() => void createPreviousDayVolumeProfile()}
         onSelect={(drawing) => {
           setSelectedCandle(null);
           setSelectedDrawingId(drawing.id);
@@ -2691,6 +2838,58 @@ function h1PreviewBoxClass(status: string): string {
   if (status === "loss") return "border-rose-300/80 shadow-[0_0_10px_rgba(251,113,133,0.24)] hover:border-rose-200";
   if (status === "ambiguous") return "border-amber-300/80 shadow-[0_0_10px_rgba(251,191,36,0.24)] hover:border-amber-200";
   return "border-cyan-300/65 shadow-[0_0_8px_rgba(34,211,238,0.18)] hover:border-cyan-200";
+}
+
+function defaultVolumeProfileSettings(): VolumeProfileSettings {
+  return {
+    rows: 24,
+    value_area_pct: 70,
+    mode: "up_down",
+    width_pct: 30,
+    placement: "left",
+    show_poc: true,
+    show_vah: true,
+    show_val: true,
+  };
+}
+
+export function snappedVolumeProfileAnchors(start: DrawingPoint, end: DrawingPoint, candles: CandleDatum[], timeframe: ChartPayload["timeframe"]): ChartDrawingAnchor[] {
+  const startIndex = nearestCandleIndex(toUnixTime(start.time), candles);
+  const endIndex = nearestCandleIndex(toUnixTime(end.time), candles);
+  const lowIndex = Math.min(startIndex, endIndex);
+  const highIndex = Math.max(startIndex, endIndex);
+  const duration = timeframeDurationSeconds(timeframe);
+  return [
+    { time: unixToIso(Number(candles[lowIndex].time)), price: start.price },
+    { time: unixToIso(Number(candles[highIndex].time) + duration), price: end.price },
+  ];
+}
+
+function movedVolumeProfileAnchors(anchors: ChartDrawingAnchor[], anchorIndex: number, unixTime: number, candles: CandleDatum[], timeframe: ChartPayload["timeframe"]): ChartDrawingAnchor[] {
+  const candleIndex = nearestCandleIndex(unixTime, candles);
+  const boundary = Number(candles[candleIndex].time) + (anchorIndex === 1 ? timeframeDurationSeconds(timeframe) : 0);
+  const next = anchors.map((anchor, index) => index === anchorIndex ? { ...anchor, time: unixToIso(boundary) } : anchor);
+  return [...next].sort((left, right) => Date.parse(left.time) - Date.parse(right.time));
+}
+
+function nearestCandleIndex(unixTime: number, candles: CandleDatum[]): number {
+  if (candles.length === 0) throw new Error("Cannot snap Volume Profile without displayed candles");
+  let best = 0;
+  let distance = Math.abs(Number(candles[0].time) - unixTime);
+  for (let index = 1; index < candles.length; index += 1) {
+    const next = Math.abs(Number(candles[index].time) - unixTime);
+    if (next < distance) {
+      best = index;
+      distance = next;
+    }
+  }
+  return best;
+}
+
+function timeframeDurationSeconds(timeframe: ChartPayload["timeframe"]): number {
+  if (timeframe === "H1") return 60 * 60;
+  if (timeframe === "M15") return 15 * 60;
+  return 5 * 60;
 }
 
 function h1PreviewLabelClass(status: string): string {
