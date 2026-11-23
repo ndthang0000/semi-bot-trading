@@ -14,9 +14,9 @@ import {
 } from "lightweight-charts";
 import { ArrowDown, ArrowUp, Newspaper, Star } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { findVolumeProfileForRange } from "./chart/volumeProfileDrawing";
+import { findCurrentDayVolumeProfile, findVolumeProfileForRange, TODAY_VOLUME_PROFILE_CONTENT } from "./chart/volumeProfileDrawing";
 import { createManualZone, updateZoneOverride, type NewsResponse } from "../api/chart";
-import { createChartDrawing, deleteChartDrawing, fetchPreviousBrokerDayVolumeProfilePreset, updateChartDrawing } from "../api/chartDrawings";
+import { createChartDrawing, deleteChartDrawing, fetchCurrentBrokerDayVolumeProfilePreset, fetchPreviousBrokerDayVolumeProfilePreset, updateChartDrawing } from "../api/chartDrawings";
 import { h1ImpulsePreviewToSetupCandidate, previewH1Impulse, type H1ImpulsePreview, type H1ImpulseTargetMode } from "../api/h1Impulse";
 import { updateManualAiPlanLevels } from "../api/manualAi";
 import { updateQuickOrderLevels } from "../api/quickOrder";
@@ -264,6 +264,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   const drawingsRef = useRef(drawings);
   const previousDayRequestPendingRef = useRef(false);
   const previousDayCreatedRef = useRef<{ key: string; id: string } | null>(null);
+  const todayRequestPendingRef = useRef(false);
+  const todayProfileRef = useRef<ChartDrawing | null>(null);
   const handledZoneFocusRequestRef = useRef<number | null>(null);
   const handledTradeFocusRequestRef = useRef<number | null>(null);
   const drawPreviewZoneRef = useRef<PriceZone | null>(drawPreviewZone);
@@ -351,6 +353,8 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
   useEffect(() => {
     const created = previousDayCreatedRef.current;
     if (created && drawings.some((drawing) => drawing.id === created.id)) previousDayCreatedRef.current = null;
+    const today = todayProfileRef.current;
+    if (today && drawings.some((drawing) => drawing.id === today.id && drawing.revision >= today.revision)) todayProfileRef.current = null;
   }, [drawings]);
   ema34DataRef.current = ema34Data;
   ema200DataRef.current = ema200Data;
@@ -1287,6 +1291,48 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     }
   }, [persistDrawing]);
 
+  const createOrRefreshTodayVolumeProfile = useCallback(async () => {
+    if (payloadRef.current.replay) {
+      setDrawError("Volume Profile v1 chưa hỗ trợ Replay.");
+      return;
+    }
+    if (todayRequestPendingRef.current) {
+      setDrawingMessage("Today Volume Profile đang được cập nhật.");
+      return;
+    }
+    todayRequestPendingRef.current = true;
+    try {
+      const preset = await fetchCurrentBrokerDayVolumeProfilePreset(payloadRef.current.symbol);
+      const cached = todayProfileRef.current;
+      const candidates = cached ? [cached, ...drawingsRef.current] : drawingsRef.current;
+      const existing = findCurrentDayVolumeProfile(candidates, preset.symbol);
+      const price = payloadRef.current.layers.candles.at(-1)?.close ?? 1;
+      const anchors = [{ time: preset.range_start, price }, { time: preset.range_end, price }];
+      if (existing) {
+        const updated = await updateChartDrawing(existing, { anchors });
+        todayProfileRef.current = updated;
+        setSelectedDrawingId(updated.id);
+        setDrawingMessage(`Today Volume Profile đã cập nhật ${preset.source_bar_count} nến M1.`);
+        onDrawingsChanged?.();
+        return;
+      }
+      const created = await persistDrawing(
+        "volume_profile_fixed_range",
+        anchors,
+        defaultVolumeProfileSettings(),
+        TODAY_VOLUME_PROFILE_CONTENT,
+      );
+      if (created) {
+        todayProfileRef.current = created;
+        setDrawingMessage(`Today Volume Profile đã tạo từ ${preset.source_bar_count} nến M1.`);
+      }
+    } catch (error) {
+      setDrawError(error instanceof Error ? error.message : "Could not create or update today's Volume Profile.");
+    } finally {
+      todayRequestPendingRef.current = false;
+    }
+  }, [onDrawingsChanged, persistDrawing]);
+
   useEffect(() => {
     const hotkeys = (event: KeyboardEvent) => {
       const selectedLineId = useLineReactionStore.getState().selectedId;
@@ -1821,6 +1867,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
     resizeObserver.observe(container);
     const selectCandleAtClick: Parameters<IChartApi["subscribeClick"]>[0] = (param) => {
       if (drawingToolRef.current !== "cursor" || addEntityKindRef.current) return;
+      setSelectedDrawingId(null);
       const clickedSeriesData = param.seriesData.get(candleSeries);
       const clickedTime = chartTimeToUnix(param.time);
       if (!clickedSeriesData || clickedTime === null || !param.point) {
@@ -1871,7 +1918,6 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         setSelectedCandle(null);
         return;
       }
-      setSelectedDrawingId(null);
       setSelectedCandle((current) => current?.time === candle.time ? null : candle);
     };
     chart.subscribeClick(selectCandleAtClick);
@@ -2234,6 +2280,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
         onVolumeProfileSettingsSave={(drawing, settings) => void saveVolumeProfileSettings(drawing, settings)}
         onDrawingDeselect={() => setSelectedDrawingId(null)}
         onPreviousDayVolumeProfile={() => void createPreviousDayVolumeProfile()}
+        onTodayVolumeProfile={() => void createOrRefreshTodayVolumeProfile()}
         onSelect={(drawing) => {
           setSelectedCandle(null);
           setSelectedDrawingId(drawing.id);

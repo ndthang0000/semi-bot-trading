@@ -94,6 +94,9 @@ from .volume_profile import VolumeProfileError, calculate_fixed_range_profile, n
 
 
 MAX_CHART_LIMIT = 15_000
+MIN_PREVIOUS_BROKER_DAY_M1_BARS = 6 * 60
+VOLUME_PROFILE_SESSION_GAP = timedelta(minutes=30)
+VOLUME_PROFILE_SESSION_LOOKBACK_BARS = 5_000
 MAX_REVIEW_ATTACHMENT_BYTES = 5 * 1024 * 1024
 REVIEW_ATTACHMENT_KINDS = {"entry", "exit", "review", "manual"}
 
@@ -2979,22 +2982,78 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
             init_db(conn)
             row = conn.execute(
                 """
-                SELECT open_time, close_time
-                FROM candles
-                WHERE symbol = ? AND timeframe = 'D1'
-                ORDER BY open_time DESC
+                SELECT d.open_time, d.close_time, COUNT(m1.id) AS source_bar_count
+                FROM candles AS d
+                JOIN candles AS m1
+                  ON m1.symbol = d.symbol
+                 AND m1.timeframe = 'M1'
+                 AND m1.open_time >= d.open_time
+                 AND m1.open_time < d.close_time
+                WHERE d.symbol = ? AND d.timeframe = 'D1'
+                GROUP BY d.id, d.open_time, d.close_time
+                HAVING COUNT(m1.id) >= ?
+                ORDER BY d.open_time DESC
                 LIMIT 1
                 """,
-                (symbol,),
+                (symbol, MIN_PREVIOUS_BROKER_DAY_M1_BARS),
             ).fetchone()
         if row is None:
-            raise HTTPException(status_code=409, detail="Previous broker day is not ready; wait for D1 candle sync")
+            raise HTTPException(
+                status_code=409,
+                detail="Previous broker day is not ready; wait for a complete M1/D1 candle sync",
+            )
         return {
             "symbol": symbol,
             "preset": "previous_broker_day",
             "range_start": row["open_time"],
             "range_end": row["close_time"],
             "source_timeframe": "D1",
+            "source_bar_count": int(row["source_bar_count"]),
+        }
+
+    @app.get("/api/volume-profile/presets/current-broker-day")
+    def current_broker_day_volume_profile_preset(
+        symbol: str = Query(default=config.symbol),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        with connect(config.database) as conn:
+            init_db(conn)
+            rows = list(reversed(conn.execute(
+                """
+                SELECT open_time, close_time
+                FROM candles
+                WHERE symbol = ? AND timeframe = 'M1'
+                ORDER BY open_time DESC
+                LIMIT ?
+                """,
+                (symbol, VOLUME_PROFILE_SESSION_LOOKBACK_BARS),
+            ).fetchall()))
+            live_day = conn.execute(
+                "SELECT open_time FROM live_candles WHERE symbol = ? AND timeframe = 'D1'",
+                (symbol,),
+            ).fetchone()
+        if not rows:
+            raise HTTPException(
+                status_code=409,
+                detail="Current trading session is not ready; wait for M1 candle sync",
+            )
+        session_first = None
+        for previous, current in zip(rows, rows[1:]):
+            previous_close = datetime.fromisoformat(previous["close_time"])
+            current_open = datetime.fromisoformat(current["open_time"])
+            if current_open - previous_close >= VOLUME_PROFILE_SESSION_GAP:
+                session_first = current_open
+        if session_first is None:
+            session_first = datetime.fromisoformat(live_day["open_time"]) if live_day is not None else datetime.fromisoformat(rows[0]["open_time"])
+        range_start = session_first.replace(minute=0, second=0, microsecond=0)
+        session_rows = [row for row in rows if datetime.fromisoformat(row["open_time"]) >= range_start]
+        return {
+            "symbol": symbol,
+            "preset": "current_broker_day",
+            "range_start": range_start.isoformat(),
+            "range_end": session_rows[-1]["close_time"],
+            "source_timeframe": "M1",
+            "source_bar_count": len(session_rows),
         }
 
     @app.delete("/api/chart-drawings/{drawing_id}")

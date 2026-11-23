@@ -29,6 +29,7 @@ type Props = {
   onVolumeProfileSettingsSave: (drawing: ChartDrawing, settings: VolumeProfileSettings) => void;
   onDrawingDeselect: () => void;
   onPreviousDayVolumeProfile: () => void;
+  onTodayVolumeProfile: () => void;
   onSelect: (drawing: ChartDrawing) => void;
   onToolChange: (tool: ChartDrawingTool) => void;
   onPointerDown: PointerEventHandler<HTMLDivElement>;
@@ -63,7 +64,12 @@ export function ChartDrawingControls(props: Props) {
           onPointerLeave={props.onPointerLeave}
         />
       ) : null}
-      <ChartDrawingToolbar activeTool={props.activeTool} onToolChange={props.onToolChange} onPreviousDayVolumeProfile={props.onPreviousDayVolumeProfile} />
+      <ChartDrawingToolbar
+        activeTool={props.activeTool}
+        onToolChange={props.onToolChange}
+        onPreviousDayVolumeProfile={props.onPreviousDayVolumeProfile}
+        onTodayVolumeProfile={props.onTodayVolumeProfile}
+      />
       <VolumeProfileSettingsEditor
         drawing={props.drawings.find((item) => item.drawing.id === props.selectedId)?.drawing ?? null}
         onClose={props.onDrawingDeselect}

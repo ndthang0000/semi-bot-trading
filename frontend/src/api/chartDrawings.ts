@@ -60,6 +60,20 @@ export async function fetchPreviousBrokerDayVolumeProfilePreset(symbol: string):
   return response.json();
 }
 
+export async function fetchCurrentBrokerDayVolumeProfilePreset(symbol: string): Promise<{
+  symbol: string;
+  preset: "current_broker_day";
+  range_start: string;
+  range_end: string;
+  source_timeframe: "M1";
+  source_bar_count: number;
+}> {
+  const params = new URLSearchParams({ symbol });
+  const response = await authFetch(`/api/volume-profile/presets/current-broker-day?${params.toString()}`);
+  if (!response.ok) throw await apiError(response, `Current broker day failed with ${response.status}`);
+  return response.json();
+}
+
 export async function deleteChartDrawing(drawing: ChartDrawing): Promise<void> {
   const response = await authFetch(`/api/chart-drawings/${encodeURIComponent(drawing.id)}?revision=${drawing.revision}`, {
     method: "DELETE",

@@ -124,6 +124,32 @@ export function ChartDrawingLayer({ drawings, measure, fibExtensionPreview, pric
         </button>
       ) : null)}
 
+      {drawings.map(({ drawing, points, volumeProfile }) => {
+        if (drawing.drawing_type !== "volume_profile_fixed_range" || points.length !== 2 || !volumeProfile) return null;
+        const left = Math.min(points[0].x, points[1].x);
+        const profileTop = Math.min(...volumeProfile.rows.map((row) => row.y));
+        return (
+          <button
+            key={`${drawing.id}:tag`}
+            aria-label="Select Volume Profile"
+            className={`pointer-events-auto absolute z-[54] rounded border px-2 py-1 text-[10px] font-bold leading-none shadow-lg backdrop-blur transition-colors ${
+              drawing.id === selectedId
+                ? "border-cyan-200 bg-cyan-500/90 text-cyan-950"
+                : "border-teal-300/60 bg-ink-950/90 text-teal-100 hover:border-cyan-200 hover:text-cyan-50"
+            }`}
+            style={{ left: Math.max(4, Math.min(left + 6, plotWidth - 34)), top: Math.max(4, profileTop + 6) }}
+            title="Select Volume Profile"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect(drawing);
+            }}
+          >
+            VP
+          </button>
+        );
+      })}
+
       {drawings.map(({ drawing, points, volumeProfile }) => drawing.drawing_type === "volume_profile_fixed_range" && drawing.id === selectedId && volumeProfile && points.length === 2 ? (
         points.map((point, anchorIndex) => (
           <button

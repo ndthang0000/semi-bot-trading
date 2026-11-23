@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from semi_bot_trading.candles import Candle, upsert_candles
+from semi_bot_trading.candles import Candle, upsert_candles, upsert_live_candle
 from semi_bot_trading.db import connect, init_db
 from tests.helpers import TemporaryDirectory
 from tests.test_api import authenticated_test_client, write_test_config
@@ -23,11 +23,25 @@ class ChartDrawingApiTest(unittest.TestCase):
                 init_db(conn)
                 upsert_candles(conn, [
                     Candle("XAUUSD", "M1", start + timedelta(minutes=index), start + timedelta(minutes=index + 1), 100, 101, 99, 100.5, 10, "test")
-                    for index in range(5)
+                    for index in range(360)
                 ])
                 upsert_candles(conn, [
                     Candle("XAUUSD", "D1", start, start + timedelta(days=1), 100, 110, 90, 105, 1000, "test")
                 ])
+                sunday_start = start + timedelta(days=2)
+                upsert_candles(conn, [
+                    Candle("XAUUSD", "D1", sunday_start, sunday_start + timedelta(days=1), 105, 108, 103, 107, 100, "test")
+                ])
+                market_reopen = sunday_start + timedelta(hours=23, minutes=1)
+                upsert_candles(conn, [
+                    Candle("XAUUSD", "M1", market_reopen + timedelta(minutes=index), market_reopen + timedelta(minutes=index + 1), 107, 108, 106, 107.5, 10, "test")
+                    for index in range(180)
+                ])
+                current_start = start + timedelta(days=3)
+                upsert_live_candle(
+                    conn,
+                    Candle("XAUUSD", "D1", current_start, current_start + timedelta(days=1), 107, 112, 105, 110, 200, "test"),
+                )
             try:
                 created = client.post("/api/chart-drawings", json={
                     "symbol": "XAUUSD",
@@ -45,6 +59,7 @@ class ChartDrawingApiTest(unittest.TestCase):
                     json={"revision": created.json()["revision"], "properties": {"rows": 30, "mode": "total"}},
                 )
                 preset = client.get("/api/volume-profile/presets/previous-broker-day?symbol=XAUUSD")
+                today = client.get("/api/volume-profile/presets/current-broker-day?symbol=XAUUSD")
             finally:
                 client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
 
@@ -54,6 +69,9 @@ class ChartDrawingApiTest(unittest.TestCase):
         self.assertEqual(30, updated.json()["volume_profile"]["settings"]["rows"])
         self.assertEqual("total", updated.json()["volume_profile"]["settings"]["mode"])
         self.assertEqual(start.isoformat(), preset.json()["range_start"])
+        self.assertEqual(market_reopen.replace(minute=0).isoformat(), today.json()["range_start"])
+        self.assertEqual((market_reopen + timedelta(minutes=180)).isoformat(), today.json()["range_end"])
+        self.assertEqual(180, today.json()["source_bar_count"])
 
     def test_chart_drawings_crud_visibility_and_revision(self) -> None:
         with TemporaryDirectory() as temp_dir:

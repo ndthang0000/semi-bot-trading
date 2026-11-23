@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChartDrawing } from "../../types";
-import { findVolumeProfileForRange } from "./volumeProfileDrawing";
+import { findCurrentDayVolumeProfile, findVolumeProfileForRange, TODAY_VOLUME_PROFILE_CONTENT } from "./volumeProfileDrawing";
 
 function drawing(overrides: Partial<ChartDrawing> = {}): ChartDrawing {
   return {
@@ -46,6 +46,39 @@ describe("findVolumeProfileForRange", () => {
       "XAUUSD",
       "2026-11-20T22:00:00Z",
       "2026-11-21T22:00:00Z",
+    )).toBeNull();
+  });
+});
+
+describe("findCurrentDayVolumeProfile", () => {
+  it("finds only the Today preset for the requested broker-day start", () => {
+    const today = drawing({ content: TODAY_VOLUME_PROFILE_CONTENT });
+
+    expect(findCurrentDayVolumeProfile(
+      [drawing({ id: "manual" }), today],
+      "XAUUSD",
+    )).toBe(today);
+  });
+
+  it("reuses the marked Today profile across a broker-day boundary", () => {
+    const yesterday = drawing({
+      id: "yesterday",
+      content: TODAY_VOLUME_PROFILE_CONTENT,
+      anchors: [
+        { time: "2026-11-19T22:00:00Z", price: 4000 },
+        { time: "2026-11-20T22:00:00Z", price: 4000 },
+      ],
+    });
+
+    expect(findCurrentDayVolumeProfile([yesterday], "XAUUSD")).toBe(yesterday);
+  });
+
+  it("does not reuse a hidden Today profile", () => {
+    expect(findCurrentDayVolumeProfile(
+      [
+        drawing({ content: TODAY_VOLUME_PROFILE_CONTENT, hidden: true }),
+      ],
+      "XAUUSD",
     )).toBeNull();
   });
 });

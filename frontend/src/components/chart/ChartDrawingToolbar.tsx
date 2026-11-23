@@ -6,6 +6,7 @@ type Props = {
   activeTool: ChartDrawingTool;
   onToolChange: (tool: ChartDrawingTool) => void;
   onPreviousDayVolumeProfile: () => void;
+  onTodayVolumeProfile: () => void;
 };
 
 const STORAGE_KEY = "semi-bot-chart-drawing-toolbar-position-v1";
@@ -22,7 +23,7 @@ const tools: Array<{ key: ChartDrawingTool; label: string; hotkey: string; icon:
   { key: "copy_price", label: "Copy giá tại điểm click", hotkey: "Alt+C", icon: Copy },
 ];
 
-export function ChartDrawingToolbar({ activeTool, onToolChange, onPreviousDayVolumeProfile }: Props) {
+export function ChartDrawingToolbar({ activeTool, onToolChange, onPreviousDayVolumeProfile, onTodayVolumeProfile }: Props) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerX: number; pointerY: number; x: number; y: number } | null>(null);
   const [position, setPosition] = useState(() => readPosition());
@@ -119,6 +120,14 @@ export function ChartDrawingToolbar({ activeTool, onToolChange, onPreviousDayVol
         onClick={onPreviousDayVolumeProfile}
       >
         Prev day
+      </button>
+      <button
+        className="ml-1 h-9 shrink-0 rounded-lg border border-cyan-300/20 px-2 text-[10px] font-semibold text-cyan-200 hover:bg-cyan-400/10"
+        title="Tạo hoặc cập nhật Volume Profile cho broker day hiện tại"
+        type="button"
+        onClick={onTodayVolumeProfile}
+      >
+        Today
       </button>
     </div>
   );
