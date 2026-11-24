@@ -52,7 +52,7 @@ export async function fetchPreviousBrokerDayVolumeProfilePreset(symbol: string):
   preset: "previous_broker_day";
   range_start: string;
   range_end: string;
-  source_timeframe: "D1";
+  source_timeframe: "M1";
 }> {
   const params = new URLSearchParams({ symbol });
   const response = await authFetch(`/api/volume-profile/presets/previous-broker-day?${params.toString()}`);

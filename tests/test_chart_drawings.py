@@ -69,9 +69,59 @@ class ChartDrawingApiTest(unittest.TestCase):
         self.assertEqual(30, updated.json()["volume_profile"]["settings"]["rows"])
         self.assertEqual("total", updated.json()["volume_profile"]["settings"]["mode"])
         self.assertEqual(start.isoformat(), preset.json()["range_start"])
+        self.assertEqual(market_reopen.replace(minute=0).isoformat(), preset.json()["range_end"])
+        self.assertEqual("M1", preset.json()["source_timeframe"])
+        self.assertEqual(360, preset.json()["source_bar_count"])
         self.assertEqual(market_reopen.replace(minute=0).isoformat(), today.json()["range_start"])
         self.assertEqual((market_reopen + timedelta(minutes=180)).isoformat(), today.json()["range_end"])
         self.assertEqual(180, today.json()["source_bar_count"])
+
+    def test_previous_day_uses_m1_rollover_instead_of_utc_d1_boundaries(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "test.sqlite3"
+            config_path = root / "trading.toml"
+            write_test_config(config_path, database)
+            client = authenticated_test_client(root, config_path)
+            previous_start = datetime(2026, 11, 22, 23, 1, tzinfo=UTC)
+            current_start = datetime(2026, 11, 23, 23, 0, tzinfo=UTC)
+            with connect(database) as conn:
+                init_db(conn)
+                upsert_candles(conn, [
+                    Candle(
+                        "XAUUSD", "M1",
+                        previous_start + timedelta(minutes=index),
+                        previous_start + timedelta(minutes=index + 1),
+                        100, 101, 99, 100.5, 10, "test",
+                    )
+                    for index in range(1317)
+                ])
+                upsert_candles(conn, [
+                    Candle(
+                        "XAUUSD", "M1",
+                        current_start + timedelta(minutes=index),
+                        current_start + timedelta(minutes=index + 1),
+                        101, 102, 100, 101.5, 10, "test",
+                    )
+                    for index in range(120)
+                ])
+                upsert_candles(conn, [
+                    Candle(
+                        "XAUUSD", "D1",
+                        datetime(2026, 11, 23, tzinfo=UTC),
+                        datetime(2026, 11, 24, tzinfo=UTC),
+                        100, 110, 90, 105, 1000, "test",
+                    )
+                ])
+            try:
+                response = client.get("/api/volume-profile/presets/previous-broker-day?symbol=XAUUSD")
+            finally:
+                client._semi_bot_env_patch.stop()  # type: ignore[attr-defined]
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(previous_start.replace(minute=0).isoformat(), response.json()["range_start"])
+        self.assertEqual(current_start.isoformat(), response.json()["range_end"])
+        self.assertEqual(1317, response.json()["source_bar_count"])
 
     def test_chart_drawings_crud_visibility_and_revision(self) -> None:
         with TemporaryDirectory() as temp_dir:

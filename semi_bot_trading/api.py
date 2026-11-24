@@ -2980,35 +2980,58 @@ def create_app(config_path: Path | str = DEFAULT_CONFIG_PATH, env_path: Path | s
     ) -> dict[str, Any]:
         with connect(config.database) as conn:
             init_db(conn)
-            row = conn.execute(
+            rows = list(reversed(conn.execute(
                 """
-                SELECT d.open_time, d.close_time, COUNT(m1.id) AS source_bar_count
-                FROM candles AS d
-                JOIN candles AS m1
-                  ON m1.symbol = d.symbol
-                 AND m1.timeframe = 'M1'
-                 AND m1.open_time >= d.open_time
-                 AND m1.open_time < d.close_time
-                WHERE d.symbol = ? AND d.timeframe = 'D1'
-                GROUP BY d.id, d.open_time, d.close_time
-                HAVING COUNT(m1.id) >= ?
-                ORDER BY d.open_time DESC
-                LIMIT 1
+                SELECT open_time, close_time
+                FROM candles
+                WHERE symbol = ? AND timeframe = 'M1'
+                ORDER BY open_time DESC
+                LIMIT ?
                 """,
-                (symbol, MIN_PREVIOUS_BROKER_DAY_M1_BARS),
-            ).fetchone()
-        if row is None:
+                (symbol, VOLUME_PROFILE_SESSION_LOOKBACK_BARS),
+            ).fetchall()))
+        if not rows:
             raise HTTPException(
                 status_code=409,
-                detail="Previous broker day is not ready; wait for a complete M1/D1 candle sync",
+                detail="Previous broker day is not ready; wait for M1 candle sync",
+            )
+        session_starts: list[datetime] = []
+        for previous, current in zip(rows, rows[1:]):
+            previous_close = datetime.fromisoformat(previous["close_time"])
+            current_open = datetime.fromisoformat(current["open_time"])
+            if current_open - previous_close >= VOLUME_PROFILE_SESSION_GAP:
+                session_starts.append(current_open.replace(minute=0, second=0, microsecond=0))
+        if not session_starts:
+            raise HTTPException(
+                status_code=409,
+                detail="Previous broker day is not ready; no completed M1 session boundary was found",
+            )
+        range_end = session_starts[-1]
+        earliest = datetime.fromisoformat(rows[0]["open_time"]).replace(minute=0, second=0, microsecond=0)
+        candidate_starts = [earliest, *session_starts[:-1]]
+        range_start = None
+        source_bar_count = 0
+        for candidate in reversed(candidate_starts):
+            candidate_count = sum(
+                candidate <= datetime.fromisoformat(item["open_time"]) < range_end
+                for item in rows
+            )
+            if candidate_count >= MIN_PREVIOUS_BROKER_DAY_M1_BARS:
+                range_start = candidate
+                source_bar_count = candidate_count
+                break
+        if range_start is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Previous broker day is not ready; the completed M1 session is too short",
             )
         return {
             "symbol": symbol,
             "preset": "previous_broker_day",
-            "range_start": row["open_time"],
-            "range_end": row["close_time"],
-            "source_timeframe": "D1",
-            "source_bar_count": int(row["source_bar_count"]),
+            "range_start": range_start.isoformat(),
+            "range_end": range_end.isoformat(),
+            "source_timeframe": "M1",
+            "source_bar_count": source_bar_count,
         }
 
     @app.get("/api/volume-profile/presets/current-broker-day")
