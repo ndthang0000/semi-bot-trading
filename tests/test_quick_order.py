@@ -9,9 +9,20 @@ from pathlib import Path
 
 from semi_bot_trading.db import connect, init_db
 from semi_bot_trading.quick_order import build_quick_order_geometry, latest_closed_h1_atr
+from semi_bot_trading.quick_order_api import QuickOrderRequest
 
 
 class QuickOrderGeometryTests(unittest.TestCase):
+    def test_limit_order_defaults_to_eight_hour_expiry(self) -> None:
+        request = QuickOrderRequest(
+            client_request_id="quick-order-default-expiry",
+            account_labels=["Exness Personal"],
+            side="buy",
+            order_type="limit",
+            entry_price=4300,
+        )
+        self.assertEqual(request.expires_in_minutes, 480)
+
     def test_buy_accepts_stop_at_minimum_h1_atr_and_tp_defaults_to_1_5r(self) -> None:
         result = build_quick_order_geometry(
             side="buy", entry=4300, requested_stop=4287.64, atr_h1=20, risk_reward=1.5

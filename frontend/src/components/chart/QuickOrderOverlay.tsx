@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Check, LoaderCircle, X } from "lucide-react";
 import { fetchAccountLabels } from "../../api/accounts";
 import { useQueryClient } from "@tanstack/react-query";
 import { createQuickOrder, previewQuickOrder, type QuickOrderPreview, type QuickOrderSide, type QuickOrderType } from "../../api/quickOrder";
+import { DEFAULT_LIMIT_EXPIRY_MINUTES, quickOrderAccountLabels } from "../../lib/quickOrderConfig";
 import { useChartStore } from "../../store/chartStore";
 import { useQuickOrderStore } from "../../store/quickOrderStore";
 
@@ -19,7 +20,6 @@ type Props = {
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const round = (value: number) => Math.round(value * 100) / 100;
 const DEFAULT_STOP_ATR = 1;
-const DEFAULT_LIMIT_EXPIRY_MINUTES = 240;
 const MIN_STOP_ATR = 0.618;
 const minimumStopPrice = (entry: number, side: QuickOrderSide, atr: number) => side === "buy"
   ? Math.floor((entry - atr * MIN_STOP_ATR) * 100) / 100
@@ -109,9 +109,10 @@ export function QuickOrderOverlay({ symbol, chartPrice, plotWidth, priceToY, cli
     setPreview(null);
     setError(null);
     void fetchAccountLabels().then((labels) => {
-      setAccounts(labels);
-      setSelectedAccounts(labels);
-      if (labels.length > 0) void loadPreview(labels, null);
+      const availableLabels = quickOrderAccountLabels(labels);
+      setAccounts(availableLabels);
+      setSelectedAccounts(availableLabels);
+      if (availableLabels.length > 0) void loadPreview(availableLabels, null);
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "Không thể tải account."));
     // Initial quote/ATR load only; later changes require an explicit Review.
     // eslint-disable-next-line react-hooks/exhaustive-deps

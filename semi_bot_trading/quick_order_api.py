@@ -23,7 +23,7 @@ class QuickOrderRequest(BaseModel):
     entry_price: float | None = Field(default=None, gt=0)
     stop_loss: float | None = Field(default=None, gt=0)
     risk_reward: float = Field(default=DEFAULT_RISK_REWARD, ge=1.0, le=4.0)
-    expires_in_minutes: int = Field(default=60, ge=5, le=2_880)
+    expires_in_minutes: int = Field(default=8 * 60, ge=5, le=2_880)
 
 
 class QuickOrderPreviewRequest(BaseModel):

@@ -772,7 +772,8 @@ Quick Order là luồng đặt lệnh thủ công, dùng key `quick_order_v1` đ
 Trade History và Journal nhưng không phụ thuộc state của strategy playbook. Nút `Quick order`
 chỉ mở tại `Realtime · Latest`; Replay và cửa sổ lịch sử không được tạo lệnh
 LIVE. Trader chọn BUY/SELL, Market/Limit và một hoặc nhiều account ngay trên
-chart. Ba đường Entry, SL và TP hiển thị trực tiếp trên chart: Entry chỉ kéo
+chart. Account FTMO đã ngừng hoạt động không còn xuất hiện trong Quick Order;
+lịch sử lệnh FTMO cũ vẫn được giữ nguyên để review. Ba đường Entry, SL và TP hiển thị trực tiếp trên chart: Entry chỉ kéo
 được với Limit, còn SL/TP kéo theo chiều dọc.
 
 SL mặc định cách Entry `1 ATR(14) H1` từ nến H1 đã đóng gần nhất. Trader có thể
@@ -784,7 +785,7 @@ trước khi `Place order`.
 
 Backend fan-out một request/account dưới cùng `client_group_id`. Market request
 chỉ có TTL 10 giây và worker tính lại toàn bộ geometry từ bid/ask thật ngay
-trước khi gửi MT5. Limit giữ Entry đã xác nhận, mặc định expiry 4 giờ và trader
+trước khi gửi MT5. Limit giữ Entry đã xác nhận, mặc định expiry 8 giờ và trader
 có thể chọn lại expiry trên form. Client request id
 được lưu unique theo account để double click hoặc retry HTTP không tạo lệnh
 trùng. Chọn `Quick Order V1` trong menu Playbooks để chỉ xem các lệnh Quick
