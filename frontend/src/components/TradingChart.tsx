@@ -1347,7 +1347,7 @@ export function TradingChart({ payload, drawings = [], spread, newsData, onEntit
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "n") tool = "note";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "f") tool = event.shiftKey ? "fib_ote" : "fib_standard";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "x") tool = "fib_extension";
-      else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "v") tool = "volume_profile";
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey && key === "v") tool = "volume_profile";
       else if (!event.ctrlKey && !event.metaKey && !event.altKey && key === "h") tool = "horizontal_line";
       else if (event.key === "Escape") { tool = "cursor"; setAddEntityKind(null); setLineDraw(null); }
       if (tool) {

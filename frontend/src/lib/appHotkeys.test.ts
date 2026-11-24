@@ -27,6 +27,7 @@ describe("resolveAppHotkey", () => {
   it("maps chart and help actions case-insensitively", () => {
     expect(resolveAppHotkey(keyEvent("T"))).toEqual({ kind: "toggle-timeframe" });
     expect(resolveAppHotkey(keyEvent("v"))).toEqual({ kind: "toggle-trades" });
+    expect(resolveAppHotkey(keyEvent("V", { shiftKey: true }))).toBeNull();
     expect(resolveAppHotkey(keyEvent("p"))).toEqual({ kind: "cycle-playbook", direction: 1 });
     expect(resolveAppHotkey(keyEvent("P", { shiftKey: true }))).toEqual({ kind: "cycle-playbook", direction: -1 });
     expect(resolveAppHotkey(keyEvent("r"))).toEqual({ kind: "reload-chart" });

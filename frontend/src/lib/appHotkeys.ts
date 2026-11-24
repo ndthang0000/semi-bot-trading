@@ -24,7 +24,7 @@ export function resolveAppHotkey(event: Pick<KeyboardEvent, "altKey" | "code" | 
 
   const key = event.key.toLowerCase();
   if (key === "t") return { kind: "toggle-timeframe" };
-  if (key === "v") return { kind: "toggle-trades" };
+  if (key === "v" && !event.shiftKey) return { kind: "toggle-trades" };
   if (key === "p") return { kind: "cycle-playbook", direction: event.shiftKey ? -1 : 1 };
   if (key === "r") return { kind: "reload-chart" };
   if (event.key === "?" || (event.code === "Slash" && event.shiftKey)) return { kind: "show-help" };

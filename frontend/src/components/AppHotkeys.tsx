@@ -32,6 +32,7 @@ const SHORTCUT_GROUPS = [
       ["R", "Reload dữ liệu chart"],
       ["M / N / H", "Thước đo / Note / Đường giá"],
       ["F / Shift+F", "Fibonacci / OTE"],
+      ["Shift+V", "Fixed Range Volume Profile"],
       ["Alt+C", "Copy giá từ chart"],
     ],
   },

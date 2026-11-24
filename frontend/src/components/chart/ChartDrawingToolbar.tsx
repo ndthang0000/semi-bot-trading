@@ -18,7 +18,7 @@ const tools: Array<{ key: ChartDrawingTool; label: string; hotkey: string; icon:
   { key: "fib_standard", label: "Fibonacci Retracement", hotkey: "F", icon: null },
   { key: "fib_ote", label: "Fibonacci OTE", hotkey: "Shift+F", icon: null },
   { key: "fib_extension", label: "Trend-Based Fib Extension", hotkey: "X", icon: null },
-  { key: "volume_profile", label: "Fixed Range Volume Profile", hotkey: "V", icon: null },
+  { key: "volume_profile", label: "Fixed Range Volume Profile", hotkey: "Shift+V", icon: null },
   { key: "note", label: "Ghi chú", hotkey: "N", icon: Type },
   { key: "copy_price", label: "Copy giá tại điểm click", hotkey: "Alt+C", icon: Copy },
 ];
